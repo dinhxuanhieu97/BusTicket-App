@@ -16,4 +16,15 @@ Web app giúp khách đặt vé xe giường nằm/limousine online (chọn ch�
 - [prototype/so-do-cho.html](prototype/so-do-cho.html) — Sơ đồ chọn chỗ: 2 xe mặc định (Limousine bán theo phòng đơn/đôi, giường nằm), mẫu ghế ngồi, tùy chọn kèm trẻ dưới 2 tuổi: còn trống / đang giữ / đã đặt / không bán. Mở trực tiếp bằng trình duyệt, không cần cài đặt.
 - [templates/mau-danh-sach-khach-theo-chuyen.xlsx](templates/mau-danh-sach-khach-theo-chuyen.xlsx) — File Excel mẫu danh sách khách theo chuyến cho phụ xe.
 
-> Trạng thái: giai đoạn thiết kế, chưa có mã nguồn hay kết nối thanh toán thật.
+## Mã nguồn
+
+- `apps/api` — API NestJS + PostgreSQL: nhà xe (nhiều nhà xe), mẫu sơ đồ có phiên bản, xe, tuyến, chuyến, giá phòng đơn/đôi, giữ chỗ chống bán trùng.
+- Tiến độ: [task.md](task.md). Quy ước làm việc: [CLAUDE.md](CLAUDE.md).
+
+```bash
+pnpm install
+DATABASE_URL_TEST=postgres://pnticket:pnticket@localhost:5432/pnticket_test pnpm --filter api test
+DATABASE_URL=postgres://... pnpm --filter api seed
+```
+
+> Trạng thái: đang làm Giai đoạn 1 (kho chỗ). Chưa có thanh toán, gửi vé hay Mini App.
