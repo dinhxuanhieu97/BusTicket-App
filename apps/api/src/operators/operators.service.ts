@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { OPERATOR_CODE } from '../common/codes';
 import { DomainError, notFound } from '../common/errors';
+import { isUuid } from '../common/ids';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { DEFAULT_POLICY, OperatorPolicy, PolicyInput, policyInputSchema } from './policy';
@@ -68,6 +69,7 @@ export class OperatorsService {
   }
 
   async getById(id: string, q: Queryable = this.db): Promise<OperatorRow> {
+    if (!isUuid(id)) throw notFound('nhà xe');
     const { rows } = await q.query<OperatorRow>('SELECT id, code, name FROM operators WHERE id = $1', [id]);
     if (!rows[0]) throw notFound('nhà xe');
     return rows[0];
@@ -75,6 +77,7 @@ export class OperatorsService {
 
   /** Chính sách đang áp dụng = phiên bản mới nhất. */
   async currentPolicy(operatorId: string, q: Queryable = this.db): Promise<OperatorPolicy> {
+    if (!isUuid(operatorId)) throw notFound('chính sách của nhà xe');
     const { rows } = await q.query<{
       version: number;
       hold_minutes: number;
@@ -99,8 +102,13 @@ export class OperatorsService {
   /** Cập nhật chính sách = thêm phiên bản mới; đơn cũ giữ bản đã chụp. */
   async updatePolicy(operatorId: string, input: PolicyInput): Promise<OperatorPolicy> {
     const data = policyInputSchema.parse(input);
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
     return this.db.tx(async (c) => {
-      const { rows } = await c.query<{ id: string }>('SELECT id FROM operators WHERE id = $1 FOR UPDATE', [operatorId]);
+      // NO KEY UPDATE: tuần tự hóa các lần cập nhật chính sách mà không chặn các bản ghi có FK tới nhà xe.
+      const { rows } = await c.query<{ id: string }>(
+        'SELECT id FROM operators WHERE id = $1 FOR NO KEY UPDATE',
+        [operatorId],
+      );
       if (!rows[0]) throw notFound('nhà xe');
       const current = await this.currentPolicy(operatorId, c);
       await this.insertPolicy(c, operatorId, current.version + 1, data);

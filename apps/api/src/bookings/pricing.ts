@@ -1,6 +1,11 @@
 import { DomainError } from '../common/errors';
 import type { ChildPolicy } from '../operators/policy';
 
+/** Trần giá một chỗ (VND). Giữ tổng đơn dưới giới hạn cột `int` (≈2,1 tỷ) với tối đa 20 chỗ/đơn. */
+export const MAX_UNIT_PRICE = 20_000_000;
+/** Trần tổng một đơn (VND), thấp hơn giới hạn `int` của PostgreSQL. */
+export const MAX_BOOKING_TOTAL = 2_000_000_000;
+
 export interface RequestedItem {
   seatCode: string;
   occupancy: number;
@@ -66,5 +71,9 @@ export function priceItems(
     const infantPrice = child.price * it.infantCount;
     return { ...it, unitPrice, infantPrice, lineTotal: unitPrice + infantPrice };
   });
-  return { items: priced, total: priced.reduce((s, i) => s + i.lineTotal, 0) };
+  const total = priced.reduce((s, i) => s + i.lineTotal, 0);
+  if (total > MAX_BOOKING_TOTAL) {
+    throw new DomainError('LIMIT_EXCEEDED', 'Tổng tiền đơn vượt giới hạn cho phép.', { max: MAX_BOOKING_TOTAL });
+  }
+  return { items: priced, total };
 }

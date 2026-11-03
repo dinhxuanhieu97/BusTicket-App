@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { DomainError, notFound } from '../common/errors';
+import { isUuid } from '../common/ids';
 import { Db, isPgError, PG_UNIQUE_VIOLATION } from '../db/db';
 import { VEHICLE_TYPE_KIND } from '../seat-layouts/library';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
@@ -35,6 +36,7 @@ export class VehiclesService {
   ) {}
 
   async list(operatorId: string): Promise<VehicleRow[]> {
+    if (!isUuid(operatorId)) return [];
     const { rows } = await this.db.query<VehicleRow>(
       'SELECT * FROM vehicles WHERE operator_id = $1 ORDER BY code',
       [operatorId],
@@ -43,6 +45,7 @@ export class VehiclesService {
   }
 
   async get(operatorId: string, vehicleId: string): Promise<VehicleRow> {
+    if (!isUuid(operatorId) || !isUuid(vehicleId)) throw notFound('xe');
     const { rows } = await this.db.query<VehicleRow>('SELECT * FROM vehicles WHERE id = $1 AND operator_id = $2', [
       vehicleId,
       operatorId,
@@ -53,6 +56,7 @@ export class VehiclesService {
 
   async create(operatorId: string, input: CreateVehicleInput): Promise<VehicleRow> {
     const data = createVehicleSchema.parse(input);
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
     const { rows: ops } = await this.db.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [operatorId]);
     if (!ops[0]) throw notFound('nhà xe');
     const prefix = ops[0].code;

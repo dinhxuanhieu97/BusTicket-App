@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const childPolicySchema = z
   .object({
     freeUnderAge: z.number().int().min(0).max(16),
-    price: z.number().int().min(0),
+    price: z.number().int().min(0).max(20_000_000),
     maxPerUnit: z.number().int().min(0).max(2),
     countsTowardCapacity: z.boolean(),
   })

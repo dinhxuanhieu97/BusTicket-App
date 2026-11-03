@@ -1,6 +1,6 @@
 import { DomainError } from '../common/errors';
 import { DEFAULT_POLICY } from '../operators/policy';
-import { Fare, priceItems, SeatInfo } from './pricing';
+import { Fare, MAX_BOOKING_TOTAL, priceItems, SeatInfo } from './pricing';
 
 const seats: SeatInfo[] = [
   { seatCode: 'A01', floor: 'A', maxOccupancy: 2 },
@@ -81,6 +81,14 @@ describe('priceItems', () => {
     expect(codeOf(() => priceItems([{ seatCode: 'A01', occupancy: 2, infantCount: 0 }], seats, noDouble, child))).toBe(
       'FARE_NOT_CONFIGURED',
     );
+  });
+
+  it('rejects a total above the booking limit with LIMIT_EXCEEDED', () => {
+    const many: SeatInfo[] = Array.from({ length: 20 }, (_, i) => ({ seatCode: `A${String(i + 1).padStart(2, '0')}`, floor: 'A', maxOccupancy: 1 }));
+    const huge: Fare[] = [{ floor: 'A', occupancy: 1, price: MAX_BOOKING_TOTAL / 10 }];
+    const items = many.map((s) => ({ seatCode: s.seatCode, occupancy: 1, infantCount: 0 }));
+    expect(codeOf(() => priceItems(items, many, huge, child))).toBe('LIMIT_EXCEEDED');
+    expect(priceItems(items.slice(0, 10), many, huge, child).total).toBe(MAX_BOOKING_TOTAL);
   });
 
   it('rejects a seat that is not on the trip', () => {

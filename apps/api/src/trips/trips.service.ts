@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
+import { isUuid } from '../common/ids';
 import { normalizeVnPhone } from '../common/phone';
 import { vnDayRange } from '../common/vn-time';
 import { Db, isPgError, PG_UNIQUE_VIOLATION } from '../db/db';
+import { MAX_UNIT_PRICE } from '../bookings/pricing';
 import { OperatorsService } from '../operators/operators.service';
 
 export const createRouteSchema = z
@@ -25,7 +27,7 @@ const fareSchema = z
   .object({
     floor: z.string().regex(/^[A-Z]$/),
     occupancy: z.union([z.literal(1), z.literal(2)]),
-    price: z.number().int().min(0).max(100_000_000),
+    price: z.number().int().min(0).max(MAX_UNIT_PRICE),
   })
   .strict();
 
@@ -106,6 +108,7 @@ export class TripsService {
       throw new DomainError('VALIDATION_FAILED', 'Thời gian không hợp lệ: mở bán < đóng bán ≤ giờ khởi hành.');
     }
     const contactPhone = data.contactPhone ? normalizeVnPhone(data.contactPhone) : null;
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
 
     return this.db.tx(async (c) => {
       const { rows: routes } = await c.query('SELECT id FROM routes WHERE id = $1 AND operator_id = $2', [
@@ -206,6 +209,7 @@ export class TripsService {
 
   /** Sơ đồ chỗ công khai: chỉ mã chỗ, trạng thái, sức chứa và giá — không có dữ liệu khách. */
   async seatMap(tripId: string) {
+    if (!isUuid(tripId)) throw notFound('chuyến');
     const now = this.clock.now();
     const { rows: trips } = await this.db.query<{
       id: string; name: string; depart_at: Date; status: string; sales_open_at: Date; sales_close_at: Date;
@@ -216,7 +220,7 @@ export class TripsService {
               sl.definition, sl.name AS layout_name, sl.unit, sl.kind,
               v.name AS vehicle_name, v.code AS vehicle_code
        FROM trips t JOIN seat_layouts sl ON sl.id = t.seat_layout_id JOIN vehicles v ON v.id = t.vehicle_id
-       WHERE t.id = $1`,
+       WHERE t.id = $1 AND t.status <> 'DRAFT'`,
       [tripId],
     );
     const t = trips[0];

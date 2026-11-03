@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { DomainError, notFound } from '../common/errors';
+import { isUuid } from '../common/ids';
 import { Db, Queryable } from '../db/db';
 import { LayoutKind, parseLayout } from './layout-parser';
 import { LIBRARY_LAYOUTS } from './library';
@@ -99,6 +100,7 @@ export class SeatLayoutsService {
 
   /** Lấy sơ đồ mà nhà xe được dùng: của chính nhà xe đó hoặc thư viện dùng chung. */
   async getUsable(operatorId: string, layoutId: string, q: Queryable = this.db): Promise<SeatLayoutRow> {
+    if (!isUuid(operatorId) || !isUuid(layoutId)) throw notFound('mẫu sơ đồ');
     const { rows } = await q.query<SeatLayoutRow>(
       `SELECT * FROM seat_layouts WHERE id = $1 AND (operator_id = $2 OR operator_id IS NULL)`,
       [layoutId, operatorId],

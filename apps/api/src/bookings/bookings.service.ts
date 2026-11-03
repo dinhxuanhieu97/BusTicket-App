@@ -117,7 +117,7 @@ export class BookingsService {
     const { rows: trips } = await c.query<{
       id: string; operator_id: string; status: string; sales_open_at: Date; sales_close_at: Date; depart_at: Date;
     }>(
-      'SELECT id, operator_id, status, sales_open_at, sales_close_at, depart_at FROM trips WHERE id = $1 FOR UPDATE',
+      'SELECT id, operator_id, status, sales_open_at, sales_close_at, depart_at FROM trips WHERE id = $1 FOR NO KEY UPDATE',
       [tripId],
     );
     const trip = trips[0];
@@ -220,7 +220,7 @@ export class BookingsService {
     let count = 0;
     for (const { trip_id } of rows) {
       count += await this.db.tx(async (c) => {
-        await c.query('SELECT id FROM trips WHERE id = $1 FOR UPDATE', [trip_id]);
+        await c.query('SELECT id FROM trips WHERE id = $1 FOR NO KEY UPDATE', [trip_id]);
         const { rows: due } = await c.query<{ n: number }>(
           `SELECT COUNT(*)::int AS n FROM bookings WHERE trip_id = $1 AND status = 'HOLDING' AND hold_expires_at <= $2`,
           [trip_id, now],
