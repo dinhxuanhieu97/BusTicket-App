@@ -13,6 +13,6 @@ Web app giúp khách đặt vé xe giường nằm/limousine online (chọn ch�
 ## Bản mẫu giao diện
 
 - [prototype/so-do-cho.html](prototype/so-do-cho.html) — Sơ đồ chọn chỗ: 2 xe mặc định (Limousine bán theo phòng đơn/đôi, giường nằm) và mẫu ghế ngồi: còn trống / đang giữ / đã đặt / không bán. Mở trực tiếp bằng trình duyệt, không cần cài đặt.
+- [templates/mau-danh-sach-khach-theo-chuyen.xlsx](templates/mau-danh-sach-khach-theo-chuyen.xlsx) — File Excel mẫu danh sách khách theo chuyến cho phụ xe.
 
 > Trạng thái: giai đoạn thiết kế, chưa có mã nguồn hay kết nối thanh toán thật.
-- [templates/mau-danh-sach-khach-theo-chuyen.xlsx](templates/mau-danh-sach-khach-theo-chuyen.xlsx) — File Excel mẫu danh sách khách theo chuyến cho phụ xe.
