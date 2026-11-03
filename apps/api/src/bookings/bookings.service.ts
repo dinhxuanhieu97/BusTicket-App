@@ -1,4 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { AbuseConfig } from '../abuse/abuse-config';
+import { PhoneVerificationService } from '../abuse/phone-verification.service';
+import { RateLimiter } from '../abuse/rate-limiter';
 import { createHash } from 'node:crypto';
 import { PoolClient } from 'pg';
 import { z } from 'zod';
@@ -64,6 +67,14 @@ interface BookingRow {
 
 const MAX_CODE_ATTEMPTS = 5;
 
+/** Ngữ cảnh yêu cầu dùng để chống lạm dụng. */
+export interface HoldContext {
+  /** IP người gửi (đã xử lý proxy tin cậy ở tầng HTTP). */
+  ip?: string;
+  /** Token "đã xác thực SĐT" (header `X-Phone-Token`), bắt buộc khi nhà xe bật `requirePhoneOtp`. */
+  phoneToken?: string;
+}
+
 @Injectable()
 export class BookingsService {
   constructor(
@@ -71,13 +82,16 @@ export class BookingsService {
     private readonly operators: OperatorsService,
     private readonly clock: Clock,
     private readonly tokenSecret: TokenSecret,
+    private readonly limiter: RateLimiter,
+    private readonly abuse: AbuseConfig,
+    private readonly phones: PhoneVerificationService,
   ) {}
 
   /**
    * Tạo đơn giữ chỗ cho nhiều chỗ/phòng trên một chuyến — thành công toàn bộ hoặc không giữ gì
    * (AC-01, AC-02). Khóa hàng của chuyến để các yêu cầu cùng chuyến xếp hàng tuần tự.
    */
-  async createHold(input: CreateHoldInput, idempotencyKey: string): Promise<HoldResult> {
+  async createHold(input: CreateHoldInput, idempotencyKey: string, ctx: HoldContext = {}): Promise<HoldResult> {
     const data = createHoldSchema.parse(input);
     const key = idempotencyKey.trim();
     if (!/^[\w-]{8,100}$/.test(key)) {
@@ -93,8 +107,16 @@ export class BookingsService {
       .update(JSON.stringify({ tripId: data.tripId, name: data.contactName, phone, items }))
       .digest('hex');
 
+    // Giới hạn tần suất (ngoài transaction, để bộ đếm không bị ROLLBACK khi yêu cầu thất bại).
+    const busy = 'Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.';
+    if (ctx.ip) await this.limiter.consume(`booking-ip:${ctx.ip}`, this.abuse.bookingsPerIpPerMinute, 60, busy);
+    const { rows: tripOps } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [data.tripId]);
+    if (tripOps[0]) {
+      await this.limiter.consume(`booking-phone:${tripOps[0].operator_id}:${phone}`, this.abuse.bookingsPerPhonePerHour, 3600, busy);
+    }
+
     try {
-      return await this.db.tx((c) => this.holdInTx(c, data.tripId, data.contactName, phone, items, key, requestHash));
+      return await this.db.tx((c) => this.holdInTx(c, data.tripId, data.contactName, phone, items, key, requestHash, ctx));
     } catch (e) {
       // Cùng khóa nhưng gửi cho chuyến khác, chạy song song: ràng buộc duy nhất chặn, trả kết quả nhất quán.
       if (isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'bookings_operator_id_idempotency_key_key') {
@@ -113,6 +135,7 @@ export class BookingsService {
     items: { seatCode: string; occupancy: number; infantCount: number }[],
     key: string,
     requestHash: string,
+    ctx: HoldContext,
   ): Promise<HoldResult> {
     const now = this.clock.now();
     const { rows: trips } = await c.query<{
@@ -137,7 +160,27 @@ export class BookingsService {
       });
     }
 
+    if (policy.requirePhoneOtp && !this.phones.verifyToken(ctx.phoneToken, trip.operator_id, phone)) {
+      throw new DomainError('PHONE_VERIFICATION_REQUIRED', 'Vui lòng xác thực số điện thoại bằng mã OTP trước khi giữ chỗ.');
+    }
+
     await this.expireDueHoldsForTrip(c, tripId, now);
+
+    // Số đơn đang giữ của SĐT này trong nhà xe. Khóa theo (nhà xe, SĐT) để các yêu cầu song song
+    // (kể cả ở chuyến khác) không cùng lọt qua bước đếm. Luôn khóa chuyến trước rồi mới khóa SĐT.
+    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`hold-phone:${trip.operator_id}:${phone}`]);
+    const { rows: active } = await c.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM bookings
+       WHERE operator_id = $1 AND contact_phone = $2 AND status = 'HOLDING' AND hold_expires_at > $3`,
+      [trip.operator_id, phone, now],
+    );
+    if (active[0]!.n >= policy.maxActiveHoldsPerPhone) {
+      throw new DomainError(
+        'LIMIT_EXCEEDED',
+        `Số điện thoại này đang giữ ${active[0]!.n} đơn chưa thanh toán. Vui lòng thanh toán hoặc chờ đơn cũ hết hạn.`,
+        { maxActiveHoldsPerPhone: policy.maxActiveHoldsPerPhone },
+      );
+    }
 
     const codes = items.map((i) => i.seatCode);
     const { rows: seats } = await c.query<{ seat_code: string; floor: string; max_occupancy: number; sellable: boolean; booking_id: string | null }>(

@@ -14,7 +14,9 @@ export type ErrorCode =
   | 'MFA_REQUIRED'
   | 'MFA_SETUP_REQUIRED'
   | 'FORBIDDEN'
-  | 'TOO_MANY_ATTEMPTS';
+  | 'TOO_MANY_ATTEMPTS'
+  | 'PHONE_VERIFICATION_REQUIRED'
+  | 'SERVICE_UNAVAILABLE';
 
 const HTTP_STATUS: Record<ErrorCode, number> = {
   VALIDATION_FAILED: 400,
@@ -32,6 +34,8 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   MFA_SETUP_REQUIRED: 403,
   FORBIDDEN: 403,
   TOO_MANY_ATTEMPTS: 429,
+  PHONE_VERIFICATION_REQUIRED: 403,
+  SERVICE_UNAVAILABLE: 503,
 };
 
 /** Lỗi nghiệp vụ: `message` là tiếng Việt, khách đọc được; `details` không chứa dữ liệu cá nhân. */

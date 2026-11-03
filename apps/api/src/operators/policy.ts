@@ -16,6 +16,10 @@ export const policyInputSchema = z
     holdMinutes: z.number().int().min(1).max(120),
     maxUnitsPerBooking: z.number().int().min(1).max(20),
     childPolicy: childPolicySchema,
+    /** Số đơn đang giữ chỗ tối đa cùng lúc cho một SĐT (chống giữ chỗ ảo). */
+    maxActiveHoldsPerPhone: z.number().int().min(1).max(20).default(2),
+    /** Chế độ cao điểm: bắt buộc xác thực SĐT bằng OTP trước khi giữ chỗ. */
+    requirePhoneOtp: z.boolean().default(false),
   })
   .strict();
 export type PolicyInput = z.infer<typeof policyInputSchema>;
@@ -29,4 +33,6 @@ export const DEFAULT_POLICY: PolicyInput = {
   holdMinutes: 10,
   maxUnitsPerBooking: 5,
   childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false },
+  maxActiveHoldsPerPhone: 2,
+  requirePhoneOtp: false,
 };

@@ -1,6 +1,10 @@
 import 'reflect-metadata';
 import { Pool } from 'pg';
 import { ZodError } from 'zod';
+import { AbuseConfig } from '../src/abuse/abuse-config';
+import { PhoneVerificationService } from '../src/abuse/phone-verification.service';
+import { RateLimiter } from '../src/abuse/rate-limiter';
+import { CapturingSmsSender } from '../src/abuse/sms-sender';
 import { BookingsService, TokenSecret } from '../src/bookings/bookings.service';
 import { FixedClock } from '../src/common/clock';
 import { DomainError } from '../src/common/errors';
@@ -36,18 +40,37 @@ export interface Services {
   vehicles: VehiclesService;
   trips: TripsService;
   bookings: BookingsService;
+  limiter: RateLimiter;
+  phones: PhoneVerificationService;
+  sms: CapturingSmsSender;
 }
+
+/**
+ * Ngưỡng rất cao cho các bộ test không nhằm kiểm tra chống lạm dụng (chúng dùng chung một SĐT/IP cho nhiều đơn).
+ * Ngưỡng thật được kiểm tra trong `abuse.int-spec.ts`.
+ */
+export const RELAXED_ABUSE: Partial<AbuseConfig> = {
+  bookingsPerIpPerMinute: 100_000,
+  bookingsPerPhonePerHour: 100_000,
+  loginsPerIpPer15Min: 100_000,
+  otpPerIpPerHour: 100_000,
+};
 
 export const T0 = new Date('2027-01-20T03:00:00.000Z'); // 10:00 giờ VN
 
-export function buildServices(clock = new FixedClock(T0)): Services {
+export function buildServices(clock = new FixedClock(T0), abuse: Partial<AbuseConfig> = RELAXED_ABUSE): Services {
   const db = new Db(new DbConfig(TEST_DB_URL, 30));
   const layouts = new SeatLayoutsService(db);
   const operators = new OperatorsService(db, layouts);
   const vehicles = new VehiclesService(db, layouts);
   const trips = new TripsService(db, operators, clock);
-  const bookings = new BookingsService(db, operators, clock, new TokenSecret(TOKEN_SECRET));
-  return { db, clock, layouts, operators, vehicles, trips, bookings };
+  const config = new AbuseConfig(abuse);
+  const limiter = new RateLimiter(db, clock);
+  const sms = new CapturingSmsSender();
+  const secret = new TokenSecret(TOKEN_SECRET);
+  const phones = new PhoneVerificationService(db, clock, config, limiter, sms, secret);
+  const bookings = new BookingsService(db, operators, clock, secret, limiter, config, phones);
+  return { db, clock, layouts, operators, vehicles, trips, bookings, limiter, phones, sms };
 }
 
 export const LIMO_FARES = [
@@ -64,6 +87,8 @@ export const BED_FARES = [
 /** Nhà xe + tuyến + 2 chuyến (Limousine 18:00 và giường nằm 19:30 ngày 01/02/2027 giờ VN), đang mở bán. */
 export async function seedOperatorWithTrips(s: Services, code = 'PN') {
   const op = await s.operators.create({ code, name: `Nhà xe ${code}` });
+  // Các bộ test chung dùng một SĐT cho nhiều đơn: nới giới hạn đơn đang giữ (kiểm tra riêng ở abuse.int-spec.ts).
+  await s.operators.updatePolicy(op.id, { holdMinutes: 10, maxUnitsPerBooking: 5, childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20 });
   const [limo, bed] = await s.vehicles.list(op.id);
   const route = await s.trips.createRoute(op.id, { code: 'HCM-HA', origin: 'TP.HCM', destination: 'Hoài Ân' });
   const common = {

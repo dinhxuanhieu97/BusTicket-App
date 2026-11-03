@@ -1,4 +1,8 @@
 import { DynamicModule, Module } from '@nestjs/common';
+import { AbuseConfig } from './abuse/abuse-config';
+import { PhoneVerificationService } from './abuse/phone-verification.service';
+import { RateLimiter } from './abuse/rate-limiter';
+import { NotConfiguredSmsSender, SmsSender } from './abuse/sms-sender';
 import { AdminController } from './admin/admin.controller';
 import { AuditService } from './audit/audit.service';
 import { AuthController } from './auth/auth.controller';
@@ -20,6 +24,8 @@ export interface AppOptions {
   bookingTokenSecret: string;
   authTokenSecret: string;
   clock?: Clock;
+  abuse?: Partial<AbuseConfig>;
+  smsSender?: SmsSender;
 }
 
 @Module({})
@@ -34,6 +40,10 @@ export class AppModule {
         { provide: TokenSecret, useValue: new TokenSecret(opts.bookingTokenSecret) },
         { provide: AuthConfig, useValue: new AuthConfig(opts.authTokenSecret) },
         { provide: SecretBox, useValue: new SecretBox(opts.authTokenSecret) },
+        { provide: AbuseConfig, useValue: new AbuseConfig(opts.abuse) },
+        { provide: SmsSender, useValue: opts.smsSender ?? new NotConfiguredSmsSender() },
+        RateLimiter,
+        PhoneVerificationService,
         Db,
         SeatLayoutsService,
         OperatorsService,

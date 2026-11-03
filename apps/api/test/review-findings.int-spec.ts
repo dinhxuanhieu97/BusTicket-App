@@ -22,7 +22,7 @@ describe('malformed ids return NOT_FOUND instead of a raw database error', () =>
         s.operators.updatePolicy('nope', {
           holdMinutes: 10,
           maxUnitsPerBooking: 5,
-          childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false },
+          childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20,
         }),
       ),
     ).toBe('NOT_FOUND');
@@ -54,14 +54,14 @@ describe('policy versioning', () => {
     const input = {
       holdMinutes: 10,
       maxUnitsPerBooking: 5,
-      childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false },
+      childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20,
     };
     await Promise.all(Array.from({ length: 10 }, () => s.operators.updatePolicy(seed.op.id, input)));
     const { rows } = await s.db.query<{ v: number[] }>(
       'SELECT array_agg(version ORDER BY version) AS v FROM operator_policies WHERE operator_id = $1',
       [seed.op.id],
     );
-    expect(rows[0]!.v).toEqual(Array.from({ length: 11 }, (_, i) => i + 1));
+    expect(rows[0]!.v).toEqual(Array.from({ length: 12 }, (_, i) => i + 1)); // v1 tạo nhà xe, v2 helper, +10
   });
 
   it('a policy update does not wait for open transactions that reference the operator', async () => {
@@ -76,7 +76,7 @@ describe('policy versioning', () => {
       const update = s.operators.updatePolicy(seed.op.id, {
         holdMinutes: 10,
         maxUnitsPerBooking: 5,
-        childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false },
+        childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20,
       });
       const outcome = await Promise.race([
         update.then(() => 'done'),
@@ -96,7 +96,7 @@ describe('policy versioning', () => {
         s.operators.updatePolicy(seed.op.id, {
           holdMinutes: 10,
           maxUnitsPerBooking: 5,
-          childPolicy: { freeUnderAge: 2, price: 3_000_000_000, maxPerUnit: 1, countsTowardCapacity: false },
+          childPolicy: { freeUnderAge: 2, price: 3_000_000_000, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20,
         }),
       ),
     ).toBe('VALIDATION_FAILED');

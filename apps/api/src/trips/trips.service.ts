@@ -265,11 +265,11 @@ export class TripsService {
     if (!isUuid(tripId)) throw notFound('chuyến');
     const now = this.clock.now();
     const { rows: trips } = await this.db.query<{
-      id: string; name: string; depart_at: Date; status: string; sales_open_at: Date; sales_close_at: Date;
+      id: string; operator_id: string; name: string; depart_at: Date; status: string; sales_open_at: Date; sales_close_at: Date;
       definition: { floors: { code: string; label: string; rows: string[] }[] }; layout_name: string; unit: string; kind: string;
       vehicle_name: string; vehicle_code: string;
     }>(
-      `SELECT t.id, t.name, t.depart_at, t.status, t.sales_open_at, t.sales_close_at,
+      `SELECT t.id, t.operator_id, t.name, t.depart_at, t.status, t.sales_open_at, t.sales_close_at,
               sl.definition, sl.name AS layout_name, sl.unit, sl.kind,
               v.name AS vehicle_name, v.code AS vehicle_code
        FROM trips t JOIN seat_layouts sl ON sl.id = t.seat_layout_id JOIN vehicles v ON v.id = t.vehicle_id
@@ -290,8 +290,15 @@ export class TripsService {
       [tripId],
     );
     const onSale = t.status === 'OPEN' && t.sales_open_at <= now && now < t.sales_close_at;
+    const policy = await this.operators.currentPolicy(t.operator_id);
     return {
       trip: { id: t.id, name: t.name, departAt: t.depart_at.toISOString(), onSale },
+      /** Cho giao diện biết cần làm bước OTP trước khi giữ chỗ hay không, và giới hạn mỗi đơn. */
+      booking: {
+        requiresPhoneOtp: policy.requirePhoneOtp,
+        maxUnitsPerBooking: policy.maxUnitsPerBooking,
+        holdMinutes: policy.holdMinutes,
+      },
       vehicle: { name: t.vehicle_name, code: t.vehicle_code },
       layout: {
         name: t.layout_name,

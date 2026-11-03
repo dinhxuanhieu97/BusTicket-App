@@ -4,7 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { hotp, base32Decode } from '../src/auth/totp';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
-import { AUTH_SECRET, buildServices, resetDatabase, Services, T0, TEST_DB_URL, TOKEN_SECRET } from './helpers';
+import { AUTH_SECRET, RELAXED_ABUSE, buildServices, resetDatabase, Services, T0, TEST_DB_URL, TOKEN_SECRET } from './helpers';
 import { UsersService } from '../src/auth/users.service';
 
 let app: INestApplication;
@@ -58,7 +58,7 @@ beforeAll(async () => {
   s = buildServices();
   await new UsersService(s.db, s.clock).createPlatformAdmin({ fullName: 'Quản trị', ...ADMIN });
   const moduleRef = await Test.createTestingModule({
-    imports: [AppModule.forRoot({ databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET, clock: s.clock })],
+    imports: [AppModule.forRoot({ databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET, abuse: RELAXED_ABUSE, clock: s.clock })],
   }).compile();
   app = moduleRef.createNestApplication({ logger: false });
   app.useGlobalFilters(new HttpErrorFilter());

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { z } from 'zod';
 import { AuditService } from '../audit/audit.service';
 import { AllowScopes, AuthedRequest, AuthGuard, AuthOnly } from './auth.guard';
@@ -16,8 +17,8 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(200)
-  login(@Body() body: unknown) {
-    return this.auth.login(body as never);
+  login(@Body() body: unknown, @Req() req: Request) {
+    return this.auth.login(body as never, req.ip);
   }
 
   @Get('me')

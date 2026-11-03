@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { AbuseConfig } from '../abuse/abuse-config';
+import { RateLimiter } from '../abuse/rate-limiter';
 import { z } from 'zod';
 import { Clock } from '../common/clock';
 import { DomainError } from '../common/errors';
@@ -90,6 +92,8 @@ export class AuthService {
     private readonly clock: Clock,
     private readonly config: AuthConfig,
     private readonly box: SecretBox,
+    private readonly limiter: RateLimiter,
+    private readonly abuse: AbuseConfig,
   ) {}
 
   private nowSeconds(): number {
@@ -100,8 +104,12 @@ export class AuthService {
    * Đăng nhập bằng SĐT + mật khẩu (+ OTP nếu đã bật 2FA). Sai gì cũng trả cùng một lỗi chung;
    * sai quá số lần cho phép thì khóa tạm thời. Vai trò bắt buộc 2FA mà chưa bật → token chỉ để thiết lập 2FA.
    */
-  async login(input: z.input<typeof loginSchema>): Promise<IssuedToken> {
+  async login(input: z.input<typeof loginSchema>, ip?: string): Promise<IssuedToken> {
     const data = loginSchema.parse(input);
+    // Giới hạn theo IP (mọi tài khoản cộng lại): chặn dò hàng loạt SĐT/mật khẩu từ một nguồn.
+    if (ip) {
+      await this.limiter.consume(`login-ip:${ip}`, this.abuse.loginsPerIpPer15Min, 900, 'Đăng nhập quá nhiều lần. Vui lòng thử lại sau.');
+    }
     let phone: string;
     try {
       phone = normalizeVnPhone(data.phone);

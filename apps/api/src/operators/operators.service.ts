@@ -90,8 +90,11 @@ export class OperatorsService {
       hold_minutes: number;
       max_units_per_booking: number;
       child_policy: OperatorPolicy['childPolicy'];
+      max_active_holds_per_phone: number;
+      require_phone_otp: boolean;
     }>(
-      `SELECT version, hold_minutes, max_units_per_booking, child_policy FROM operator_policies
+      `SELECT version, hold_minutes, max_units_per_booking, child_policy, max_active_holds_per_phone, require_phone_otp
+       FROM operator_policies
        WHERE operator_id = $1 ORDER BY version DESC LIMIT 1`,
       [operatorId],
     );
@@ -103,11 +106,13 @@ export class OperatorsService {
       holdMinutes: r.hold_minutes,
       maxUnitsPerBooking: r.max_units_per_booking,
       childPolicy: r.child_policy,
+      maxActiveHoldsPerPhone: r.max_active_holds_per_phone,
+      requirePhoneOtp: r.require_phone_otp,
     };
   }
 
   /** Cập nhật chính sách = thêm phiên bản mới; đơn cũ giữ bản đã chụp. */
-  async updatePolicy(operatorId: string, input: PolicyInput): Promise<OperatorPolicy> {
+  async updatePolicy(operatorId: string, input: z.input<typeof policyInputSchema>): Promise<OperatorPolicy> {
     const data = policyInputSchema.parse(input);
     if (!isUuid(operatorId)) throw notFound('nhà xe');
     return this.db.tx(async (c) => {
@@ -125,9 +130,11 @@ export class OperatorsService {
 
   private async insertPolicy(c: Queryable, operatorId: string, version: number, p: PolicyInput): Promise<void> {
     await c.query(
-      `INSERT INTO operator_policies (operator_id, version, hold_minutes, max_units_per_booking, child_policy)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [operatorId, version, p.holdMinutes, p.maxUnitsPerBooking, JSON.stringify(p.childPolicy)],
+      `INSERT INTO operator_policies (operator_id, version, hold_minutes, max_units_per_booking, child_policy,
+                                      max_active_holds_per_phone, require_phone_otp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [operatorId, version, p.holdMinutes, p.maxUnitsPerBooking, JSON.stringify(p.childPolicy),
+        p.maxActiveHoldsPerPhone, p.requirePhoneOtp],
     );
   }
 }

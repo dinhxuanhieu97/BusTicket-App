@@ -1,4 +1,6 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { PhoneVerificationService } from './abuse/phone-verification.service';
 import { z } from 'zod';
 import { DomainError, notFound } from './common/errors';
 import { BookingsService } from './bookings/bookings.service';
@@ -17,6 +19,7 @@ export class PublicController {
   constructor(
     private readonly trips: TripsService,
     private readonly bookings: BookingsService,
+    private readonly phones: PhoneVerificationService,
   ) {}
 
   @Get('operators/:operatorCode/trips')
@@ -33,12 +36,30 @@ export class PublicController {
 
   @Post('bookings')
   @HttpCode(201)
-  async createBooking(@Body() body: unknown, @Headers('idempotency-key') idempotencyKey?: string) {
+  async createBooking(
+    @Body() body: unknown,
+    @Req() req: Request,
+    @Headers('idempotency-key') idempotencyKey?: string,
+    @Headers('x-phone-token') phoneToken?: string,
+  ) {
     if (!idempotencyKey) {
       throw new DomainError('VALIDATION_FAILED', 'Thiếu header Idempotency-Key.', { field: 'Idempotency-Key' });
     }
-    const result = await this.bookings.createHold(body as never, idempotencyKey);
-    return result;
+    return this.bookings.createHold(body as never, idempotencyKey, { ip: req.ip, phoneToken });
+  }
+
+  /** Bước 1 xác thực SĐT (khi nhà xe bật chế độ cao điểm): gửi mã OTP qua SMS. */
+  @Post('phone-verifications')
+  @HttpCode(201)
+  startPhoneVerification(@Body() body: unknown, @Req() req: Request) {
+    return this.phones.start(body as never, req.ip ?? 'unknown');
+  }
+
+  /** Bước 2: nhập mã → nhận `phoneToken` để gửi kèm header `X-Phone-Token` khi giữ chỗ. */
+  @Post('phone-verifications/verify')
+  @HttpCode(200)
+  verifyPhone(@Body() body: unknown) {
+    return this.phones.verify(body as never);
   }
 
   /** Token đi trong header, không đặt trên URL để không bị ghi log (PNTicketDocs mục 11). */

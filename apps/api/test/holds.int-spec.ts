@@ -46,7 +46,7 @@ describe('createHold — happy path', () => {
       [r.booking.code],
     );
     expect(rows[0]!.contact_phone).toBe('+84912345678');
-    expect(rows[0]!.policy_snapshot).toMatchObject({ version: 1, holdMinutes: 10 });
+    expect(rows[0]!.policy_snapshot).toMatchObject({ version: 2, holdMinutes: 10, maxActiveHoldsPerPhone: 20 });
     expect(await seatStatus(seed.limoTrip.id, 'A2')).toBe('HELD');
   });
 
@@ -62,7 +62,7 @@ describe('createHold — happy path', () => {
     await s.operators.updatePolicy(seed.op.id, {
       holdMinutes: 5,
       maxUnitsPerBooking: 5,
-      childPolicy: { freeUnderAge: 2, price: 99_000, maxPerUnit: 1, countsTowardCapacity: false },
+      childPolicy: { freeUnderAge: 2, price: 99_000, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20,
     });
     const view = await s.bookings.getByCode(r.booking.code, r.accessToken);
     expect(view.totalAmount).toBe(450_000);
@@ -70,7 +70,7 @@ describe('createHold — happy path', () => {
       'SELECT policy_snapshot FROM bookings WHERE code = $1',
       [r.booking.code],
     );
-    expect(rows[0]!.policy_snapshot.version).toBe(1);
+    expect(rows[0]!.policy_snapshot.version).toBe(2);
     // Đơn mới dùng chính sách mới: giữ 5 phút, trẻ em tính 99.000đ.
     const r2 = await s.bookings.createHold(
       { tripId: seed.limoTrip.id, ...contact, items: [{ seatCode: 'A5', infantCount: 1 }] },
@@ -81,7 +81,7 @@ describe('createHold — happy path', () => {
     await s.operators.updatePolicy(seed.op.id, {
       holdMinutes: 10,
       maxUnitsPerBooking: 5,
-      childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false },
+      childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false }, maxActiveHoldsPerPhone: 20,
     });
   });
 });
