@@ -61,12 +61,12 @@ export const T0 = new Date('2027-01-20T03:00:00.000Z'); // 10:00 giờ VN
 export function buildServices(clock = new FixedClock(T0), abuse: Partial<AbuseConfig> = RELAXED_ABUSE): Services {
   const db = new Db(new DbConfig(TEST_DB_URL, 30));
   const layouts = new SeatLayoutsService(db);
-  const operators = new OperatorsService(db, layouts);
+  const sms = new CapturingSmsSender();
+  const operators = new OperatorsService(db, layouts, sms);
   const vehicles = new VehiclesService(db, layouts);
   const trips = new TripsService(db, operators, clock);
   const config = new AbuseConfig(abuse);
   const limiter = new RateLimiter(db, clock);
-  const sms = new CapturingSmsSender();
   const secret = new TokenSecret(TOKEN_SECRET);
   const phones = new PhoneVerificationService(db, clock, config, limiter, sms, secret);
   const bookings = new BookingsService(db, operators, clock, secret, limiter, config, phones);

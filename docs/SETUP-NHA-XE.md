@@ -132,6 +132,7 @@ Bạn làm cùng chủ xe cho **mỗi nhà xe mới**. Chỉ mở bán khi mọi
 - [ ] ● Giá mùa Lễ/Tết (nếu có) và ngày áp dụng
 - [ ] ● **Chính sách trẻ em** (mục 3)
 - [ ] ● Cọc (% hoặc số tiền), hạn trả phần còn lại
+- [ ] Chống giữ chỗ ảo: số đơn chưa thanh toán tối đa mỗi SĐT (mặc định 2); **chế độ cao điểm** (bắt buộc OTP SĐT) — chỉ bật được khi đã cấu hình SMS
 - [ ] ● Thời gian giữ chỗ; giới hạn số chỗ mỗi đơn
 - [ ] ● Chính sách đổi/hủy/hoàn, ai được duyệt hoàn
 

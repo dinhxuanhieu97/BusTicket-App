@@ -100,7 +100,8 @@ export class AdminController {
   @Perm('policy.write')
   async updatePolicy(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
     const p = await this.operators.updatePolicy(operatorId, body as never);
-    await this.log(req, operatorId, 'policy.update', 'operator_policy', String(p.version), body as object);
+    // Ghi chính sách sau khi gộp (thấy rõ cả các trường được giữ nguyên).
+    await this.log(req, operatorId, 'policy.update', 'operator_policy', String(p.version), { ...p });
     return p;
   }
 

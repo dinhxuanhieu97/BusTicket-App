@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AbuseConfig } from '../abuse/abuse-config';
+import { clientKey } from '../abuse/client-ip';
 import { RateLimiter } from '../abuse/rate-limiter';
 import { z } from 'zod';
 import { Clock } from '../common/clock';
@@ -79,7 +80,11 @@ export const loginSchema = z
 
 export const passwordSchema = z.string().min(PASSWORD_RULE.min, `Mật khẩu tối thiểu ${PASSWORD_RULE.min} ký tự`).max(PASSWORD_RULE.max);
 
-const invalidCredentials = () => new DomainError('INVALID_CREDENTIALS', 'Số điện thoại, mật khẩu hoặc mã xác thực không đúng.');
+const invalidCredentials = () =>
+  new DomainError(
+    'INVALID_CREDENTIALS',
+    'Số điện thoại, mật khẩu hoặc mã xác thực không đúng, hoặc tài khoản đang tạm khóa do đăng nhập sai nhiều lần.',
+  );
 
 export function toPublicUser(u: UserRow): PublicUser {
   return { id: u.id, operatorId: u.operator_id, fullName: u.full_name, phone: u.phone, role: u.role, mfaEnabled: u.mfa_enabled };
@@ -107,8 +112,9 @@ export class AuthService {
   async login(input: z.input<typeof loginSchema>, ip?: string): Promise<IssuedToken> {
     const data = loginSchema.parse(input);
     // Giới hạn theo IP (mọi tài khoản cộng lại): chặn dò hàng loạt SĐT/mật khẩu từ một nguồn.
-    if (ip) {
-      await this.limiter.consume(`login-ip:${ip}`, this.abuse.loginsPerIpPer15Min, 900, 'Đăng nhập quá nhiều lần. Vui lòng thử lại sau.');
+    const source = clientKey(ip);
+    if (source) {
+      await this.limiter.consume(`login-ip:${source}`, this.abuse.loginsPerIpPer15Min, 900, 'Đăng nhập quá nhiều lần. Vui lòng thử lại sau.');
     }
     let phone: string;
     try {
@@ -126,7 +132,10 @@ export class AuthService {
     // Giữ chỗ một lượt thử TRƯỚC khi kiểm mật khẩu, nguyên tử trong DB: các yêu cầu song song không thể
     // cùng lọt qua kiểm tra khóa (tối đa `maxFailedLogins` lượt mỗi cửa sổ khóa).
     if (!(await this.reserveAttempt(user.id))) {
-      throw new DomainError('TOO_MANY_ATTEMPTS', 'Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau.');
+      // Tài khoản đang tạm khóa trả đúng lỗi chung như SĐT không tồn tại (cùng thời gian xử lý),
+      // để không ai dò được SĐT nào là tài khoản thật.
+      await verifyPassword(data.password, await dummyHash());
+      throw invalidCredentials();
     }
     const passwordOk = await verifyPassword(data.password, user.password_hash);
     if (!passwordOk || user.status !== 'ACTIVE') throw invalidCredentials();

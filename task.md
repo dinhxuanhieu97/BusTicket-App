@@ -9,10 +9,10 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] **T3. Tuyến, chuyến, giá**: tạo tuyến; tạo chuyến sinh `trip_seats` từ phiên bản sơ đồ; giá theo tầng × số người (phòng đơn/đôi) bắt buộc đủ; tìm chuyến theo ngày (giờ VN); API sơ đồ chỗ công khai không lộ dữ liệu khách.
 - [x] **T4. Giữ chỗ chống bán trùng**: `POST /api/v1/bookings` giữ nhiều chỗ nguyên tử (all-or-nothing), hết hạn giữ chỗ, phòng đơn/đôi, trẻ dưới 2 tuổi theo chính sách, chụp giá/chính sách vào đơn, `Idempotency-Key`, chuẩn hóa SĐT, mã đơn an toàn. Test AC-01, AC-02, AC-03, idempotency.
 
-## Giai đoạn 2 — Tiếp theo (T5 xong 03/11/2026 · 191 test pass)
+## Giai đoạn 2 — Tiếp theo (T5, T5b xong 03/11/2026 · 247 test pass)
 
 - [x] **T5. Xác thực nội bộ + phân quyền + cô lập nhà xe** (JWT, vai trò, 2FA cho chủ xe/kế toán) và API quản trị cho T2/T3. Chỉ quản trị nền tảng được sửa thư viện mẫu sơ đồ dùng chung.
-- [~] **T5b. Chống giữ chỗ ảo mùa cao điểm**: giới hạn tần suất `POST /bookings` theo IP và SĐT, số đơn đang giữ tối đa mỗi SĐT, OTP khi bật cao điểm (PNTicketDocs mục 5.2, 12).
+- [x] **T5b. Chống giữ chỗ ảo mùa cao điểm**: giới hạn tần suất `POST /bookings` theo IP và SĐT, số đơn đang giữ tối đa mỗi SĐT, OTP khi bật cao điểm (PNTicketDocs mục 5.2, 12).
 - [ ] **T6. Thanh toán**: `payment_requests`, webhook SePay/payOS (xác thực chữ ký, chống trùng), phân bổ tiền, xác nhận đơn, ngoại lệ (thiếu/dư/muộn), xác nhận thủ công có quyền (mức 0).
 - [ ] **T7. Vé + outbox + gửi vé**: phát hành vé theo đơn vị bán, QR token, outbox, kênh ưu tiên miễn phí (trang vé, email, Zalo OA) rồi ZNS/SMS, hạn mức chi phí tin.
 - [ ] **T8. Danh sách khách theo chuyến**: API + **xuất Excel để xem** theo mẫu `templates/mau-danh-sach-khach-theo-chuyen.xlsx`. Không cần in vé giấy/máy in nhiệt (chốt 03/11/2026).
@@ -39,7 +39,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] 03/11/2026 · T5 · `SecretBox.open` không cố định độ dài tag GCM. — đã đặt `authTagLength: 16`
 - [x] 03/11/2026 · T5 · `redact()` chỉ lọc tầng ngoài, ít từ khóa. — lọc mọi tầng, thêm mfa/hash/key/cred
 - [ ] 03/11/2026 · T5 · Nhật ký thao tác ghi **sau** khi transaction nghiệp vụ commit → nếu DB lỗi đúng lúc đó có thể mất dòng nhật ký. Cần ghi trong cùng transaction (truyền client từ service) — làm cùng T6 (thao tác tiền bắt buộc có nhật ký).
-- [ ] 03/11/2026 · T5 · Tài khoản bị khóa trả `TOO_MANY_ATTEMPTS` còn SĐT không tồn tại trả `INVALID_CREDENTIALS` → lộ một phần sự tồn tại tài khoản sau 5 lần thử. Thấp; xem xét cùng giới hạn theo IP ở T5b.
+- [x] 03/11/2026 · T5/T5b · Tài khoản bị khóa từng trả lỗi khác SĐT không tồn tại → dò được SĐT nào là tài khoản (và khóa luôn tài khoản đó). — tài khoản đang khóa trả đúng lỗi chung, cùng thời gian xử lý; thêm giới hạn đăng nhập theo IP
 - [x] 03/11/2026 · T5 · Phân quyền theo vai trò tài khoản (chốt 03/11/2026). Bảng quyền: `docs/PHAN-QUYEN.md`.
 
 ### Rà soát subagent — T5 (03/11/2026)
@@ -66,6 +66,26 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 | `BookingsService` (+ pricing) | Không bug; ghi chú `A01`/`A1` là hai mã khác nhau | Thử 416 mã để kiểm thứ tự sắp xếp/hash | Đồng ý; chặn số 0 đứng đầu | Không (đã gia cố) |
 | `TripsService` | Không bug; cùng rủi ro thư viện cũ; sắp xếp chỗ kiểu chữ | Probe: BED40 20 chỗ/tầng, giá thấp nhất 350.000đ | Đồng ý; sửa sắp xếp tự nhiên + test | Không (đã gia cố) |
 | `OperatorsService` | Không bug; rủi ro DB tạo trước commit | `library.get(...)!` luôn có vì `ensureLibrary` tạo đủ | Đồng ý (đã sửa ở `SeatLayoutsService`) | Không |
+
+- [x] 03/11/2026 · T5b · **Bug (Cao)**: `PUT policy` thiếu 2 trường mới thì zod điền mặc định → **âm thầm tắt chế độ cao điểm** và đặt lại giới hạn giữ chỗ giữa mùa Tết; nhật ký ghi body gốc nên không thấy. — trường bỏ trống giữ nguyên giá trị cũ; nhật ký ghi chính sách sau khi gộp
+- [x] 03/11/2026 · T5b · **Bug (Trung bình–Cao)**: bật OTP khi chưa cấu hình SMS → không ai đặt vé online được. — từ chối bật (`VALIDATION_FAILED`)
+- [x] 03/11/2026 · T5b · **Bug (Trung bình)**: khóa giới hạn theo IP dùng nguyên chuỗi `req.ip` → một dải IPv6 /64 đổi địa chỉ để né mọi giới hạn; `::ffff:1.2.3.4` khác `1.2.3.4`. — `clientKey()` gom IPv6 theo /64, chuẩn hóa IPv4 nhúng
+- [x] 03/11/2026 · T5b · Gửi OTP không kiểm tra nhà xe có bật cao điểm → spam SMS tốn tiền qua mọi nhà xe; giới hạn theo SĐT nhân lên theo số nhà xe. — chỉ gửi khi bật cao điểm; thêm giới hạn SĐT toàn nền tảng
+- [x] 03/11/2026 · T5b · Khoảng cách gửi lại OTP "1 lần/phút" lách được ở ranh giới phút hoặc gửi song song; lần bị từ chối vẫn trừ hạn mức giờ. — kiểm tra dưới khóa theo thời điểm gửi cuối; chỉ trừ hạn mức khi gửi thật
+- [x] 03/11/2026 · T5b · Gửi lại cùng `Idempotency-Key` (mạng chập chờn) bị tính vào giới hạn tần suất → khách nhận 429 thay vì đơn đã giữ. — trả đơn cũ trước khi tính giới hạn
+- [x] 03/11/2026 · T5b · `TRUST_PROXY=true`/`loopback` bị đọc thành `NaN`. — `parseTrustProxy()` hỗ trợ số, true/false, danh sách subnet
+- [ ] 03/11/2026 · T7 · Chế độ cao điểm (OTP) chỉ bật được khi đã cắm nhà cung cấp SMS thật. Zalo Mini App có thể lấy SĐT đã xác thực qua `getPhoneNumber` thay cho OTP (T11).
+- [ ] 03/11/2026 · Vận hành · Chạy sau proxy/load balancer **phải** đặt `TRUST_PROXY`, nếu không mọi khách dùng chung IP của proxy và một người có thể làm cạn giới hạn của tất cả.
+
+### Rà soát subagent — T5b (03/11/2026)
+
+| Service | Subagent kết luận | Bằng chứng | Agent chính kiểm tra lại | Bị ảnh hưởng? |
+|---|---|---|---|---|
+| `OperatorsService` (chính sách) | **2 bug**: PUT thiếu trường tắt cao điểm; bật OTP khi chưa có SMS | `policy.ts` `.default()`; không kiểm tra SMS | **Xác nhận**: test `abuse-review` đỏ → sửa → xanh | Có (Cao) — đã sửa |
+| `RateLimiter` + IP | **Bug Trung bình**: IPv6 /64 né giới hạn; `TRUST_PROXY` đọc sai | Khóa `booking-ip:${req.ip}` thô | **Xác nhận**: test gom /64 và `::ffff:` đỏ → xanh; unit test `client-ip.spec.ts` | Có (Trung bình) — đã sửa |
+| `AuthService` (đăng nhập) | Không bug mới; lộ tài khoản qua lỗi khóa vẫn khai thác được từ nhiều IP | `auth.service.ts` trả `TOO_MANY_ATTEMPTS` khi khóa | **Xác nhận**: test "locked account answers exactly like an unknown phone" đỏ → xanh; test dồn dập đếm số lần so mật khẩu thật (spy) | Có (Trung bình) — đã sửa |
+| `PhoneVerificationService` | Không bug nghiêm trọng; gửi OTP khi không cao điểm; khoảng cách gửi lại lách được | Đọc code + 18 test | **Xác nhận** cả hai bằng test đỏ → sửa; tự phát hiện thêm: lần bị từ chối vẫn trừ hạn mức giờ → sửa | Có (Thấp–Trung bình) — đã sửa |
+| `BookingsService` | Không bug; ghi chú gửi lại cùng khóa bị tính giới hạn | Lock ordering, đếm dưới khóa SĐT | **Xác nhận**: test "retry … even when the IP limit is used up" đỏ → xanh. Thử bỏ khóa SĐT → test song song đỏ 5/5 lần | Có (Thấp) — đã sửa |
 
 ### Rà soát subagent — T1–T4 (03/11/2026)
 

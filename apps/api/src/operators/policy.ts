@@ -16,13 +16,14 @@ export const policyInputSchema = z
     holdMinutes: z.number().int().min(1).max(120),
     maxUnitsPerBooking: z.number().int().min(1).max(20),
     childPolicy: childPolicySchema,
-    /** Số đơn đang giữ chỗ tối đa cùng lúc cho một SĐT (chống giữ chỗ ảo). */
-    maxActiveHoldsPerPhone: z.number().int().min(1).max(20).default(2),
-    /** Chế độ cao điểm: bắt buộc xác thực SĐT bằng OTP trước khi giữ chỗ. */
-    requirePhoneOtp: z.boolean().default(false),
+    /** Số đơn đang giữ chỗ tối đa cùng lúc cho một SĐT (chống giữ chỗ ảo). Bỏ trống = giữ nguyên. */
+    maxActiveHoldsPerPhone: z.number().int().min(1).max(20).optional(),
+    /** Chế độ cao điểm: bắt buộc xác thực SĐT bằng OTP trước khi giữ chỗ. Bỏ trống = giữ nguyên. */
+    requirePhoneOtp: z.boolean().optional(),
   })
   .strict();
-export type PolicyInput = z.infer<typeof policyInputSchema>;
+/** Chính sách đầy đủ (mọi trường bắt buộc) — dạng lưu trong DB. */
+export type PolicyInput = Required<z.infer<typeof policyInputSchema>>;
 
 export interface OperatorPolicy extends PolicyInput {
   operatorId: string;

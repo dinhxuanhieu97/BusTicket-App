@@ -267,10 +267,13 @@ describe('peak mode needs an SMS provider', () => {
     const bare = moduleRef.createNestApplication({ logger: false });
     bare.useGlobalFilters(new HttpErrorFilter());
     await bare.init();
+    // Bật cao điểm qua service có SMS (bản không có SMS sẽ từ chối bật — xem abuse-review.int-spec.ts).
+    await s.operators.updatePolicy(seed.op.id, { ...POLICY, requirePhoneOtp: true });
     try {
       const r = await request(bare.getHttpServer()).post('/api/v1/phone-verifications').send({ operatorCode: 'PN', phone: freshPhone() }).expect(503);
       expect(r.body.error.code).toBe('SERVICE_UNAVAILABLE');
     } finally {
+      await s.operators.updatePolicy(seed.op.id, { ...POLICY, requirePhoneOtp: false });
       await bare.close();
     }
   });

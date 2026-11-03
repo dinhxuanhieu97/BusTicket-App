@@ -10,6 +10,7 @@ import { SeatLayoutsService } from '../src/seat-layouts/seat-layouts.service';
 import { TripsService } from '../src/trips/trips.service';
 import { VehiclesService } from '../src/vehicles/vehicles.service';
 import { SystemClock } from '../src/common/clock';
+import { NotConfiguredSmsSender } from '../src/abuse/sms-sender';
 
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
   try {
     await migrate(db.pool);
     const layouts = new SeatLayoutsService(db);
-    const operators = new OperatorsService(db, layouts);
+    const operators = new OperatorsService(db, layouts, new NotConfiguredSmsSender());
     const vehicles = new VehiclesService(db, layouts);
     const trips = new TripsService(db, operators, new SystemClock());
     const op = await operators.create({ code: 'PN', name: 'Nhà xe Phong Nhung' });

@@ -18,7 +18,7 @@ pnpm --filter api test:int      # cần PostgreSQL, xem DATABASE_URL_TEST
 pnpm --filter api typecheck
 DATABASE_URL=... ADMIN_PHONE=09... ADMIN_NAME="..." ADMIN_PASSWORD=... pnpm --filter api create-admin   # tài khoản quản trị nền tảng đầu tiên
 ```
-Biến môi trường khi chạy API: `DATABASE_URL`, `BOOKING_TOKEN_SECRET`, `AUTH_TOKEN_SECRET` (mỗi bí mật ≥ 32 ký tự).
+Biến môi trường khi chạy API: `DATABASE_URL`, `BOOKING_TOKEN_SECRET`, `AUTH_TOKEN_SECRET` (mỗi bí mật ≥ 32 ký tự), `TRUST_PROXY` (bắt buộc khi chạy sau proxy/load balancer: số tầng proxy hoặc danh sách subnet).
 
 Khi rà soát bằng nhiều subagent song song, **mỗi subagent dùng một DB test riêng** (`DATABASE_URL_TEST=.../pnticket_rN_test`) vì integration test xóa sạch schema.
 Integration test dùng `DATABASE_URL_TEST` (mặc định `postgres://pnticket:pnticket@localhost:5432/pnticket_test`) và **xóa sạch schema `public`** của DB đó trước mỗi file test. Không trỏ biến này vào DB thật.

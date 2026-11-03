@@ -4,6 +4,7 @@ import { OPERATOR_CODE } from '../common/codes';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
+import { SmsSender } from '../abuse/sms-sender';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { DEFAULT_POLICY, OperatorPolicy, PolicyInput, policyInputSchema } from './policy';
 
@@ -32,6 +33,7 @@ export class OperatorsService {
   constructor(
     private readonly db: Db,
     private readonly layouts: SeatLayoutsService,
+    private readonly sms: SmsSender,
   ) {}
 
   /** Tạo nhà xe + chính sách mặc định (phiên bản 1) + 2 xe mặc định, trong một transaction. */
@@ -123,7 +125,20 @@ export class OperatorsService {
       );
       if (!rows[0]) throw notFound('nhà xe');
       const current = await this.currentPolicy(operatorId, c);
-      await this.insertPolicy(c, operatorId, current.version + 1, data);
+      // Trường không gửi lên được giữ nguyên — không âm thầm tắt chế độ cao điểm giữa mùa Tết.
+      const next: PolicyInput = {
+        ...data,
+        maxActiveHoldsPerPhone: data.maxActiveHoldsPerPhone ?? current.maxActiveHoldsPerPhone,
+        requirePhoneOtp: data.requirePhoneOtp ?? current.requirePhoneOtp,
+      };
+      if (next.requirePhoneOtp && !this.sms.configured) {
+        throw new DomainError(
+          'VALIDATION_FAILED',
+          'Chưa cấu hình dịch vụ SMS nên chưa bật được xác thực OTP — khách sẽ không đặt được vé.',
+          { field: 'requirePhoneOtp' },
+        );
+      }
+      await this.insertPolicy(c, operatorId, current.version + 1, next);
       return this.currentPolicy(operatorId, c);
     });
   }

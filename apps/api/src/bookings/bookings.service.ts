@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AbuseConfig } from '../abuse/abuse-config';
 import { PhoneVerificationService } from '../abuse/phone-verification.service';
+import { clientKey } from '../abuse/client-ip';
 import { RateLimiter } from '../abuse/rate-limiter';
 import { createHash } from 'node:crypto';
 import { PoolClient } from 'pg';
@@ -107,12 +108,19 @@ export class BookingsService {
       .update(JSON.stringify({ tripId: data.tripId, name: data.contactName, phone, items }))
       .digest('hex');
 
+    const { rows: tripOps } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [data.tripId]);
+    const operatorId = tripOps[0]?.operator_id;
+    // Gửi lại đúng yêu cầu cũ (mạng chập chờn) → trả đơn đã giữ, không tính vào giới hạn tần suất.
+    if (operatorId) {
+      const existing = await this.findByKey(this.db, operatorId, key);
+      if (existing) return this.replay(existing, requestHash);
+    }
     // Giới hạn tần suất (ngoài transaction, để bộ đếm không bị ROLLBACK khi yêu cầu thất bại).
     const busy = 'Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.';
-    if (ctx.ip) await this.limiter.consume(`booking-ip:${ctx.ip}`, this.abuse.bookingsPerIpPerMinute, 60, busy);
-    const { rows: tripOps } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [data.tripId]);
-    if (tripOps[0]) {
-      await this.limiter.consume(`booking-phone:${tripOps[0].operator_id}:${phone}`, this.abuse.bookingsPerPhonePerHour, 3600, busy);
+    const source = clientKey(ctx.ip);
+    if (source) await this.limiter.consume(`booking-ip:${source}`, this.abuse.bookingsPerIpPerMinute, 60, busy);
+    if (operatorId) {
+      await this.limiter.consume(`booking-phone:${operatorId}:${phone}`, this.abuse.bookingsPerPhonePerHour, 3600, busy);
     }
 
     try {

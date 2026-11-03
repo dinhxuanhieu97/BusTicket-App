@@ -6,6 +6,7 @@ import { hotp, base32Decode } from '../src/auth/totp';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
 import { AUTH_SECRET, RELAXED_ABUSE, buildServices, resetDatabase, Services, T0, TEST_DB_URL, TOKEN_SECRET } from './helpers';
 import { UsersService } from '../src/auth/users.service';
+import * as passwordModule from '../src/auth/password';
 
 let app: INestApplication;
 let s: Services;
@@ -335,14 +336,27 @@ describe('revocation and safety rails', () => {
   });
 
   it('parallel login bursts cannot test more than 5 passwords per lock window', async () => {
-    const burst = await Promise.all(
-      Array.from({ length: 20 }, (_, i) => login({ phone: SELLER2.phone, password: `burst-wrong-${i}-pw` })),
-    );
-    const checked = burst.filter((r) => r.body.error?.code === 'INVALID_CREDENTIALS').length;
-    expect(checked).toBeLessThanOrEqual(5);
-    expect(burst.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(15);
+    // Đếm số lần mật khẩu được so với chuỗi băm THẬT của tài khoản (lần bị khóa chỉ so với chuỗi băm giả).
+    const { rows } = await s.db.query<{ password_hash: string }>('SELECT password_hash FROM users WHERE phone = $1', [
+      '+84' + SELLER2.phone.slice(1),
+    ]);
+    const realHash = rows[0]!.password_hash;
+    const spy = jest.spyOn(passwordModule, 'verifyPassword');
+    try {
+      const burst = await Promise.all(
+        Array.from({ length: 20 }, (_, i) => login({ phone: SELLER2.phone, password: `burst-wrong-${i}-pw` })),
+      );
+      const realChecks = spy.mock.calls.filter(([, hash]) => hash === realHash).length;
+      expect(spy).toHaveBeenCalledTimes(20); // mỗi yêu cầu đúng một lần so (thật hoặc giả)
+      expect(realChecks).toBeGreaterThanOrEqual(1);
+      expect(realChecks).toBeLessThanOrEqual(5);
+      // Mọi phản hồi đều giống hệt nhau (không lộ trạng thái khóa).
+      expect(new Set(burst.map((r) => `${r.status}:${r.body.error?.code}`))).toEqual(new Set(['401:INVALID_CREDENTIALS']));
+    } finally {
+      spy.mockRestore();
+    }
     // Đúng mật khẩu trong lúc đang khóa vẫn bị từ chối và không xóa khóa.
-    await login(SELLER2).expect(429);
+    expect((await login(SELLER2).expect(401)).body.error.code).toBe('INVALID_CREDENTIALS');
     s.clock.advanceMinutes(15);
     await login(SELLER2).expect(200);
   });
@@ -354,14 +368,15 @@ describe('revocation and safety rails', () => {
     expect((await login(ADMIN).expect(401)).body.error.code).toBe('MFA_REQUIRED');
     expect((await login(ADMIN).expect(401)).body.error.code).toBe('MFA_REQUIRED');
     await login(ADMIN, '000000').expect(401); // lượt sai thứ 5 → khóa
-    expect((await login(ADMIN).expect(429)).body.error.code).toBe('TOO_MANY_ATTEMPTS');
-    expect((await login(ADMIN, nextOtp(adminSecret)).expect(429)).body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    // Đang khóa: kể cả mật khẩu + OTP đúng cũng chỉ nhận lỗi chung.
+    expect((await login(ADMIN).expect(401)).body.error.code).toBe('INVALID_CREDENTIALS');
+    expect((await login(ADMIN, nextOtp(adminSecret)).expect(401)).body.error.code).toBe('INVALID_CREDENTIALS');
     s.clock.advanceMinutes(15);
   });
 
   it('locks the account after 5 wrong passwords, even for the right password, until the lock expires', async () => {
     for (let i = 0; i < 5; i++) await login({ phone: DISPATCHER.phone, password: `wrong-${i}-password` }).expect(401);
-    expect((await login(DISPATCHER).expect(429)).body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    expect((await login(DISPATCHER).expect(401)).body.error.code).toBe('INVALID_CREDENTIALS');
     s.clock.advanceMinutes(15);
     await login(DISPATCHER).expect(200);
   });
