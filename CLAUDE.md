@@ -24,7 +24,7 @@ Khi rà soát bằng nhiều subagent song song, **mỗi subagent dùng một DB
 Integration test dùng `DATABASE_URL_TEST` (mặc định `postgres://pnticket:pnticket@localhost:5432/pnticket_test`) và **xóa sạch schema `public`** của DB đó trước mỗi file test. Không trỏ biến này vào DB thật.
 
 ## Nguyên tắc nghiệp vụ không được vi phạm
-- PostgreSQL là nguồn sự thật cho kho chỗ và tiền. Một chỗ/phòng trên một chuyến chỉ có tối đa một quyền chiếm (khóa hàng `trips ... FOR UPDATE` + khóa chính `trip_seats`).
+- PostgreSQL là nguồn sự thật cho kho chỗ và tiền. Một chỗ/phòng trên một chuyến chỉ có tối đa một quyền chiếm (khóa hàng `trips ... FOR NO KEY UPDATE` + khóa chính `trip_seats`).
 - Mọi truy vấn nghiệp vụ lọc theo `operator_id` lấy từ phía máy chủ, không tin giá trị client gửi.
 - Tiền là số nguyên VND. Giá, chính sách được **chụp lại vào đơn** lúc đặt.
 - API công khai không trả tên/số điện thoại khách.
