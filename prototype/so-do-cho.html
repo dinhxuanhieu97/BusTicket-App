@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sơ đồ chọn chỗ</title>
+<style>
+  :root {
+    --brand: #d0141b; --brand-ink: #fff;
+    --bg: #f6f6f7; --card: #fff; --ink: #18181b; --muted: #6b6b73; --line: #d9d9de;
+    --free: #fff; --held-bg: #fff4d6; --held-ink: #8a5a00;
+    --booked-bg: #c9c9cf; --booked-ink: #4a4a52;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214; --card: #1c1c20; --ink: #f2f2f4; --muted: #a0a0aa; --line: #3a3a42;
+      --free: #24242a; --held-bg: #4a3a12; --held-ink: #ffd88a;
+      --booked-bg: #3a3a42; --booked-ink: #b0b0ba;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding-bottom: 96px; }
+  header { background: var(--brand); color: var(--brand-ink); padding: 14px 16px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 2px 0 0; font-size: 14px; opacity: .9; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  label.field { display: block; font-size: 14px; color: var(--muted); margin-bottom: 6px; }
+  select { width: 100%; font-size: 16px; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--ink); }
+  .trip { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 14px; }
+  .trip b { font-size: 15px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 22px; height: 22px; border-radius: 5px; border: 1.5px solid var(--line); display: inline-grid;
+        place-items: center; font-size: 12px; font-weight: 700; }
+  .floors { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 620px) { .floors.two { grid-template-columns: 1fr 1fr; } }
+  .floor h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+  .floor h2 small { color: var(--muted); font-weight: 400; }
+  .front { text-align: center; font-size: 12px; color: var(--muted); border: 1px dashed var(--line);
+           border-radius: 8px 8px 2px 2px; padding: 4px; margin-bottom: 8px; }
+  .grid { display: grid; gap: 8px; }
+  .seat { appearance: none; border: 1.5px solid var(--line); background: var(--free); color: var(--ink);
+          border-radius: 8px; padding: 6px 2px; min-height: 56px; min-width: 0; cursor: pointer;
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+          font: inherit; }
+  .seat.bed { min-height: 74px; border-radius: 10px 10px 6px 6px; }
+  .seat.bed::before { content: ""; width: 60%; height: 6px; border-radius: 3px; background: var(--line); margin-bottom: 3px; }
+  .seat .code { font-weight: 700; font-size: 14px; }
+  .seat .sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .seat:hover:not(:disabled) { border-color: var(--brand); }
+  .seat:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+  .seat.selected { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  .seat.selected .sub { color: var(--brand-ink); }
+  .seat.selected::before { background: rgba(255,255,255,.6); }
+  .seat.held { background: var(--held-bg); color: var(--held-ink); border-style: dashed; cursor: not-allowed; }
+  .seat.held .sub { color: var(--held-ink); }
+  .seat.booked { background: var(--booked-bg); color: var(--booked-ink); border-color: transparent; cursor: not-allowed; }
+  .seat.booked .sub { color: var(--booked-ink); }
+  .seat.blocked { cursor: not-allowed; color: var(--muted);
+                  background: repeating-linear-gradient(45deg, var(--free), var(--free) 5px, var(--line) 5px, var(--line) 6px); }
+  .seat.flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 4px #f59e0b; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .aisle, .empty { min-height: 1px; }
+  .note { font-size: 13px; color: var(--muted); margin: 0; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+         padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  .bar-inner { max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+  .bar .info { flex: 1; min-width: 0; }
+  .bar .picked { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar .total { font-size: 18px; font-weight: 700; }
+  .btn { background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 10px; padding: 12px 18px;
+         font: inherit; font-weight: 700; cursor: pointer; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .toast { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); background: #18181b; color: #fff;
+           padding: 10px 14px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px);
+           opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px;
+           background: #fde2e3; color: var(--brand); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Phong Nhung · Chọn chỗ</h1>
+  <p>Bản mẫu giao diện — dữ liệu minh họa, không đặt vé thật</p>
+</header>
+
+<main>
+  <section class="card">
+    <label class="field" for="vehicle">Xem thử sơ đồ xe</label>
+    <select id="vehicle"></select>
+    <div class="trip" id="trip"></div>
+  </section>
+
+  <section class="card">
+    <div class="legend" aria-label="Chú giải">
+      <span><i class="sw"></i> Còn trống</span>
+      <span><i class="sw" style="background:var(--brand);border-color:var(--brand);color:#fff">✓</i> Đang chọn</span>
+      <span><i class="sw" style="background:var(--held-bg);border-style:dashed;color:var(--held-ink)">…</i> Đang giữ</span>
+      <span><i class="sw" style="background:var(--booked-bg);border-color:transparent;color:var(--booked-ink)">✕</i> Đã đặt</span>
+      <span><i class="sw" style="background:repeating-linear-gradient(45deg,var(--free),var(--free) 4px,var(--line) 4px,var(--line) 5px)"></i> Không bán</span>
+    </div>
+  </section>
+
+  <section class="floors" id="floors"></section>
+
+  <p class="note">Sơ đồ tự cập nhật vài giây một lần (mô phỏng khách khác đang đặt). Chọn tối đa <b>5</b> chỗ mỗi đơn.
+    Việc chọn chỗ ở đây <b>chưa giữ chỗ</b>; chỗ chỉ được giữ khi máy chủ xác nhận sau bước “Tiếp tục”.</p>
+</main>
+
+<div class="bar">
+  <div class="bar-inner">
+    <div class="info">
+      <div class="picked" id="picked">Chưa chọn chỗ</div>
+      <div class="total" id="total">0đ</div>
+    </div>
+    <button class="btn" id="next" disabled>Tiếp tục</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+// ---- Dữ liệu minh họa ----------------------------------------------------
+// Mẫu sơ đồ: mỗi hàng là chuỗi ô cách nhau bởi dấu cách. "." = lối đi, "_" = ô trống.
+const LAYOUTS = {
+  LIMO24: {
+    name: "Limousine 24 phòng", unit: "phòng", kind: "bed",
+    price: { A: 470000, B: 450000 },
+    blocked: [],
+    floors: [
+      { code: "A", label: "Tầng dưới", rows: ["A01 . A02","A03 . A04","A05 . A06","A07 . A08","A09 . A10","A11 . A12"] },
+      { code: "B", label: "Tầng trên", rows: ["B01 . B02","B03 . B04","B05 . B06","B07 . B08","B09 . B10","B11 . B12"] },
+    ],
+  },
+  BED36: {
+    name: "Giường nằm 36 chỗ", unit: "giường", kind: "bed",
+    price: { A: 380000, B: 350000 },
+    blocked: ["B18"],
+    floors: [
+      { code: "A", label: "Tầng dưới", rows: ["A01 . A02 . A03","A04 . A05 . A06","A07 . A08 . A09","A10 . A11 . A12","A13 . A14 . A15","A16 . A17 . A18"] },
+      { code: "B", label: "Tầng trên", rows: ["B01 . B02 . B03","B04 . B05 . B06","B07 . B08 . B09","B10 . B11 . B12","B13 . B14 . B15","B16 . B17 . B18"] },
+    ],
+  },
+  SEAT29: {
+    name: "Ghế ngồi 29 chỗ", unit: "ghế", kind: "seat",
+    price: { A: 250000 },
+    blocked: [],
+    floors: [
+      { code: "A", label: "Khoang khách", rows: ["A01 A02 . A03 A04","A05 A06 . A07 A08","A09 A10 . A11 A12","A13 A14 . A15 A16","A17 A18 . A19 A20","A21 A22 . A23 A24","A25 A26 A27 A28 A29"] },
+    ],
+  },
+};
+const TYPE_LABEL = { LIMOUSINE: "Limousine", SLEEPER: "Giường nằm", SEATER: "Ghế ngồi" };
+const VEHICLES = [
+  ["Xe 01","PN01","LIMOUSINE","LIMO24"], ["Xe 02","PN02","LIMOUSINE","LIMO24"],
+  ["Xe 03","PN03","LIMOUSINE","LIMO24"], ["Xe 04","PN04","LIMOUSINE","LIMO24"],
+  ["Xe 05","PN05","SLEEPER","BED36"],    ["Xe 06","PN06","SLEEPER","BED36"],
+  ["Xe 07","PN07","SLEEPER","BED36"],    ["Xe 08","PN08","SLEEPER","BED36"],
+  ["Xe 09","PN09","SEATER","SEAT29"],    ["Xe 10","PN10","SEATER","SEAT29"],
+].map(([name, code, type, layout], i) => ({ name, code, type, layout, depart: `${18 + (i % 4)}:${i % 2 ? "30" : "00"}` }));
+
+const MAX_SEATS = 5;
+const fmt = n => n.toLocaleString("vi-VN") + "đ";
+
+// ---- Trạng thái ---------------------------------------------------------
+let vehicle, layout, seatState = {}, selected = new Set(), tick;
+
+function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) % 100; }
+
+function loadVehicle(code) {
+  vehicle = VEHICLES.find(v => v.code === code);
+  layout = LAYOUTS[vehicle.layout];
+  selected.clear(); seatState = {};
+  for (const f of layout.floors) for (const r of f.rows) for (const t of r.split(" ")) {
+    if (t === "." || t === "_") continue;
+    const h = hash(vehicle.code + t);
+    seatState[t] = layout.blocked.includes(t) ? "blocked" : h < 42 ? "booked" : h < 50 ? "held" : "free";
+  }
+  document.getElementById("trip").innerHTML =
+    `<span><b>${vehicle.name}</b> · ${vehicle.code}</span>` +
+    `<span class="badge">${TYPE_LABEL[vehicle.type]}</span>` +
+    `<span>${layout.name}</span>` +
+    `<span>TP.HCM → Hoài Ân · ${vehicle.depart}</span>`;
+  render(); updateBar();
+  clearInterval(tick); tick = setInterval(simulateOthers, 4000);
+}
+
+function priceOf(code) { return layout.price[code[0]] ?? Object.values(layout.price)[0]; }
+
+function render() {
+  const wrap = document.getElementById("floors");
+  wrap.className = "floors" + (layout.floors.length > 1 ? " two" : "");
+  wrap.innerHTML = "";
+  for (const f of layout.floors) {
+    const rows = f.rows.map(r => r.split(" "));
+    const cols = Math.max(...rows.map(r => r.length));
+    const aisleCol = [...Array(cols)].map((_, c) => rows.filter(r => r[c] === ".").length > rows.length / 2);
+    const free = rows.flat().filter(t => seatState[t] === "free").length;
+
+    const sec = document.createElement("div");
+    sec.className = "card floor";
+    sec.innerHTML = `<h2>${f.label}<small>Còn ${free} ${layout.unit}</small></h2><div class="front">▲ Đầu xe</div>`;
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    grid.style.gridTemplateColumns = aisleCol.map(a => a ? "minmax(14px,.35fr)" : "1fr").join(" ");
+    for (const r of rows) for (let c = 0; c < cols; c++) {
+      const t = r[c] ?? "_";
+      if (t === "." || t === "_") { grid.appendChild(Object.assign(document.createElement("div"), { className: "aisle" })); continue; }
+      grid.appendChild(seatButton(t, f.label));
+    }
+    sec.appendChild(grid);
+    wrap.appendChild(sec);
+  }
+}
+
+function seatButton(code, floorLabel) {
+  const st = selected.has(code) ? "selected" : seatState[code];
+  const b = document.createElement("button");
+  b.type = "button"; b.dataset.code = code;
+  b.className = `seat ${layout.kind} ${st}`;
+  const sub = { free: fmt(priceOf(code)).replace(".000đ", "k"), selected: "✓ Đã chọn", held: "Đang giữ", booked: "✕ Đã đặt", blocked: "Không bán" }[st];
+  b.innerHTML = `<span class="code">${code}</span><span class="sub">${sub}</span>`;
+  b.disabled = st === "held" || st === "booked" || st === "blocked";
+  const unitCap = layout.unit[0].toUpperCase() + layout.unit.slice(1);
+  b.setAttribute("aria-label", `${unitCap} ${code}, ${floorLabel.toLowerCase()}, ${{ free: "còn trống, " + fmt(priceOf(code)), selected: "đang chọn", held: "đang có người giữ", booked: "đã đặt", blocked: "không bán" }[st]}`);
+  b.setAttribute("aria-pressed", st === "selected");
+  b.onclick = () => toggle(code);
+  return b;
+}
+
+function toggle(code) {
+  if (selected.has(code)) selected.delete(code);
+  else if (selected.size >= MAX_SEATS) return toast(`Mỗi đơn chọn tối đa ${MAX_SEATS} ${layout.unit}.`);
+  else selected.add(code);
+  render(); updateBar(); focusSeat(code);
+}
+
+function focusSeat(code) { document.querySelector(`.seat[data-code="${code}"]`)?.focus(); }
+
+function updateBar() {
+  const list = [...selected].sort();
+  document.getElementById("picked").textContent = list.length ? `${list.length} ${layout.unit}: ${list.join(", ")}` : "Chưa chọn chỗ";
+  document.getElementById("total").textContent = fmt(list.reduce((s, c) => s + priceOf(c), 0));
+  document.getElementById("next").disabled = !list.length;
+}
+
+// Mô phỏng khách khác: chỗ trống → đang giữ, đang giữ → đã đặt hoặc hết hạn.
+function simulateOthers() {
+  const codes = Object.keys(seatState);
+  const pick = codes[Math.floor(Math.random() * codes.length)];
+  const st = seatState[pick];
+  if (st === "free") seatState[pick] = "held";
+  else if (st === "held") seatState[pick] = Math.random() < .6 ? "booked" : "free";
+  else return;
+  let lost = false;
+  if (selected.has(pick) && seatState[pick] !== "free") { selected.delete(pick); lost = true; }
+  const active = document.activeElement?.dataset?.code;
+  render(); updateBar();
+  const el = document.querySelector(`.seat[data-code="${pick}"]`);
+  el?.classList.add("flash");
+  if (active) focusSeat(active);
+  if (lost) toast(`${pick} vừa được khách khác giữ. Vui lòng chọn chỗ khác.`);
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3200);
+}
+
+document.getElementById("next").onclick = () =>
+  toast(`Bước tiếp theo: máy chủ giữ ${[...selected].sort().join(", ")} trong 10 phút, khách nhập thông tin và thanh toán.`);
+
+const sel = document.getElementById("vehicle");
+sel.innerHTML = VEHICLES.map(v => `<option value="${v.code}">${v.name} · ${v.code} · ${TYPE_LABEL[v.type]}</option>`).join("");
+sel.onchange = () => loadVehicle(sel.value);
+loadVehicle(VEHICLES[0].code);
+</script>
+</body>
+</html>

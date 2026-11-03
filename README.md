@@ -7,5 +7,10 @@ Web app giúp khách đặt vé xe giường nằm/limousine online (chọn ch�
 - 📘 [docs/PNTicketDocs.md](docs/PNTicketDocs.md) — Định hướng sản phẩm và đặc tả triển khai (**tài liệu chính**).
 - 📝 [docs/GOP-Y-PNTicketDocs.md](docs/GOP-Y-PNTicketDocs.md) — Góp ý, rủi ro và đề xuất bổ sung cho bản v0.1.
 - 📱 [docs/ZALO-MINI-APP.md](docs/ZALO-MINI-APP.md) — Phương án dùng Zalo Mini App làm kênh đặt vé cho khách (ZNS, Checkout SDK, bản đồ điểm đón).
+- 🚌 [docs/DOI-XE-SO-DO-CHO.md](docs/DOI-XE-SO-DO-CHO.md) — Đội xe (tên, mã, loại), mẫu sơ đồ giường/ghế, quy ước mã chỗ và trạng thái chỗ.
+
+## Bản mẫu giao diện
+
+- [prototype/so-do-cho.html](prototype/so-do-cho.html) — Sơ đồ chọn chỗ cho 10 xe minh họa (Limousine, giường nằm, ghế ngồi): còn trống / đang giữ / đã đặt / không bán. Mở trực tiếp bằng trình duyệt, không cần cài đặt.
 
 > Trạng thái: giai đoạn thiết kế, chưa có mã nguồn hay kết nối thanh toán thật.

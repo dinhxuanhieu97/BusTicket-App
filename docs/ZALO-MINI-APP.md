@@ -142,13 +142,24 @@ Mini App **thêm các bước chờ duyệt từ phía Zalo**, nên phải làm 
 
 Phương án chạy thử có giới hạn dịp Tết (GOP-Y mục 1) vẫn được khuyến nghị. Nếu OA, ZNS hoặc Mini App chưa được duyệt kịp, đợt Tết dùng **web quản trị để nhân viên đặt hộ + SMS**, rồi mở Mini App cho khách từ dịp 30/4/2027.
 
-## 8. Câu hỏi cần chốt
+## 8. Quyết định đã chốt và câu hỏi còn lại
 
-1. Nhà xe đăng ký kinh doanh dưới hình thức nào, và ai đứng tên OA, Mini App?
-2. Đã có Zalo OA chưa? Đã xác thực chưa?
-3. Ngoài VietQR, có mở ZaloPay/thẻ không? Phí giao dịch do nhà xe hay khách chịu?
-4. Xe đang dùng thiết bị giám sát hành trình của nhà cung cấp nào? Họ có API không?
-5. Mỗi chuyến có số điện thoại công ty cấp cho phụ xe không?
+### 8.1. Đã chốt (03/11/2026)
+
+| Nội dung | Quyết định | Việc cần làm tiếp |
+|---|---|---|
+| Hình thức kinh doanh | **Hộ kinh doanh** | Kiểm tra với Zalo, ZaloPay và SePay/payOS rằng **hộ kinh doanh đủ điều kiện** cho từng dịch vụ (xác thực OA, phát hành Mini App, ZNS, cổng thanh toán ZaloPay/Checkout). Dịch vụ nào chỉ nhận doanh nghiệp thì ghi lại để xử lý (đổi phương án hoặc nâng cấp pháp nhân). |
+| Zalo OA | **Chưa có** | Tạo OA "Phong Nhung" bằng thông tin hộ kinh doanh, nộp hồ sơ xác thực **ngay** (OA chưa xác thực bị hạn chế tính năng và phải nộp hồ sơ trong thời hạn Zalo quy định). Đây là bước chặn cho ZNS và Mini App. |
+| Thanh toán | **ZaloPay + quét QR chuyển khoản + ví điện tử** | QR chuyển khoản: VietQR qua SePay/payOS (mặc định). ZaloPay và ví điện tử: qua Checkout SDK, chỉ bật những ví mà Checkout hỗ trợ và hộ kinh doanh đăng ký được. Mọi kênh đi chung luồng `payments` → `payment_allocations`. **Còn cần chốt: ai chịu phí giao dịch.** |
+| GPS | **Đã lắp, chưa rõ hãng** | Xác định hãng theo [DOI-XE-SO-DO-CHO.md](DOI-XE-SO-DO-CHO.md) mục 5. Không chặn MVP. |
+| Đội xe | **10 xe**, nhận biết theo tên + mã (Xe 01 / PN01), 3 loại: Limousine, giường nằm, ghế ngồi | Đặc tả và bản mẫu sơ đồ chọn chỗ: [DOI-XE-SO-DO-CHO.md](DOI-XE-SO-DO-CHO.md), [prototype/so-do-cho.html](../prototype/so-do-cho.html). |
+
+### 8.2. Còn cần trả lời
+
+1. Phí giao dịch ZaloPay/ví điện tử do nhà xe chịu hay cộng vào giá vé của khách?
+2. Mỗi chuyến có số điện thoại công ty cấp cho phụ xe không?
+3. Số xe thực tế của từng loại, và sơ đồ thật (số tầng, số chỗ, cách đánh số đang dùng) của mỗi kiểu xe?
+4. Limousine bán theo phòng hay theo người? Có phòng đôi không?
 
 ## 9. Nguồn tham khảo
 
