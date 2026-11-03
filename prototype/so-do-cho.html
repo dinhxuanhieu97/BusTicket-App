@@ -78,6 +78,20 @@
            padding: 10px 14px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px);
            opacity: 0; pointer-events: none; transition: opacity .2s; }
   .toast.show { opacity: 1; }
+  .rooms-title { font-size: 15px; margin: 0 0 4px; }
+  .room-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0;
+              border-top: 1px solid var(--line); }
+  .room-row:first-child { border-top: 0; }
+  .room-row .name { flex: 1 1 120px; font-weight: 700; }
+  .room-row .name small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
+  .seg { display: inline-flex; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { appearance: none; border: 0; background: var(--card); color: var(--ink); font: inherit;
+                font-size: 14px; padding: 8px 12px; cursor: pointer; line-height: 1.25; text-align: left; }
+  .seg button + button { border-left: 1.5px solid var(--line); }
+  .seg button small { display: block; font-size: 12px; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); }
+  .seg button[aria-pressed="true"] small { color: var(--brand-ink); }
+  .seg button:focus-visible { outline: 3px solid #2563eb; outline-offset: -3px; }
   .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px;
            background: #fde2e3; color: var(--brand); }
 </style>
@@ -107,7 +121,12 @@
 
   <section class="floors" id="floors"></section>
 
-  <p class="note">Sơ đồ tự cập nhật vài giây một lần (mô phỏng khách khác đang đặt). Chọn tối đa <b>5</b> chỗ mỗi đơn.
+  <section class="card" id="rooms" hidden>
+    <h2 class="rooms-title">Phòng đã chọn — chọn số người</h2>
+    <div id="room-list"></div>
+  </section>
+
+  <p class="note">Sơ đồ tự cập nhật vài giây một lần (mô phỏng khách khác đang đặt). Chọn tối đa <b>5</b> chỗ mỗi đơn. Xe Limousine bán theo phòng: chọn phòng rồi chọn phòng đơn (1 người) hoặc phòng đôi (2 người).
     Việc chọn chỗ ở đây <b>chưa giữ chỗ</b>; chỗ chỉ được giữ khi máy chủ xác nhận sau bước “Tiếp tục”.</p>
 </main>
 
@@ -128,7 +147,9 @@
 const LAYOUTS = {
   LIMO24: {
     name: "Limousine 24 phòng", unit: "phòng", kind: "bed",
-    price: { A: 470000, B: 450000 },
+    // Bán theo phòng: phòng đơn (1 người) / phòng đôi (2 người), giá phòng đôi cao hơn.
+    rooms: true,
+    price: { A: { single: 450000, double: 700000 }, B: { single: 420000, double: 650000 } },
     blocked: [],
     floors: [
       { code: "A", label: "Tầng dưới", rows: ["A01 . A02","A03 . A04","A05 . A06","A07 . A08","A09 . A10","A11 . A12"] },
@@ -154,21 +175,27 @@ const LAYOUTS = {
   },
 };
 const TYPE_LABEL = { LIMOUSINE: "Limousine", SLEEPER: "Giường nằm", SEATER: "Ghế ngồi" };
+// Mỗi nhà xe mặc định 2 xe; chủ xe tự thêm xe trong trang quản trị.
+const OPERATOR = { name: "Phong Nhung", prefix: "PN" };
 const VEHICLES = [
-  ["Xe 01","PN01","LIMOUSINE","LIMO24"], ["Xe 02","PN02","LIMOUSINE","LIMO24"],
-  ["Xe 03","PN03","LIMOUSINE","LIMO24"], ["Xe 04","PN04","LIMOUSINE","LIMO24"],
-  ["Xe 05","PN05","SLEEPER","BED36"],    ["Xe 06","PN06","SLEEPER","BED36"],
-  ["Xe 07","PN07","SLEEPER","BED36"],    ["Xe 08","PN08","SLEEPER","BED36"],
-  ["Xe 09","PN09","SEATER","SEAT29"],    ["Xe 10","PN10","SEATER","SEAT29"],
-].map(([name, code, type, layout], i) => ({ name, code, type, layout, depart: `${18 + (i % 4)}:${i % 2 ? "30" : "00"}` }));
+  { name: "Xe 01", code: "PN01", type: "LIMOUSINE", layout: "LIMO24", depart: "18:00" },
+  { name: "Xe 02", code: "PN02", type: "SLEEPER",   layout: "BED36",  depart: "19:30" },
+  // Mẫu sơ đồ có sẵn nhưng chưa gán xe — chỉ để xem thử.
+  { name: "Mẫu", code: "MAU-SEAT29", type: "SEATER", layout: "SEAT29", depart: "20:00", template: true },
+];
 
 const MAX_SEATS = 5;
 const fmt = n => n.toLocaleString("vi-VN") + "đ";
+const k = n => (n / 1000).toLocaleString("vi-VN") + "k";
+const OCC_LABEL = { 1: "Phòng đơn", 2: "Phòng đôi" };
 
 // ---- Trạng thái ---------------------------------------------------------
-let vehicle, layout, seatState = {}, selected = new Set(), tick;
+// selected: mã chỗ → số người (1 hoặc 2). Xe không bán theo phòng luôn là 1.
+let vehicle, layout, seatState = {}, selected = new Map(), tick;
 
 function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) % 100; }
+
+function floorLabelOf(code) { return layout.floors.find(f => f.code === code[0])?.label ?? ""; }
 
 function loadVehicle(code) {
   vehicle = VEHICLES.find(v => v.code === code);
@@ -182,13 +209,16 @@ function loadVehicle(code) {
   document.getElementById("trip").innerHTML =
     `<span><b>${vehicle.name}</b> · ${vehicle.code}</span>` +
     `<span class="badge">${TYPE_LABEL[vehicle.type]}</span>` +
-    `<span>${layout.name}</span>` +
+    `<span>${layout.name}${layout.rooms ? " · bán theo phòng" : ""}</span>` +
     `<span>TP.HCM → Hoài Ân · ${vehicle.depart}</span>`;
   render(); updateBar();
   clearInterval(tick); tick = setInterval(simulateOthers, 4000);
 }
 
-function priceOf(code) { return layout.price[code[0]] ?? Object.values(layout.price)[0]; }
+function priceOf(code, occ = 1) {
+  const p = layout.price[code[0]] ?? Object.values(layout.price)[0];
+  return layout.rooms ? (occ === 2 ? p.double : p.single) : p;
+}
 
 function render() {
   const wrap = document.getElementById("floors");
@@ -214,6 +244,11 @@ function render() {
     sec.appendChild(grid);
     wrap.appendChild(sec);
   }
+  renderRooms();
+}
+
+function freeLabel(code) {
+  return layout.rooms ? `Đơn ${k(priceOf(code, 1))} · Đôi ${k(priceOf(code, 2))}` : k(priceOf(code));
 }
 
 function seatButton(code, floorLabel) {
@@ -221,20 +256,50 @@ function seatButton(code, floorLabel) {
   const b = document.createElement("button");
   b.type = "button"; b.dataset.code = code;
   b.className = `seat ${layout.kind} ${st}`;
-  const sub = { free: fmt(priceOf(code)).replace(".000đ", "k"), selected: "✓ Đã chọn", held: "Đang giữ", booked: "✕ Đã đặt", blocked: "Không bán" }[st];
+  const chosen = layout.rooms ? `✓ ${OCC_LABEL[selected.get(code)]}` : "✓ Đã chọn";
+  const sub = { free: freeLabel(code), selected: chosen, held: "Đang giữ", booked: "✕ Đã đặt", blocked: "Không bán" }[st];
   b.innerHTML = `<span class="code">${code}</span><span class="sub">${sub}</span>`;
   b.disabled = st === "held" || st === "booked" || st === "blocked";
   const unitCap = layout.unit[0].toUpperCase() + layout.unit.slice(1);
-  b.setAttribute("aria-label", `${unitCap} ${code}, ${floorLabel.toLowerCase()}, ${{ free: "còn trống, " + fmt(priceOf(code)), selected: "đang chọn", held: "đang có người giữ", booked: "đã đặt", blocked: "không bán" }[st]}`);
+  const freeText = layout.rooms
+    ? `còn trống, phòng đơn ${fmt(priceOf(code, 1))}, phòng đôi ${fmt(priceOf(code, 2))}`
+    : `còn trống, ${fmt(priceOf(code))}`;
+  const selText = "đang chọn" + (layout.rooms && st === "selected" ? ", " + OCC_LABEL[selected.get(code)].toLowerCase() : "");
+  b.setAttribute("aria-label", `${unitCap} ${code}, ${floorLabel.toLowerCase()}, ${{ free: freeText, selected: selText, held: "đang có người giữ", booked: "đã đặt", blocked: "không bán" }[st]}`);
   b.setAttribute("aria-pressed", st === "selected");
   b.onclick = () => toggle(code);
   return b;
 }
 
+function renderRooms() {
+  const box = document.getElementById("rooms");
+  box.hidden = !layout.rooms || selected.size === 0;
+  if (box.hidden) return;
+  const list = document.getElementById("room-list");
+  list.innerHTML = "";
+  for (const [code, occ] of [...selected].sort()) {
+    const row = document.createElement("div");
+    row.className = "room-row";
+    row.innerHTML = `<div class="name">Phòng ${code}<small>${floorLabelOf(code)}</small></div>`;
+    const seg = document.createElement("div");
+    seg.className = "seg"; seg.setAttribute("role", "group"); seg.setAttribute("aria-label", `Số người phòng ${code}`);
+    for (const n of [1, 2]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("aria-pressed", occ === n);
+      btn.innerHTML = `${OCC_LABEL[n]} · ${n} người<small>${fmt(priceOf(code, n))}</small>`;
+      btn.onclick = () => { selected.set(code, n); render(); updateBar(); };
+      seg.appendChild(btn);
+    }
+    row.appendChild(seg);
+    list.appendChild(row);
+  }
+}
+
 function toggle(code) {
   if (selected.has(code)) selected.delete(code);
   else if (selected.size >= MAX_SEATS) return toast(`Mỗi đơn chọn tối đa ${MAX_SEATS} ${layout.unit}.`);
-  else selected.add(code);
+  else selected.set(code, 1);
   render(); updateBar(); focusSeat(code);
 }
 
@@ -242,8 +307,12 @@ function focusSeat(code) { document.querySelector(`.seat[data-code="${code}"]`)?
 
 function updateBar() {
   const list = [...selected].sort();
-  document.getElementById("picked").textContent = list.length ? `${list.length} ${layout.unit}: ${list.join(", ")}` : "Chưa chọn chỗ";
-  document.getElementById("total").textContent = fmt(list.reduce((s, c) => s + priceOf(c), 0));
+  const people = list.reduce((s, [, n]) => s + n, 0);
+  const desc = layout.rooms
+    ? `${list.length} phòng (${people} người): ` + list.map(([c, n]) => `${c} ${n === 2 ? "đôi" : "đơn"}`).join(", ")
+    : `${list.length} ${layout.unit}: ` + list.map(([c]) => c).join(", ");
+  document.getElementById("picked").textContent = list.length ? desc : "Chưa chọn chỗ";
+  document.getElementById("total").textContent = fmt(list.reduce((s, [c, n]) => s + priceOf(c, n), 0));
   document.getElementById("next").disabled = !list.length;
 }
 
@@ -259,8 +328,7 @@ function simulateOthers() {
   if (selected.has(pick) && seatState[pick] !== "free") { selected.delete(pick); lost = true; }
   const active = document.activeElement?.dataset?.code;
   render(); updateBar();
-  const el = document.querySelector(`.seat[data-code="${pick}"]`);
-  el?.classList.add("flash");
+  document.querySelector(`.seat[data-code="${pick}"]`)?.classList.add("flash");
   if (active) focusSeat(active);
   if (lost) toast(`${pick} vừa được khách khác giữ. Vui lòng chọn chỗ khác.`);
 }
@@ -273,10 +341,15 @@ function toast(msg) {
 }
 
 document.getElementById("next").onclick = () =>
-  toast(`Bước tiếp theo: máy chủ giữ ${[...selected].sort().join(", ")} trong 10 phút, khách nhập thông tin và thanh toán.`);
+  toast(`Bước tiếp theo: máy chủ giữ ${[...selected.keys()].sort().join(", ")} trong 10 phút, khách nhập thông tin và thanh toán.`);
 
+document.querySelector("header h1").textContent = `${OPERATOR.name} · Chọn chỗ`;
 const sel = document.getElementById("vehicle");
-sel.innerHTML = VEHICLES.map(v => `<option value="${v.code}">${v.name} · ${v.code} · ${TYPE_LABEL[v.type]}</option>`).join("");
+const opt = v => `<option value="${v.code}">${v.template ? layout_name(v) : `${v.name} · ${v.code} · ${TYPE_LABEL[v.type]}`}</option>`;
+function layout_name(v) { return `Mẫu: ${LAYOUTS[v.layout].name}`; }
+sel.innerHTML =
+  `<optgroup label="Xe của nhà xe">${VEHICLES.filter(v => !v.template).map(opt).join("")}</optgroup>` +
+  `<optgroup label="Mẫu sơ đồ khác (chưa gán xe)">${VEHICLES.filter(v => v.template).map(opt).join("")}</optgroup>`;
 sel.onchange = () => loadVehicle(sel.value);
 loadVehicle(VEHICLES[0].code);
 </script>

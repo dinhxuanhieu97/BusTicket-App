@@ -154,12 +154,15 @@ Phương án chạy thử có giới hạn dịp Tết (GOP-Y mục 1) vẫn đ�
 | GPS | **Đã lắp, chưa rõ hãng** | Xác định hãng theo [DOI-XE-SO-DO-CHO.md](DOI-XE-SO-DO-CHO.md) mục 5. Không chặn MVP. |
 | Đội xe | **10 xe**, nhận biết theo tên + mã (Xe 01 / PN01), 3 loại: Limousine, giường nằm, ghế ngồi | Đặc tả và bản mẫu sơ đồ chọn chỗ: [DOI-XE-SO-DO-CHO.md](DOI-XE-SO-DO-CHO.md), [prototype/so-do-cho.html](../prototype/so-do-cho.html). |
 
-### 8.2. Còn cần trả lời
+### 8.2. Đã chốt thêm
 
-1. Phí giao dịch ZaloPay/ví điện tử do nhà xe chịu hay cộng vào giá vé của khách?
-2. Mỗi chuyến có số điện thoại công ty cấp cho phụ xe không?
-3. Số xe thực tế của từng loại, và sơ đồ thật (số tầng, số chỗ, cách đánh số đang dùng) của mỗi kiểu xe?
-4. Limousine bán theo phòng hay theo người? Có phòng đôi không?
+| Nội dung | Quyết định |
+|---|---|
+| Phí giao dịch | Nhà xe chịu → VietQR + SePay/payOS là mặc định; ZaloPay/ví bật tùy chọn ([NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 2) |
+| Số điện thoại chuyến | Công ty cấp cho phụ xe giám sát; dùng trong ZNS "thông tin chuyến" |
+| Số xe | Mặc định 2 xe mỗi nhà xe |
+| Limousine | Bán theo phòng đơn/đôi |
+| Nhiều nhà xe | Mỗi nhà xe một OA + một Mini App, cùng mã nguồn ([NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 1.3) |
 
 ## 9. Nguồn tham khảo
 

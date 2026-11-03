@@ -2,7 +2,7 @@
 
 > Ngày: 03/11/2026 · Trạng thái: Đề xuất để rà soát · Liên quan: [PNTicketDocs.md](PNTicketDocs.md) mục 5.1, 10 · Bản mẫu: [prototype/so-do-cho.html](../prototype/so-do-cho.html)
 
-Tài liệu này mô tả cách quản lý **10 xe** của nhà xe Phong Nhung và **sơ đồ giường/ghế** để khách chọn chỗ. Biển số, số chỗ, giá và việc chia loại xe dưới đây là **dữ liệu minh họa**. Dữ liệu thật do nhà xe nhập trong trang quản trị.
+Tài liệu này mô tả cách quản lý **đội xe** của mỗi nhà xe (mặc định **2 xe**, chủ xe tự thêm; Phong Nhung là ví dụ đầu tiên) và **sơ đồ giường/ghế** để khách chọn chỗ. Biển số, số chỗ, giá và việc chia loại xe dưới đây là **dữ liệu minh họa**. Dữ liệu thật do nhà xe nhập trong trang quản trị.
 
 ## 1. Thông tin một xe
 
@@ -17,20 +17,16 @@ Tài liệu này mô tả cách quản lý **10 xe** của nhà xe Phong Nhung v
 | Trạng thái | Hoạt động / Bảo dưỡng / Ngưng | Xe đang bảo dưỡng không được gán vào chuyến mới |
 | Ghi chú | "Có WC", "Cổng sạc USB" | Tiện ích hiển thị cho khách |
 
-### Đội xe minh họa
+### Đội xe mặc định (minh họa)
+
+Khi tạo nhà xe mới, hệ thống tạo sẵn 2 xe; mã xe dùng **tiền tố của nhà xe** (xem [NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 1).
 
 | Tên | Mã | Loại | Mẫu sơ đồ |
 |---|---|---|---|
-| Xe 01 | PN01 | Limousine | Limousine 24 phòng |
-| Xe 02 | PN02 | Limousine | Limousine 24 phòng |
-| Xe 03 | PN03 | Limousine | Limousine 24 phòng |
-| Xe 04 | PN04 | Limousine | Limousine 24 phòng |
-| Xe 05 | PN05 | Giường nằm | Giường nằm 36 chỗ |
-| Xe 06 | PN06 | Giường nằm | Giường nằm 36 chỗ |
-| Xe 07 | PN07 | Giường nằm | Giường nằm 36 chỗ |
-| Xe 08 | PN08 | Giường nằm | Giường nằm 36 chỗ |
-| Xe 09 | PN09 | Ghế ngồi | Ghế ngồi 29 chỗ |
-| Xe 10 | PN10 | Ghế ngồi | Ghế ngồi 29 chỗ |
+| Xe 01 | PN01 | Limousine | Limousine 24 phòng (bán theo phòng đơn/đôi) |
+| Xe 02 | PN02 | Giường nằm | Giường nằm 36 chỗ |
+
+Mẫu "Ghế ngồi 29 chỗ" có sẵn trong thư viện mẫu, dùng khi nhà xe thêm xe ghế ngồi.
 
 ## 2. Quy ước mã chỗ
 
@@ -90,7 +86,7 @@ Trang quản trị sau này sẽ có **trình vẽ sơ đồ kéo-thả**, lưu 
 | Thuộc tính | Dùng để |
 |---|---|
 | `price_tier` | Giá khác nhau theo vị trí (VD tầng dưới đắt hơn, phòng đôi) |
-| `capacity` | Số người tối đa (VD phòng limousine đôi = 2) |
+| `capacity` | Số người tối đa. Phòng limousine = 2 (bán được phòng đơn hoặc phòng đôi); phòng chỉ cho 1 người = 1. Xem [NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 3 |
 | `sellable` | `false` cho chỗ giữ cho phụ xe, nhân viên |
 | `tags` | "gần cửa", "gần WC", "cửa sổ" để hiển thị cho khách |
 
@@ -129,7 +125,7 @@ Khi có API: lưu `gps_device_id` cho từng xe. Worker lấy vị trí của **
 ## 6. Mô hình dữ liệu (bổ sung PNTicketDocs mục 10)
 
 ```
-vehicles        (id, code UNIQUE, name, type, plate_number, seat_layout_id,
+vehicles        (id, operator_id, code UNIQUE, name, type, plate_number, seat_layout_id,
                  gps_device_id, status, amenities, created_at, updated_at)
 seat_layouts    (id, code, name, unit, version, floors_json, capacity,
                  UNIQUE(code, version))
