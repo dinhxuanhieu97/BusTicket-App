@@ -134,7 +134,7 @@ describe('T5 review: trips status and admin counts', () => {
     const holds = Array.from({ length: 10 }, (_, i) =>
       s.bookings
         .createHold(
-          { tripId: seed.limoTrip.id, contactName: 'A', contactPhone: '0912345678', items: [{ seatCode: `A0${(i % 9) + 1}`.slice(0, 3) }] },
+          { tripId: seed.limoTrip.id, contactName: 'A', contactPhone: '0912345678', items: [{ seatCode: `A${(i % 9) + 1}` }] },
           `review-race-${i}-0001`,
         )
         .then((r) => r.booking.code, (e) => e.code as string),
@@ -168,15 +168,15 @@ describe('T5 review: trips status and admin counts', () => {
   });
 
   it('admin counts: blocked seats are not available, expired holds are', async () => {
-    await s.db.query("UPDATE trip_seats SET sellable = false WHERE trip_id = $1 AND seat_code IN ('B17', 'B18')", [seed.bedTrip.id]);
+    await s.db.query("UPDATE trip_seats SET sellable = false WHERE trip_id = $1 AND seat_code IN ('C7', 'C8')", [seed.bedTrip.id]);
     await s.bookings.createHold(
-      { tripId: seed.bedTrip.id, contactName: 'A', contactPhone: '0912345678', items: [{ seatCode: 'B16' }] },
+      { tripId: seed.bedTrip.id, contactName: 'A', contactPhone: '0912345678', items: [{ seatCode: 'C6' }] },
       'review-count-0001',
     );
     const before = (await s.trips.listForAdmin(seed.op.id, '2027-02-01')).find((t) => t.id === seed.bedTrip.id)!;
     s.clock.advanceMinutes(11);
     const after = (await s.trips.listForAdmin(seed.op.id, '2027-02-01')).find((t) => t.id === seed.bedTrip.id)!;
-    expect(after.capacity).toBe(36);
+    expect(after.capacity).toBe(40);
     expect(after.available).toBe(before.available + 1);
     const map = await s.trips.seatMap(seed.bedTrip.id);
     expect(map.seats.filter((x) => x.status === 'AVAILABLE').length).toBe(after.available);
@@ -190,19 +190,19 @@ describe('T5 review: vehicles', () => {
     const route = await s.trips.createRoute(op.id, { code: 'R1', origin: 'a', destination: 'b' });
     const trip = { routeId: route.id, vehicleId: limo!.id, departAt: '2027-03-01T11:00:00Z', salesOpenAt: '2027-01-01T00:00:00Z', salesCloseAt: '2027-03-01T10:00:00Z' };
     const t1 = await s.trips.createTrip(op.id, { ...trip, name: 'Trước', fares: [
-      { floor: 'A', occupancy: 1, price: 1 }, { floor: 'A', occupancy: 2, price: 2 }, { floor: 'B', occupancy: 1, price: 1 }, { floor: 'B', occupancy: 2, price: 2 },
+      { floor: '1', occupancy: 1, price: 1 }, { floor: '1', occupancy: 2, price: 2 }, { floor: '2', occupancy: 1, price: 1 }, { floor: '2', occupancy: 2, price: 2 },
     ] });
     const small = await s.layouts.create(op.id, {
       code: 'LIMO4', name: 'Limo 4', unit: 'phòng', kind: 'room',
-      definition: { defaultMaxOccupancy: 2, floors: [{ code: 'A', label: 'x', rows: ['A01 . A02', 'A03 . A04'] }] },
+      definition: { defaultMaxOccupancy: 2, floors: [{ code: '1', label: 'x', rows: ['A1 . A2', 'A3 . A4'] }] },
     });
     await s.vehicles.update(op.id, limo!.id, { seatLayoutId: small.id });
-    const t2 = await s.trips.createTrip(op.id, { ...trip, name: 'Sau', fares: [{ floor: 'A', occupancy: 1, price: 1 }, { floor: 'A', occupancy: 2, price: 2 }] });
+    const t2 = await s.trips.createTrip(op.id, { ...trip, name: 'Sau', fares: [{ floor: '1', occupancy: 1, price: 1 }, { floor: '1', occupancy: 2, price: 2 }] });
     const count = async (id: string) =>
       (await s.db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM trip_seats WHERE trip_id = $1', [id])).rows[0]!.n;
     expect([await count(t1.id), await count(t2.id)]).toEqual([24, 4]);
     // Sơ đồ khác loại (giường) không gán được cho xe Limousine.
-    const bed = await s.layouts.latest(null, 'BED36');
+    const bed = await s.layouts.latest(null, 'BED40');
     expect(await errorCode(s.vehicles.update(op.id, limo!.id, { seatLayoutId: bed!.id }))).toBe('VALIDATION_FAILED');
   });
 

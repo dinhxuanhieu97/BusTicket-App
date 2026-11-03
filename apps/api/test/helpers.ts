@@ -51,14 +51,14 @@ export function buildServices(clock = new FixedClock(T0)): Services {
 }
 
 export const LIMO_FARES = [
-  { floor: 'A', occupancy: 1 as const, price: 450_000 },
-  { floor: 'A', occupancy: 2 as const, price: 700_000 },
-  { floor: 'B', occupancy: 1 as const, price: 420_000 },
-  { floor: 'B', occupancy: 2 as const, price: 650_000 },
+  { floor: '1', occupancy: 1 as const, price: 450_000 },
+  { floor: '1', occupancy: 2 as const, price: 700_000 },
+  { floor: '2', occupancy: 1 as const, price: 420_000 },
+  { floor: '2', occupancy: 2 as const, price: 650_000 },
 ];
 export const BED_FARES = [
-  { floor: 'A', occupancy: 1 as const, price: 380_000 },
-  { floor: 'B', occupancy: 1 as const, price: 350_000 },
+  { floor: '1', occupancy: 1 as const, price: 380_000 },
+  { floor: '2', occupancy: 1 as const, price: 350_000 },
 ];
 
 /** Nhà xe + tuyến + 2 chuyến (Limousine 18:00 và giường nằm 19:30 ngày 01/02/2027 giờ VN), đang mở bán. */

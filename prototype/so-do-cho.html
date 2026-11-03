@@ -41,6 +41,7 @@
   .floor h2 small { color: var(--muted); font-weight: 400; }
   .front { text-align: center; font-size: 12px; color: var(--muted); border: 1px dashed var(--line);
            border-radius: 8px 8px 2px 2px; padding: 4px; margin-bottom: 8px; }
+  .rows { display: grid; gap: 8px; }
   .grid { display: grid; gap: 8px; }
   .seat { appearance: none; border: 1.5px solid var(--line); background: var(--free); color: var(--ink);
           border-radius: 8px; padding: 6px 2px; min-height: 56px; min-width: 0; cursor: pointer;
@@ -64,6 +65,8 @@
   .seat.flash { animation: flash 1.2s ease-out; }
   @keyframes flash { 0% { box-shadow: 0 0 0 4px #f59e0b; } 100% { box-shadow: 0 0 0 0 transparent; } }
   .aisle, .empty { min-height: 1px; }
+  .marker { font-size: 11px; color: var(--muted); display: flex; align-items: center; justify-content: center;
+            border: 1px dashed var(--line); border-radius: 8px; min-height: 36px; text-align: center; padding: 2px; }
   .note { font-size: 13px; color: var(--muted); margin: 0; }
   .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
          padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
@@ -146,42 +149,46 @@
 <script>
 // ---- Dữ liệu minh họa ----------------------------------------------------
 // Mẫu sơ đồ: mỗi hàng là chuỗi ô cách nhau bởi dấu cách. "." = lối đi, "_" = ô trống.
+// Sơ đồ theo ảnh trong Images/ (giống thư viện mẫu của API, apps/api/src/seat-layouts/library.ts).
+// Tầng: "1" dưới, "2" trên. Ô: mã chỗ, "." lối đi, "_" trống, "TX" tài xế, "CUA" cửa lên, "WC" nhà vệ sinh.
 const LAYOUTS = {
   LIMO24: {
     name: "Limousine 24 phòng", unit: "phòng", kind: "bed",
     // Bán theo phòng: phòng đơn (1 người) / phòng đôi (2 người), giá phòng đôi cao hơn.
     rooms: true,
-    price: { A: { single: 450000, double: 700000 }, B: { single: 420000, double: 650000 } },
+    price: { "1": { single: 450000, double: 700000 }, "2": { single: 420000, double: 650000 } },
     blocked: [],
     floors: [
-      { code: "A", label: "Tầng dưới", rows: ["A01 . A02","A03 . A04","A05 . A06","A07 . A08","A09 . A10","A11 . A12"] },
-      { code: "B", label: "Tầng trên", rows: ["B01 . B02","B03 . B04","B05 . B06","B07 . B08","B09 . B10","B11 . B12"] },
+      { code: "1", label: "Tầng dưới", rows: ["TX . CUA","A1 . A2","A3 . A4","A5 . A6","A7 . A8","A9 . A10","A11 . A12"] },
+      { code: "2", label: "Tầng trên", rows: ["B1 . B2","B3 . B4","B5 . B6","B7 . B8","B9 . B10","B11 . B12"] },
     ],
   },
-  BED36: {
-    name: "Giường nằm 36 chỗ", unit: "giường", kind: "bed",
-    price: { A: 380000, B: 350000 },
-    blocked: ["B18"],
+  BED40: {
+    // Images/40-GIUONG.webp: dãy A (phía tài xế), B, C (phía cửa) và dãy D cuối xe; số lẻ tầng dưới, số chẵn tầng trên.
+    name: "Giường nằm 40 chỗ", unit: "giường", kind: "bed",
+    price: { "1": 380000, "2": 350000 },
+    blocked: [],
     floors: [
-      { code: "A", label: "Tầng dưới", rows: ["A01 . A02 . A03","A04 . A05 . A06","A07 . A08 . A09","A10 . A11 . A12","A13 . A14 . A15","A16 . A17 . A18"] },
-      { code: "B", label: "Tầng trên", rows: ["B01 . B02 . B03","B04 . B05 . B06","B07 . B08 . B09","B10 . B11 . B12","B13 . B14 . B15","B16 . B17 . B18"] },
+      { code: "1", label: "Tầng dưới", rows: ["TX . _ . CUA","A1 . B1 . C1","A3 . B3 . C3","A5 . B5 . C5","A7 . B7 . C7","A9 . B9 . C9","D1 D2 D3 D4 D5"] },
+      { code: "2", label: "Tầng trên", rows: ["A2 . B2 . C2","A4 . B4 . C4","A6 . B6 . C6","A8 . B8 . C8","A10 . B10 . C10","D6 D7 D8 D9 D10"] },
     ],
   },
   SEAT29: {
     name: "Ghế ngồi 29 chỗ", unit: "ghế", kind: "seat",
-    price: { A: 250000 },
+    price: { "1": 250000 },
     blocked: [],
     floors: [
-      { code: "A", label: "Khoang khách", rows: ["A01 A02 . A03 A04","A05 A06 . A07 A08","A09 A10 . A11 A12","A13 A14 . A15 A16","A17 A18 . A19 A20","A21 A22 . A23 A24","A25 A26 A27 A28 A29"] },
+      { code: "1", label: "Khoang khách", rows: ["TX _ . _ CUA","A1 A2 . A3 A4","A5 A6 . A7 A8","A9 A10 . A11 A12","A13 A14 . A15 A16","A17 A18 . A19 A20","A21 A22 . A23 A24","A25 A26 A27 A28 A29"] },
     ],
   },
 };
+const MARKERS = { ".": null, "_": null, TX: "🛞 Tài xế", CUA: "🚪 Cửa lên", WC: "🚻 WC" };
 const TYPE_LABEL = { LIMOUSINE: "Limousine", SLEEPER: "Giường nằm", SEATER: "Ghế ngồi" };
 // Mỗi nhà xe mặc định 2 xe; chủ xe tự thêm xe trong trang quản trị.
 const OPERATOR = { name: "Phong Nhung", prefix: "PN" };
 const VEHICLES = [
   { name: "Xe 01", code: "PN01", type: "LIMOUSINE", layout: "LIMO24", depart: "18:00" },
-  { name: "Xe 02", code: "PN02", type: "SLEEPER",   layout: "BED36",  depart: "19:30" },
+  { name: "Xe 02", code: "PN02", type: "SLEEPER",   layout: "BED40",  depart: "19:30" },
   // Mẫu sơ đồ có sẵn nhưng chưa gán xe — chỉ để xem thử.
   { name: "Mẫu", code: "MAU-SEAT29", type: "SEATER", layout: "SEAT29", depart: "20:00", template: true },
 ];
@@ -199,14 +206,17 @@ let vehicle, layout, seatState = {}, selected = new Map(), infants = new Set(), 
 
 function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) % 100; }
 
-function floorLabelOf(code) { return layout.floors.find(f => f.code === code[0])?.label ?? ""; }
+let floorOf = {};
+function floorLabelOf(code) { return layout.floors.find(f => f.code === floorOf[code])?.label ?? ""; }
 
 function loadVehicle(code) {
   vehicle = VEHICLES.find(v => v.code === code);
   layout = LAYOUTS[vehicle.layout];
   selected.clear(); infants.clear(); seatState = {};
+  floorOf = {};
   for (const f of layout.floors) for (const r of f.rows) for (const t of r.split(" ")) {
-    if (t === "." || t === "_") continue;
+    if (t in MARKERS) continue;
+    floorOf[t] = f.code;
     const h = hash(vehicle.code + t);
     seatState[t] = layout.blocked.includes(t) ? "blocked" : h < 42 ? "booked" : h < 50 ? "held" : "free";
   }
@@ -220,7 +230,7 @@ function loadVehicle(code) {
 }
 
 function priceOf(code, occ = 1) {
-  const p = layout.price[code[0]] ?? Object.values(layout.price)[0];
+  const p = layout.price[floorOf[code]] ?? Object.values(layout.price)[0];
   return layout.rooms ? (occ === 2 ? p.double : p.single) : p;
 }
 
@@ -237,15 +247,28 @@ function render() {
     const sec = document.createElement("div");
     sec.className = "card floor";
     sec.innerHTML = `<h2>${f.label}<small>Còn ${free} ${layout.unit}</small></h2><div class="front">▲ Đầu xe</div>`;
-    const grid = document.createElement("div");
-    grid.className = "grid";
-    grid.style.gridTemplateColumns = aisleCol.map(a => a ? "minmax(14px,.35fr)" : "1fr").join(" ");
-    for (const r of rows) for (let c = 0; c < cols; c++) {
-      const t = r[c] ?? "_";
-      if (t === "." || t === "_") { grid.appendChild(Object.assign(document.createElement("div"), { className: "aisle" })); continue; }
-      grid.appendChild(seatButton(t, f.label));
+    const normal = aisleCol.map(a => a ? "minmax(14px,.35fr)" : "1fr").join(" ");
+    const body = document.createElement("div");
+    body.className = "rows";
+    for (const r of rows) {
+      // Hàng có giường nằm ở cột lối đi (vd. dãy D cuối xe 40 giường) thì chia đều cả hàng.
+      const spansAisle = r.some((t, c) => aisleCol[c] && !(t in MARKERS));
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      grid.style.gridTemplateColumns = spansAisle ? `repeat(${cols}, 1fr)` : normal;
+      for (let c = 0; c < cols; c++) {
+        const t = r[c] ?? "_";
+        if (t in MARKERS) {
+          const cell = Object.assign(document.createElement("div"), { className: MARKERS[t] ? "marker" : "aisle" });
+          if (MARKERS[t]) cell.textContent = MARKERS[t];
+          grid.appendChild(cell);
+          continue;
+        }
+        grid.appendChild(seatButton(t, f.label));
+      }
+      body.appendChild(grid);
     }
-    sec.appendChild(grid);
+    sec.appendChild(body);
     wrap.appendChild(sec);
   }
   renderRooms();
@@ -260,7 +283,7 @@ function seatButton(code, floorLabel) {
   const b = document.createElement("button");
   b.type = "button"; b.dataset.code = code;
   b.className = `seat ${layout.kind} ${st}`;
-  const chosen = (layout.rooms ? `✓ ${OCC_LABEL[selected.get(code)]}` : "✓ Đã chọn") + (infants.has(code) ? " + bé" : "");
+  const chosen = (layout.rooms ? `✓ ${OCC_LABEL[selected.get(code)]}` : "✓ Chọn") + (infants.has(code) ? " +bé" : "");
   const sub = { free: freeLabel(code), selected: chosen, held: "Đang giữ", booked: "✕ Đã đặt", blocked: "Không bán" }[st];
   b.innerHTML = `<span class="code">${code}</span><span class="sub">${sub}</span>`;
   b.disabled = st === "held" || st === "booked" || st === "blocked";

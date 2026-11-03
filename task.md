@@ -15,7 +15,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [ ] **T5b. Chống giữ chỗ ảo mùa cao điểm**: giới hạn tần suất `POST /bookings` theo IP và SĐT, số đơn đang giữ tối đa mỗi SĐT, OTP khi bật cao điểm (PNTicketDocs mục 5.2, 12).
 - [ ] **T6. Thanh toán**: `payment_requests`, webhook SePay/payOS (xác thực chữ ký, chống trùng), phân bổ tiền, xác nhận đơn, ngoại lệ (thiếu/dư/muộn), xác nhận thủ công có quyền (mức 0).
 - [ ] **T7. Vé + outbox + gửi vé**: phát hành vé theo đơn vị bán, QR token, outbox, kênh ưu tiên miễn phí (trang vé, email, Zalo OA) rồi ZNS/SMS, hạn mức chi phí tin.
-- [ ] **T8. Danh sách khách theo chuyến**: API + xuất Excel theo mẫu `templates/mau-danh-sach-khach-theo-chuyen.xlsx`.
+- [ ] **T8. Danh sách khách theo chuyến**: API + **xuất Excel để xem** theo mẫu `templates/mau-danh-sach-khach-theo-chuyen.xlsx`. Không cần in vé giấy/máy in nhiệt (chốt 03/11/2026).
 - [ ] **T9. Đếm vé tính phí nền tảng** (`billable_tickets`, bảng kê theo kỳ).
 - [ ] **T10. Worker**: hết hạn giữ chỗ định kỳ, đối soát định kỳ, nhắc giờ.
 - [ ] **T11. Zalo Mini App** (giao diện khách) dựa trên bản mẫu `prototype/so-do-cho.html`.
@@ -24,7 +24,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 ## Phát hiện mới
 
 <!-- Ghi mọi việc mới phát hiện trong khi làm: [ngày] [task] mô tả — trạng thái -->
-- [ ] 03/11/2026 · T2 · **Sơ đồ xe thật** trong thư mục `Images/` chưa có trong repo (chỉ có trên máy người dùng). Đang dùng sơ đồ minh họa; cần đẩy `Images/` lên repo để thay mẫu sơ đồ. — **chờ người dùng**
+- [x] 03/11/2026 · T2 · **Sơ đồ xe thật** (`Images/`): xe 40 giường đánh mã **theo dãy** (A1 dưới, A2 trên), khác giả định "chữ cái = tầng". — đã đổi định dạng sơ đồ (tầng `1`/`2`, mã tự do 1–2 chữ + 1–2 số, ô `TX`/`CUA`/`WC`), thư viện BED40 + LIMO24 theo ảnh, bản mẫu giao diện cập nhật
 - [x] 03/11/2026 · T2–T4 · Id không đúng dạng UUID làm PostgreSQL ném lỗi 22P02 (thành lỗi 500) thay vì NOT_FOUND. — đã sửa (`src/common/ids.ts`), test `review-findings.int-spec.ts`
 - [x] 03/11/2026 · T3 · Sơ đồ chỗ công khai hiện cả chuyến DRAFT. — đã sửa: DRAFT trả NOT_FOUND
 - [x] 03/11/2026 · T2/T4 · `FOR UPDATE` trên `operators`/`trips` chặn các giao dịch chèn bản ghi có FK. — đã đổi sang `FOR NO KEY UPDATE`
@@ -40,7 +40,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] 03/11/2026 · T5 · `redact()` chỉ lọc tầng ngoài, ít từ khóa. — lọc mọi tầng, thêm mfa/hash/key/cred
 - [ ] 03/11/2026 · T5 · Nhật ký thao tác ghi **sau** khi transaction nghiệp vụ commit → nếu DB lỗi đúng lúc đó có thể mất dòng nhật ký. Cần ghi trong cùng transaction (truyền client từ service) — làm cùng T6 (thao tác tiền bắt buộc có nhật ký).
 - [ ] 03/11/2026 · T5 · Tài khoản bị khóa trả `TOO_MANY_ATTEMPTS` còn SĐT không tồn tại trả `INVALID_CREDENTIALS` → lộ một phần sự tồn tại tài khoản sau 5 lần thử. Thấp; xem xét cùng giới hạn theo IP ở T5b.
-- [ ] 03/11/2026 · T5 · Kế toán được `audit.read` là cách hiểu tài liệu, chưa có câu chữ rõ ràng — xác nhận với người dùng.
+- [x] 03/11/2026 · T5 · Phân quyền theo vai trò tài khoản (chốt 03/11/2026). Bảng quyền: `docs/PHAN-QUYEN.md`.
 
 ### Rà soát subagent — T5 (03/11/2026)
 

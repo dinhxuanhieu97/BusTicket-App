@@ -205,8 +205,8 @@ describe('owner manages staff and permissions are enforced', () => {
         salesOpenAt: '2027-01-01T00:00:00Z',
         salesCloseAt: '2027-02-01T11:30:00Z',
         fares: [
-          { floor: 'A', occupancy: 1, price: 380000 },
-          { floor: 'B', occupancy: 1, price: 350000 },
+          { floor: '1', occupancy: 1, price: 380000 },
+          { floor: '2', occupancy: 1, price: 350000 },
         ],
         status: 'DRAFT',
       })
@@ -219,7 +219,7 @@ describe('owner manages staff and permissions are enforced', () => {
       .expect(200);
     await http().get(`/api/v1/trips/${trip.body.id}/seats`).expect(200);
     const list = await http().get(`/api/v1/admin/operators/${pnId}/trips?date=2027-02-01`).set(bearer(sellerToken)).expect(200);
-    expect(list.body.trips[0]).toMatchObject({ status: 'OPEN', available: 36, capacity: 36 });
+    expect(list.body.trips[0]).toMatchObject({ status: 'OPEN', available: 40, capacity: 40 });
     const bad = await http()
       .patch(`/api/v1/admin/operators/${pnId}/trips/${trip.body.id}/status`)
       .set(bearer(dispatcherToken))

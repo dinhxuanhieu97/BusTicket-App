@@ -14,9 +14,9 @@ function run(exception: unknown) {
 
 describe('HttpErrorFilter', () => {
   it('maps a DomainError to its HTTP status and stable code', () => {
-    const r = run(new DomainError('SEAT_UNAVAILABLE', 'Chỗ A01 vừa có người khác giữ.', { seats: ['A01'] }));
+    const r = run(new DomainError('SEAT_UNAVAILABLE', 'Chỗ A1 vừa có người khác giữ.', { seats: ['A1'] }));
     expect(r.status).toBe(409);
-    expect(r.body).toEqual({ error: { code: 'SEAT_UNAVAILABLE', message: 'Chỗ A01 vừa có người khác giữ.', details: { seats: ['A01'] } } });
+    expect(r.body).toEqual({ error: { code: 'SEAT_UNAVAILABLE', message: 'Chỗ A1 vừa có người khác giữ.', details: { seats: ['A1'] } } });
   });
 
   it('maps a ZodError to 400 VALIDATION_FAILED with field paths', () => {

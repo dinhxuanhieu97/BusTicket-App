@@ -9,11 +9,12 @@ Web app giúp khách đặt vé xe giường nằm/limousine online (chọn ch�
 - 📱 [docs/ZALO-MINI-APP.md](docs/ZALO-MINI-APP.md) — Phương án dùng Zalo Mini App làm kênh đặt vé cho khách (ZNS, Checkout SDK, bản đồ điểm đón).
 - 🏢 [docs/NEN-TANG-DA-NHA-XE.md](docs/NEN-TANG-DA-NHA-XE.md) — Nhiều nhà xe, thanh toán tiết kiệm, Limousine phòng đơn/đôi, danh sách khách theo chuyến (Excel).
 - ✅ [docs/SETUP-NHA-XE.md](docs/SETUP-NHA-XE.md) — Thu phí nhà xe (một lần / theo số vé), gửi vé ưu tiên kênh miễn phí, chính sách trẻ em, checklist setup nhà xe trước khi hoạt động.
+- 🔐 [docs/PHAN-QUYEN.md](docs/PHAN-QUYEN.md) — Bảng phân quyền theo vai trò tài khoản.
 - 🚌 [docs/DOI-XE-SO-DO-CHO.md](docs/DOI-XE-SO-DO-CHO.md) — Đội xe (tên, mã, loại), mẫu sơ đồ giường/ghế, quy ước mã chỗ và trạng thái chỗ.
 
 ## Bản mẫu giao diện
 
-- [prototype/so-do-cho.html](prototype/so-do-cho.html) — Sơ đồ chọn chỗ: 2 xe mặc định (Limousine bán theo phòng đơn/đôi, giường nằm), mẫu ghế ngồi, tùy chọn kèm trẻ dưới 2 tuổi: còn trống / đang giữ / đã đặt / không bán. Mở trực tiếp bằng trình duyệt, không cần cài đặt.
+- [prototype/so-do-cho.html](prototype/so-do-cho.html) — Sơ đồ chọn chỗ: 2 xe mặc định theo sơ đồ thật trong `Images/` (Limousine 24 phòng bán theo phòng đơn/đôi, giường nằm 40 chỗ), mẫu ghế ngồi, tùy chọn kèm trẻ dưới 2 tuổi: còn trống / đang giữ / đã đặt / không bán. Mở trực tiếp bằng trình duyệt, không cần cài đặt.
 - [templates/mau-danh-sach-khach-theo-chuyen.xlsx](templates/mau-danh-sach-khach-theo-chuyen.xlsx) — File Excel mẫu danh sách khách theo chuyến cho phụ xe.
 
 ## Mã nguồn

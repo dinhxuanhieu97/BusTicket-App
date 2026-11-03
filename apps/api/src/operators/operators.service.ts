@@ -24,7 +24,7 @@ export type CreateOperatorInput = z.infer<typeof createOperatorSchema>;
 /** Xe tạo sẵn khi thêm nhà xe mới (docs/NEN-TANG-DA-NHA-XE.md mục 1.4). */
 const DEFAULT_VEHICLES = [
   { suffix: '01', name: 'Xe 01', type: 'LIMOUSINE', layout: 'LIMO24' },
-  { suffix: '02', name: 'Xe 02', type: 'SLEEPER', layout: 'BED36' },
+  { suffix: '02', name: 'Xe 02', type: 'SLEEPER', layout: 'BED40' },
 ] as const;
 
 @Injectable()

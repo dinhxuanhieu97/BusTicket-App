@@ -4,8 +4,12 @@ import { DomainError } from '../common/errors';
 export type LayoutKind = 'room' | 'bed' | 'seat';
 
 /**
- * Định nghĩa sơ đồ: mỗi tầng là các hàng chuỗi, ô cách nhau bằng dấu cách.
- * `A01` = chỗ (chữ cái đầu = mã tầng), `.` = lối đi, `_` = ô trống. Xem docs/DOI-XE-SO-DO-CHO.md mục 3.
+ * Định nghĩa sơ đồ: mỗi tầng (`1` = tầng dưới, `2` = tầng trên) là các hàng chuỗi, ô cách nhau bằng dấu cách,
+ * liệt kê từ đầu xe về cuối xe, trái sang phải khi nhìn theo hướng xe chạy.
+ * - Chỗ: mã theo cách nhà xe đang dán trên xe, 1–2 chữ cái + 1–2 chữ số (A1, B10, D6…). Tầng của chỗ là tầng chứa nó,
+ *   không suy ra từ mã (xe 40 giường đánh theo dãy: A1 tầng dưới, A2 tầng trên — xem Images/40-GIUONG.webp).
+ * - Ô không phải chỗ: `.` lối đi, `_` ô trống, `TX` tài xế, `CUA` cửa lên xuống, `WC` nhà vệ sinh.
+ * Xem docs/DOI-XE-SO-DO-CHO.md mục 3.
  */
 export const layoutDefinitionSchema = z
   .object({
@@ -13,7 +17,7 @@ export const layoutDefinitionSchema = z
       .array(
         z
           .object({
-            code: z.string().regex(/^[A-Z]$/, 'Mã tầng là một chữ cái in hoa'),
+            code: z.string().regex(/^[1-3]$/, 'Mã tầng là 1 (dưới), 2 (trên) hoặc 3'),
             label: z.string().trim().min(1).max(40),
             rows: z.array(z.string().max(200)).min(1).max(30),
           })
@@ -50,7 +54,9 @@ export interface ParsedLayout {
   capacity: number;
 }
 
-const SEAT_TOKEN = /^[A-Z]\d{2}$/;
+export const SEAT_CODE = /^[A-Z]{1,2}\d{1,2}$/;
+/** Ô đánh dấu, không bán: lối đi, ô trống, tài xế, cửa, nhà vệ sinh. */
+export const MARKER_TOKENS: ReadonlySet<string> = new Set(['.', '_', 'TX', 'CUA', 'WC']);
 const MAX_COLS = 12;
 
 function invalid(message: string, details?: unknown): DomainError {
@@ -80,11 +86,13 @@ export function parseLayout(input: unknown, kind: LayoutKind): ParsedLayout {
       const tokens = rowText.trim().split(/\s+/);
       if (tokens.length > MAX_COLS) throw invalid(`Hàng ${row + 1} tầng ${floor.code} có quá ${MAX_COLS} ô.`);
       tokens.forEach((token, col) => {
-        if (token === '.' || token === '_') return;
-        if (!SEAT_TOKEN.test(token)) {
-          throw invalid(`Ô "${token}" không hợp lệ (dạng A01, "." hoặc "_").`, { floor: floor.code, row: row + 1 });
+        if (MARKER_TOKENS.has(token)) return;
+        if (!SEAT_CODE.test(token)) {
+          throw invalid(`Ô "${token}" không hợp lệ (mã chỗ như A1/B10, hoặc ".", "_", "TX", "CUA", "WC").`, {
+            floor: floor.code,
+            row: row + 1,
+          });
         }
-        if (token[0] !== floor.code) throw invalid(`Chỗ ${token} không thuộc tầng ${floor.code}.`, { seat: token });
         if (seen.has(token)) throw invalid(`Mã chỗ ${token} bị trùng.`, { seat: token });
         seen.add(token);
         seats.push({ code: token, floor: floor.code, row, col, maxOccupancy: defaultOcc, sellable: true });

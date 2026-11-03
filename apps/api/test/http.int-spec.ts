@@ -62,14 +62,14 @@ describe('GET /api/v1/trips/:id/seats', () => {
     const held = await request(app.getHttpServer())
       .post('/api/v1/bookings')
       .set('Idempotency-Key', 'http-seatmap-0001')
-      .send(body([{ seatCode: 'A01' }]))
+      .send(body([{ seatCode: 'A1' }]))
       .expect(201);
     const res = await request(app.getHttpServer()).get(`/api/v1/trips/${seed.limoTrip.id}/seats`).expect(200);
     expect(res.body.layout).toMatchObject({ unit: 'phòng', kind: 'room' });
     expect(res.body.layout.floors).toHaveLength(2);
     expect(res.body.seats).toHaveLength(24);
-    expect(res.body.seats.find((x: { code: string }) => x.code === 'A01')).toEqual({
-      code: 'A01', floor: 'A', maxOccupancy: 2, status: 'HELD',
+    expect(res.body.seats.find((x: { code: string }) => x.code === 'A1')).toEqual({
+      code: 'A1', floor: '1', maxOccupancy: 2, status: 'HELD',
     });
     expect(res.body.fares).toHaveLength(4);
     const text = JSON.stringify(res.body);
@@ -90,7 +90,7 @@ describe('POST /api/v1/bookings', () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/bookings')
       .set('Idempotency-Key', 'http-create-0001')
-      .send(body([{ seatCode: 'A02', occupancy: 2, infantCount: 1 }]))
+      .send(body([{ seatCode: 'A2', occupancy: 2, infantCount: 1 }]))
       .expect(201);
     expect(res.body.booking).toMatchObject({ status: 'HOLDING', totalAmount: 700_000 });
     expect(res.body.accessToken).toEqual(expect.any(String));
@@ -110,14 +110,14 @@ describe('POST /api/v1/bookings', () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/bookings')
       .set('Idempotency-Key', 'http-taken-0001')
-      .send(body([{ seatCode: 'A02' }, { seatCode: 'A03' }]))
+      .send(body([{ seatCode: 'A2' }, { seatCode: 'A3' }]))
       .expect(409);
-    expect(res.body.error).toMatchObject({ code: 'SEAT_UNAVAILABLE', details: { seats: ['A02'] } });
-    expect(res.body.error.message).toContain('A02');
+    expect(res.body.error).toMatchObject({ code: 'SEAT_UNAVAILABLE', details: { seats: ['A2'] } });
+    expect(res.body.error.message).toContain('A2');
   });
 
   it('requires the Idempotency-Key header', async () => {
-    const res = await request(app.getHttpServer()).post('/api/v1/bookings').send(body([{ seatCode: 'A04' }])).expect(400);
+    const res = await request(app.getHttpServer()).post('/api/v1/bookings').send(body([{ seatCode: 'A4' }])).expect(400);
     expect(res.body.error.code).toBe('VALIDATION_FAILED');
   });
 
@@ -137,7 +137,7 @@ describe('POST /api/v1/bookings', () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/bookings')
       .set('Idempotency-Key', 'http-inject-0001')
-      .send({ ...body([{ seatCode: 'A05' }]), totalAmount: 1 })
+      .send({ ...body([{ seatCode: 'A5' }]), totalAmount: 1 })
       .expect(400);
     expect(res.body.error.code).toBe('VALIDATION_FAILED');
   });

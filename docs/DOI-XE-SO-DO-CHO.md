@@ -17,27 +17,29 @@ Tài liệu này mô tả cách quản lý **đội xe** của mỗi nhà xe (m�
 | Trạng thái | Hoạt động / Bảo dưỡng / Ngưng | Xe đang bảo dưỡng không được gán vào chuyến mới |
 | Ghi chú | "Có WC", "Cổng sạc USB" | Tiện ích hiển thị cho khách |
 
-### Đội xe mặc định (minh họa)
+### Đội xe mặc định
 
 Khi tạo nhà xe mới, hệ thống tạo sẵn 2 xe; mã xe dùng **tiền tố của nhà xe** (xem [NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 1).
 
 | Tên | Mã | Loại | Mẫu sơ đồ |
 |---|---|---|---|
 | Xe 01 | PN01 | Limousine | Limousine 24 phòng (bán theo phòng đơn/đôi) |
-| Xe 02 | PN02 | Giường nằm | Giường nằm 36 chỗ |
+| Xe 02 | PN02 | Giường nằm | Giường nằm 40 chỗ |
 
 Mẫu "Ghế ngồi 29 chỗ" có sẵn trong thư viện mẫu, dùng khi nhà xe thêm xe ghế ngồi.
 
 ## 2. Quy ước mã chỗ
 
-| Loại | Mã | Ví dụ |
-|---|---|---|
-| Tầng dưới (hoặc xe 1 tầng) | `A` + số 2 chữ số | A01 … A12 |
-| Tầng trên | `B` + số 2 chữ số | B01 … B12 |
+**Dùng đúng mã đang dán trên xe** để nhân viên và khách không bị nhầm. Hệ thống chấp nhận mã gồm 1–2 chữ cái in hoa + 1–2 chữ số (`A1`, `B10`, `D6`…), duy nhất trong một sơ đồ. **Tầng của chỗ là tầng chứa chỗ đó trong sơ đồ**, không suy ra từ mã.
 
-- Đánh số **từ đầu xe về cuối xe, từ trái sang phải** (nhìn theo hướng xe chạy), giống cách nhân viên đang gọi chỗ.
-- Mã chỗ **in trên vé** và **dán tại giường/ghế** để khách tự tìm chỗ.
-- Nếu nhà xe đang dùng cách đánh số khác (VD giường 1–40), giữ cách hiện tại để nhân viên và khách không bị nhầm. Hệ thống chỉ yêu cầu mã **duy nhất trong một sơ đồ**.
+Hai cách đánh số thường gặp (ảnh trong thư mục `Images/`):
+
+| Kiểu xe | Cách đánh số | Ảnh |
+|---|---|---|
+| **Giường nằm 40 chỗ** | Theo **dãy**: A (phía tài xế), B (giữa), C (phía cửa lên), D (hàng cuối). **Số lẻ ở tầng dưới, số chẵn ở tầng trên** cùng vị trí (A1 dưới, A2 ngay trên). Dãy D: D1–D5 tầng dưới, D6–D10 tầng trên. | `Images/40-GIUONG.webp` |
+| **Limousine 24 phòng** | Theo **tầng**: A1–A12 tầng 1 (dưới), B1–B12 tầng 2 (trên), 2 dãy trái/phải. | `Images/so-do-giường-mẫu-tham-khảo-2.jpeg` |
+
+Sơ đồ được vẽ **từ đầu xe về cuối xe, trái sang phải khi nhìn theo hướng xe chạy** (tài xế bên trái, cửa lên bên phải).
 
 ## 3. Mẫu sơ đồ chỗ (seat layout)
 
@@ -45,57 +47,58 @@ Mỗi mẫu là một **lưới** theo từng tầng. Nhà xe vẽ mẫu một l
 
 ### 3.1. Cách khai báo
 
-Mỗi hàng là một chuỗi, các ô cách nhau bằng dấu cách:
+Tầng có mã `1` (tầng dưới) và `2` (tầng trên). Mỗi hàng là một chuỗi, các ô cách nhau bằng dấu cách:
 
 | Ký hiệu | Ý nghĩa |
 |---|---|
-| `A01`, `B05`… | Một chỗ bán được |
+| `A1`, `B10`, `D6`… | Một chỗ bán được |
 | `.` | Lối đi |
-| `_` | Ô trống (không có chỗ) |
+| `_` | Ô trống |
+| `TX` | Tài xế (chỉ để hiển thị) |
+| `CUA` | Cửa lên xuống (chỉ để hiển thị) |
+| `WC` | Nhà vệ sinh (chỉ để hiển thị) |
 
-Ví dụ **Limousine 24 phòng** (2 dãy, 6 hàng, 2 tầng):
+Ví dụ **Giường nằm 40 chỗ** đúng theo `Images/40-GIUONG.webp`:
 
 ```json
 {
-  "code": "LIMO24",
-  "name": "Limousine 24 phòng",
-  "version": 1,
-  "unit": "phòng",
+  "code": "BED40",
+  "name": "Giường nằm 40 chỗ",
+  "unit": "giường",
+  "kind": "bed",
   "floors": [
-    { "code": "A", "label": "Tầng dưới",
-      "rows": ["A01 . A02", "A03 . A04", "A05 . A06", "A07 . A08", "A09 . A10", "A11 . A12"] },
-    { "code": "B", "label": "Tầng trên",
-      "rows": ["B01 . B02", "B03 . B04", "B05 . B06", "B07 . B08", "B09 . B10", "B11 . B12"] }
+    { "code": "1", "label": "Tầng dưới",
+      "rows": ["TX . _ . CUA", "A1 . B1 . C1", "A3 . B3 . C3", "A5 . B5 . C5", "A7 . B7 . C7", "A9 . B9 . C9", "D1 D2 D3 D4 D5"] },
+    { "code": "2", "label": "Tầng trên",
+      "rows": ["A2 . B2 . C2", "A4 . B4 . C4", "A6 . B6 . C6", "A8 . B8 . C8", "A10 . B10 . C10", "D6 D7 D8 D9 D10"] }
   ]
 }
 ```
 
-**Ghế ngồi 29 chỗ** (2+2, hàng cuối 5 ghế):
+Ví dụ **Limousine 24 phòng** (`defaultMaxOccupancy: 2` = mỗi phòng tối đa 2 người):
 
 ```
-A01 A02 . A03 A04
-...
-A21 A22 . A23 A24
-A25 A26 A27 A28 A29
+Tầng 1: TX . CUA | A1 . A2 | A3 . A4 | … | A11 . A12
+Tầng 2:          B1 . B2 | B3 . B4 | … | B11 . B12
 ```
 
-Trang quản trị sau này sẽ có **trình vẽ sơ đồ kéo-thả**, lưu ra cùng định dạng trên. Khi lưu, máy chủ kiểm tra: mã không trùng, đúng tiền tố tầng, số chỗ khớp với sức chứa khai báo.
+Trang quản trị sau này sẽ có **trình vẽ sơ đồ kéo-thả**, lưu ra cùng định dạng trên. Khi lưu, máy chủ kiểm tra: mã đúng dạng và không trùng trong cả xe, mỗi tầng có mã riêng, có ít nhất một chỗ bán được.
 
 ### 3.2. Thuộc tính từng chỗ (tùy chọn)
 
 | Thuộc tính | Dùng để |
 |---|---|
-| `price_tier` | Giá khác nhau theo vị trí (VD tầng dưới đắt hơn, phòng đôi) |
-| `capacity` | Số người tối đa. Phòng limousine = 2 (bán được phòng đơn hoặc phòng đôi); phòng chỉ cho 1 người = 1. Xem [NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 3 |
+| `maxOccupancy` | Số người tối đa. Phòng limousine = 2 (bán được phòng đơn hoặc phòng đôi); phòng chỉ cho 1 người = 1. Xem [NEN-TANG-DA-NHA-XE.md](NEN-TANG-DA-NHA-XE.md) mục 3 |
 | `sellable` | `false` cho chỗ giữ cho phụ xe, nhân viên |
-| `tags` | "gần cửa", "gần WC", "cửa sổ" để hiển thị cho khách |
+
+Giá vé đặt theo **tầng × số người** (VD tầng dưới đắt hơn tầng trên; phòng đôi đắt hơn phòng đơn).
 
 ### 3.3. Phiên bản
 
 Theo PNTicketDocs mục 5.1:
 - Sửa mẫu sơ đồ thì tạo **phiên bản mới**. Chuyến đã mở bán vẫn giữ phiên bản cũ.
 - Mỗi chuyến tạo ra một bộ `trip_seats` từ phiên bản sơ đồ của xe được gán, có **ràng buộc duy nhất (trip_id, seat_code)**.
-- Đổi xe cho chuyến đã có khách: hệ thống ánh xạ mã chỗ cũ sang xe mới. Nếu xe mới thiếu chỗ hoặc khác mã, hệ thống liệt kê khách bị ảnh hưởng và **chặn hoàn tất** cho đến khi điều hành xử lý xong (AC-15).
+- Đổi sơ đồ của xe chỉ ảnh hưởng chuyến tạo sau đó.
 
 ## 4. Trạng thái chỗ khách nhìn thấy
 

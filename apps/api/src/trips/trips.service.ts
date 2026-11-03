@@ -25,7 +25,7 @@ const instant = z
 
 const fareSchema = z
   .object({
-    floor: z.string().regex(/^[A-Z]$/),
+    floor: z.string().regex(/^[1-3]$/),
     occupancy: z.union([z.literal(1), z.literal(2)]),
     price: z.number().int().min(0).max(MAX_UNIT_PRICE),
   })

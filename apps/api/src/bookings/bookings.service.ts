@@ -8,6 +8,7 @@ import { DomainError, notFound } from '../common/errors';
 import { normalizeVnPhone } from '../common/phone';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { OperatorsService } from '../operators/operators.service';
+import { SEAT_CODE } from '../seat-layouts/layout-parser';
 import { priceItems } from './pricing';
 import { TokenSecret } from './token-secret';
 
@@ -22,7 +23,7 @@ export const createHoldSchema = z
       .array(
         z
           .object({
-            seatCode: z.string().regex(/^[A-Z]\d{2}$/),
+            seatCode: z.string().regex(SEAT_CODE),
             occupancy: z.number().int().min(1).max(2).default(1),
             infantCount: z.number().int().min(0).max(2).default(0),
           })

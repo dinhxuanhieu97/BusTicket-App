@@ -42,7 +42,7 @@ describe('operators', () => {
       'SELECT code, COUNT(*)::int AS n FROM seat_layouts WHERE operator_id IS NULL GROUP BY code ORDER BY code',
     );
     expect(rows).toEqual([
-      { code: 'BED36', n: 1 },
+      { code: 'BED40', n: 1 },
       { code: 'LIMO24', n: 1 },
       { code: 'SEAT29', n: 1 },
     ]);
@@ -63,7 +63,7 @@ describe('operators', () => {
 describe('seat layouts and vehicles', () => {
   it('stores a new version each time an operator saves the same layout code', async () => {
     const op = await s.operators.getByCode('AB');
-    const def = { floors: [{ code: 'A', label: 'Tầng dưới', rows: ['A01 . A02'] }], defaultMaxOccupancy: 2 };
+    const def = { floors: [{ code: '1', label: 'Tầng dưới', rows: ['A1 . A2'] }], defaultMaxOccupancy: 2 };
     const v1 = await s.layouts.create(op.id, { code: 'LIMO_REAL', name: 'Limo thật', unit: 'phòng', kind: 'room', definition: def });
     const v2 = await s.layouts.create(op.id, { code: 'LIMO_REAL', name: 'Limo thật', unit: 'phòng', kind: 'room', definition: def });
     expect([v1.version, v2.version]).toEqual([1, 2]);
@@ -73,7 +73,7 @@ describe('seat layouts and vehicles', () => {
 
   it('rejects an invalid layout and writes nothing', async () => {
     const op = await s.operators.getByCode('AB');
-    const bad = { floors: [{ code: 'A', label: 'x', rows: ['A01 A01'] }] };
+    const bad = { floors: [{ code: '1', label: 'x', rows: ['A1 A1'] }] };
     expect(await errorCode(s.layouts.create(op.id, { code: 'BAD', name: 'x', unit: 'giường', kind: 'bed', definition: bad }))).toBe(
       'INVALID_LAYOUT',
     );
@@ -101,7 +101,7 @@ describe('seat layouts and vehicles', () => {
 
   it('rejects a layout whose kind does not match the vehicle type', async () => {
     const op = await s.operators.getByCode('AB');
-    const bed = await s.layouts.latest(null, 'BED36');
+    const bed = await s.layouts.latest(null, 'BED40');
     expect(await errorCode(s.vehicles.create(op.id, { code: 'AB04', name: 'Xe 04', type: 'LIMOUSINE', seatLayoutId: bed!.id }))).toBe(
       'VALIDATION_FAILED',
     );
@@ -154,7 +154,7 @@ describe('trips', () => {
       salesOpenAt: '2027-01-01T00:00:00Z',
       salesCloseAt: '2027-02-02T10:00:00Z',
     };
-    expect(await errorCode(s.trips.createTrip(op.id, { ...base, fares: [{ floor: 'A', occupancy: 1, price: 1 }] }))).toBe(
+    expect(await errorCode(s.trips.createTrip(op.id, { ...base, fares: [{ floor: '1', occupancy: 1, price: 1 }] }))).toBe(
       'FARE_NOT_CONFIGURED',
     );
     expect(
@@ -162,11 +162,11 @@ describe('trips', () => {
         s.trips.createTrip(op.id, {
           ...base,
           fares: [
-            { floor: 'A', occupancy: 1, price: 1 },
-            { floor: 'A', occupancy: 2, price: 2 },
-            { floor: 'B', occupancy: 1, price: 1 },
-            { floor: 'B', occupancy: 2, price: 2 },
-            { floor: 'C', occupancy: 1, price: 1 },
+            { floor: '1', occupancy: 1, price: 1 },
+            { floor: '1', occupancy: 2, price: 2 },
+            { floor: '2', occupancy: 1, price: 1 },
+            { floor: '2', occupancy: 2, price: 2 },
+            { floor: '3', occupancy: 1, price: 1 },
           ],
         }),
       ),
@@ -204,7 +204,7 @@ describe('trips', () => {
       departAt: '2027-02-02T11:00:00Z',
       salesOpenAt: '2027-01-01T00:00:00Z',
       salesCloseAt: '2027-02-02T10:00:00Z',
-      fares: [{ floor: 'A', occupancy: 1 as const, price: 1 }],
+      fares: [{ floor: '1', occupancy: 1 as const, price: 1 }],
     };
     expect(await errorCode(s.trips.createTrip(pn.id, input))).toBe('NOT_FOUND');
     expect(await errorCode(s.trips.createTrip(ab.id, input))).toBe('NOT_FOUND');
@@ -218,7 +218,7 @@ describe('trips', () => {
     );
     await s.layouts.create(null, {
       code: 'LIMO24', name: 'Limousine 24 phòng', unit: 'phòng', kind: 'room',
-      definition: { floors: [{ code: 'A', label: 'x', rows: ['A01'] }], defaultMaxOccupancy: 2 },
+      definition: { floors: [{ code: '1', label: 'x', rows: ['A1'] }], defaultMaxOccupancy: 2 },
     });
     const { rows: after } = await s.db.query<{ seat_layout_id: string; n: number }>(
       `SELECT t.seat_layout_id, (SELECT COUNT(*)::int FROM trip_seats ts WHERE ts.trip_id = t.id) AS n
@@ -232,7 +232,7 @@ describe('trips', () => {
     const found = await s.trips.search('PN', '2027-02-01');
     expect(found.map((t) => [t.name, t.availableUnits, t.fromPrice])).toEqual([
       ['TP.HCM → Hoài Ân 18:00', 24, 420_000],
-      ['TP.HCM → Hoài Ân 19:30', 36, 350_000],
+      ['TP.HCM → Hoài Ân 19:30', 40, 350_000],
     ]);
     expect(await s.trips.search('PN', '2027-01-31')).toEqual([]);
     expect(await s.trips.search('PN', '2027-02-01', 'OTHER')).toEqual([]);
