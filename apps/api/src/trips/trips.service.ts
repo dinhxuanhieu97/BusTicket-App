@@ -281,7 +281,8 @@ export class TripsService {
     const { rows: seats } = await this.db.query<{ seat_code: string; floor: string; max_occupancy: number; status: PublicSeatStatus }>(
       `SELECT ts.seat_code, ts.floor, ts.max_occupancy, ${SEAT_STATUS_SQL} AS status
        FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
-       WHERE ts.trip_id = $1 ORDER BY ts.seat_code`,
+       WHERE ts.trip_id = $1
+       ORDER BY ts.floor, substring(ts.seat_code from '^[A-Z]+'), substring(ts.seat_code from '[0-9]+$')::int`,
       [tripId, now],
     );
     const { rows: fares } = await this.db.query<{ floor: string; occupancy: number; price: number }>(

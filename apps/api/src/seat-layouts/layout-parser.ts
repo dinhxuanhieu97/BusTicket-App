@@ -54,7 +54,8 @@ export interface ParsedLayout {
   capacity: number;
 }
 
-export const SEAT_CODE = /^[A-Z]{1,2}\d{1,2}$/;
+/** 1–2 chữ cái + số 1–99, không có số 0 đứng đầu (để "A01" và "A1" không thể cùng tồn tại). */
+export const SEAT_CODE = /^[A-Z]{1,2}[1-9]\d?$/;
 /** Ô đánh dấu, không bán: lối đi, ô trống, tài xế, cửa, nhà vệ sinh. */
 export const MARKER_TOKENS: ReadonlySet<string> = new Set(['.', '_', 'TX', 'CUA', 'WC']);
 const MAX_COLS = 12;

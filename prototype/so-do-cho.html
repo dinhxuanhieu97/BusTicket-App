@@ -42,6 +42,7 @@
   .front { text-align: center; font-size: 12px; color: var(--muted); border: 1px dashed var(--line);
            border-radius: 8px 8px 2px 2px; padding: 4px; margin-bottom: 8px; }
   .rows { display: grid; gap: 8px; }
+  .grid.spacer { min-height: 36px; }
   .grid { display: grid; gap: 8px; }
   .seat { appearance: none; border: 1.5px solid var(--line); background: var(--free); color: var(--ink);
           border-radius: 8px; padding: 6px 2px; min-height: 56px; min-width: 0; cursor: pointer;
@@ -160,7 +161,7 @@ const LAYOUTS = {
     blocked: [],
     floors: [
       { code: "1", label: "Tầng dưới", rows: ["TX . CUA","A1 . A2","A3 . A4","A5 . A6","A7 . A8","A9 . A10","A11 . A12"] },
-      { code: "2", label: "Tầng trên", rows: ["B1 . B2","B3 . B4","B5 . B6","B7 . B8","B9 . B10","B11 . B12"] },
+      { code: "2", label: "Tầng trên", rows: ["_ . _","B1 . B2","B3 . B4","B5 . B6","B7 . B8","B9 . B10","B11 . B12"] },
     ],
   },
   BED40: {
@@ -170,7 +171,7 @@ const LAYOUTS = {
     blocked: [],
     floors: [
       { code: "1", label: "Tầng dưới", rows: ["TX . _ . CUA","A1 . B1 . C1","A3 . B3 . C3","A5 . B5 . C5","A7 . B7 . C7","A9 . B9 . C9","D1 D2 D3 D4 D5"] },
-      { code: "2", label: "Tầng trên", rows: ["A2 . B2 . C2","A4 . B4 . C4","A6 . B6 . C6","A8 . B8 . C8","A10 . B10 . C10","D6 D7 D8 D9 D10"] },
+      { code: "2", label: "Tầng trên", rows: ["_ . _ . _","A2 . B2 . C2","A4 . B4 . C4","A6 . B6 . C6","A8 . B8 . C8","A10 . B10 . C10","D6 D7 D8 D9 D10"] },
     ],
   },
   SEAT29: {
@@ -254,7 +255,8 @@ function render() {
       // Hàng có giường nằm ở cột lối đi (vd. dãy D cuối xe 40 giường) thì chia đều cả hàng.
       const spansAisle = r.some((t, c) => aisleCol[c] && !(t in MARKERS));
       const grid = document.createElement("div");
-      grid.className = "grid";
+      // Hàng toàn ô trống vẫn cao bằng hàng tài xế/cửa để hai tầng thẳng hàng.
+      grid.className = r.every(t => MARKERS[t] === null) ? "grid spacer" : "grid";
       grid.style.gridTemplateColumns = spansAisle ? `repeat(${cols}, 1fr)` : normal;
       for (let c = 0; c < cols; c++) {
         const t = r[c] ?? "_";

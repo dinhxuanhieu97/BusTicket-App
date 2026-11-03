@@ -18,6 +18,18 @@ export interface SeatLayoutRow {
   capacity: number;
 }
 
+/** JSON với khóa đã sắp xếp — so sánh định nghĩa không phụ thuộc thứ tự khóa của jsonb. */
+export function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (v !== null && typeof v === 'object') {
+    const entries = Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
 export const createLayoutSchema = z
   .object({
     code: z.string().regex(/^[A-Z0-9_]{2,32}$/),
@@ -83,8 +95,15 @@ export class SeatLayoutsService {
     const result = new Map<string, SeatLayoutRow>();
     for (const lib of LIBRARY_LAYOUTS) {
       let row = await this.latest(null, lib.code, q);
-      if (!row) row = await this.create(null, { ...lib, definition: lib.definition }, q);
-      result.set(lib.code, row);
+      // Định nghĩa trong code đổi (vd. DB tạo trước khi có sơ đồ thật) → thêm phiên bản mới; chuyến cũ giữ bản cũ.
+      const same =
+        row !== null &&
+        row.name === lib.name &&
+        row.unit === lib.unit &&
+        row.kind === lib.kind &&
+        canonicalJson(row.definition) === canonicalJson(lib.definition);
+      if (!same) row = await this.create(null, { ...lib, definition: lib.definition }, q);
+      result.set(lib.code, row!);
     }
     return result;
   }

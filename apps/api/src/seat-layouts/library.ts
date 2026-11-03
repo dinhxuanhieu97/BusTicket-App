@@ -31,7 +31,8 @@ export const LIBRARY_LAYOUTS: LibraryLayout[] = [
         {
           code: '2',
           label: 'Tầng trên',
-          rows: ['A2 . B2 . C2', 'A4 . B4 . C4', 'A6 . B6 . C6', 'A8 . B8 . C8', 'A10 . B10 . C10', 'D6 D7 D8 D9 D10'],
+          // Hàng trống đầu tiên để A2 thẳng hàng với A1 (hàng đầu tầng dưới là tài xế/cửa).
+          rows: ['_ . _ . _', 'A2 . B2 . C2', 'A4 . B4 . C4', 'A6 . B6 . C6', 'A8 . B8 . C8', 'A10 . B10 . C10', 'D6 D7 D8 D9 D10'],
         },
       ],
     },
@@ -49,7 +50,7 @@ export const LIBRARY_LAYOUTS: LibraryLayout[] = [
           label: 'Tầng dưới',
           rows: ['TX . CUA', ...Array.from({ length: 6 }, (_, r) => `A${2 * r + 1} . A${2 * r + 2}`)],
         },
-        { code: '2', label: 'Tầng trên', rows: Array.from({ length: 6 }, (_, r) => `B${2 * r + 1} . B${2 * r + 2}`) },
+        { code: '2', label: 'Tầng trên', rows: ['_ . _', ...Array.from({ length: 6 }, (_, r) => `B${2 * r + 1} . B${2 * r + 2}`)] },
       ],
     },
   },

@@ -99,6 +99,11 @@ describe('createHold — 40-bed sleeper numbered by row (Images/40-GIUONG.webp)'
     const map = await s.trips.seatMap(seed.bedTrip.id);
     expect(map.seats.find((x) => x.code === 'D1')).toMatchObject({ floor: '1', status: 'HELD' });
     expect(map.layout.floors[0]!.rows[0]).toBe('TX . _ . CUA');
+    // Thứ tự tự nhiên theo tầng rồi dãy rồi số: A1, A3, …, A9, B1 … (không phải A1, A10, A3).
+    const lower = map.seats.filter((x) => x.floor === '1').map((x) => x.code);
+    expect(lower.slice(0, 6)).toEqual(['A1', 'A3', 'A5', 'A7', 'A9', 'B1']);
+    const upperA = map.seats.filter((x) => x.floor === '2' && x.code.startsWith('A')).map((x) => x.code);
+    expect(upperA).toEqual(['A2', 'A4', 'A6', 'A8', 'A10']);
   });
 });
 

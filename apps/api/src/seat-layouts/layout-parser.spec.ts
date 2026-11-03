@@ -55,6 +55,8 @@ describe('parseLayout', () => {
     ['duplicate seat code across floors', { floors: [{ code: '1', label: 'x', rows: ['A1'] }, { code: '2', label: 'y', rows: ['A1'] }] }, 'bed'],
     ['lower-case code', { floors: [{ code: '1', label: 'x', rows: ['a1'] }] }, 'bed'],
     ['three digits', { floors: [{ code: '1', label: 'x', rows: ['A123'] }] }, 'bed'],
+    ['leading zero (A01 would be confused with A1)', { floors: [{ code: '1', label: 'x', rows: ['A01'] }] }, 'bed'],
+    ['zero', { floors: [{ code: '1', label: 'x', rows: ['A0'] }] }, 'bed'],
     ['digits only', { floors: [{ code: '1', label: 'x', rows: ['12'] }] }, 'bed'],
     ['unknown marker', { floors: [{ code: '1', label: 'x', rows: ['A1 XYZ'] }] }, 'bed'],
     ['letter floor code', { floors: [{ code: 'A', label: 'x', rows: ['A1'] }] }, 'bed'],
@@ -92,6 +94,9 @@ describe('library layouts', () => {
     const c1 = seats.find((s) => s.code === 'C1')!;
     expect(a1.col).toBeLessThan(c1.col);
     expect(bed.definition.floors[0]!.rows[0]).toBe('TX . _ . CUA');
+    // A2 nằm thẳng trên A1 (cùng hàng trong lưới).
+    expect(seats.find((s) => s.code === 'A2')!.row).toBe(a1.row);
+    expect(seats.find((s) => s.code === 'D6')!.row).toBe(seats.find((s) => s.code === 'D1')!.row);
   });
 
   it('LIMO24 has A1–A12 downstairs and B1–B12 upstairs, every room for up to 2 people', () => {

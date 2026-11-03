@@ -53,6 +53,20 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 | `VehiclesService` | Không bug; ghi chú biển số kiểm độ dài trước khi cắt, tên chưa chuẩn hóa Unicode | `vehicles.service.ts` schema update | Đồng ý: sửa cả hai + test NFC/biển số; thêm test đổi sơ đồ xe không ảnh hưởng chuyến cũ | Không (đã gia cố) |
 | `TripsService` | Không bug; ghi chú thiếu test chuyến CLOSED, đếm chỗ khóa/hết hạn | `trips.service.ts` `setStatus` khóa `FOR NO KEY UPDATE` trùng khóa với giữ chỗ | Đồng ý; thêm test CLOSED không đặt được, không thoát/không vào CANCELLED, đếm chỗ khóa/hết hạn, cô lập nhà xe | Không |
 
+- [x] 03/11/2026 · T2 · Thư viện mẫu sơ đồ dùng chung không tự cập nhật khi định nghĩa trong code đổi → DB tạo trước đó giữ LIMO24 cũ (tầng A/B, mã A01) và **không tạo được chuyến Limousine**. — `ensureLibrary` tự thêm phiên bản mới khi định nghĩa khác, test `library-upgrade.int-spec.ts`
+- [x] 03/11/2026 · T2 · Mã `A01` và `A1` có thể cùng tồn tại → dễ nhầm. — mã chỗ không cho số 0 đứng đầu
+- [x] 03/11/2026 · T3 · Danh sách chỗ sắp xếp kiểu chữ (A1, A10, A3). — sắp xếp tự nhiên theo tầng → dãy → số
+- [x] 03/11/2026 · T2 · Tầng trên lệch một hàng so với tầng dưới (A2 không thẳng trên A1). — thêm hàng trống đầu tầng trên trong BED40/LIMO24 và bản mẫu
+
+### Rà soát subagent — Sơ đồ xe thật (03/11/2026)
+
+| Service | Subagent kết luận | Bằng chứng | Agent chính kiểm tra lại | Bị ảnh hưởng? |
+|---|---|---|---|---|
+| `SeatLayoutsService` (parser, thư viện) | Không bug; BED40/LIMO24 **khớp ảnh** (hướng trái/phải, thứ tự D1–D5/D6–D10, lẻ dưới/chẵn trên); rủi ro thư viện cũ | Xem ảnh `40-GIUONG.webp` đã thu nhỏ; `seat-layouts.service.ts` `ensureLibrary` chỉ tạo khi thiếu | **Xác nhận rủi ro**: test `library-upgrade` đỏ → tự lên phiên bản → xanh. Ghi chú lệch hàng: đã căn thẳng | Có (Trung bình, chỉ DB cũ) — đã sửa |
+| `BookingsService` (+ pricing) | Không bug; ghi chú `A01`/`A1` là hai mã khác nhau | Thử 416 mã để kiểm thứ tự sắp xếp/hash | Đồng ý; chặn số 0 đứng đầu | Không (đã gia cố) |
+| `TripsService` | Không bug; cùng rủi ro thư viện cũ; sắp xếp chỗ kiểu chữ | Probe: BED40 20 chỗ/tầng, giá thấp nhất 350.000đ | Đồng ý; sửa sắp xếp tự nhiên + test | Không (đã gia cố) |
+| `OperatorsService` | Không bug; rủi ro DB tạo trước commit | `library.get(...)!` luôn có vì `ensureLibrary` tạo đủ | Đồng ý (đã sửa ở `SeatLayoutsService`) | Không |
+
 ### Rà soát subagent — T1–T4 (03/11/2026)
 
 | Service | Subagent kết luận | Bằng chứng | Agent chính kiểm tra lại | Bị ảnh hưởng? |

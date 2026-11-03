@@ -30,7 +30,7 @@ Mẫu "Ghế ngồi 29 chỗ" có sẵn trong thư viện mẫu, dùng khi nhà 
 
 ## 2. Quy ước mã chỗ
 
-**Dùng đúng mã đang dán trên xe** để nhân viên và khách không bị nhầm. Hệ thống chấp nhận mã gồm 1–2 chữ cái in hoa + 1–2 chữ số (`A1`, `B10`, `D6`…), duy nhất trong một sơ đồ. **Tầng của chỗ là tầng chứa chỗ đó trong sơ đồ**, không suy ra từ mã.
+**Dùng đúng mã đang dán trên xe** để nhân viên và khách không bị nhầm. Hệ thống chấp nhận mã gồm 1–2 chữ cái in hoa + số 1–99 **không có số 0 đứng đầu** (`A1`, `B10`, `D6`…; không dùng `A01` để khỏi nhầm với `A1`), duy nhất trong cả xe. **Tầng của chỗ là tầng chứa chỗ đó trong sơ đồ**, không suy ra từ mã.
 
 Hai cách đánh số thường gặp (ảnh trong thư mục `Images/`):
 
@@ -70,7 +70,7 @@ Ví dụ **Giường nằm 40 chỗ** đúng theo `Images/40-GIUONG.webp`:
     { "code": "1", "label": "Tầng dưới",
       "rows": ["TX . _ . CUA", "A1 . B1 . C1", "A3 . B3 . C3", "A5 . B5 . C5", "A7 . B7 . C7", "A9 . B9 . C9", "D1 D2 D3 D4 D5"] },
     { "code": "2", "label": "Tầng trên",
-      "rows": ["A2 . B2 . C2", "A4 . B4 . C4", "A6 . B6 . C6", "A8 . B8 . C8", "A10 . B10 . C10", "D6 D7 D8 D9 D10"] }
+      "rows": ["_ . _ . _", "A2 . B2 . C2", "A4 . B4 . C4", "A6 . B6 . C6", "A8 . B8 . C8", "A10 . B10 . C10", "D6 D7 D8 D9 D10"] }
   ]
 }
 ```
@@ -79,7 +79,7 @@ Ví dụ **Limousine 24 phòng** (`defaultMaxOccupancy: 2` = mỗi phòng tối 
 
 ```
 Tầng 1: TX . CUA | A1 . A2 | A3 . A4 | … | A11 . A12
-Tầng 2:          B1 . B2 | B3 . B4 | … | B11 . B12
+Tầng 2: _ . _  | B1 . B2 | B3 . B4 | … | B11 . B12      (hàng trống đầu để B1 thẳng trên A1)
 ```
 
 Trang quản trị sau này sẽ có **trình vẽ sơ đồ kéo-thả**, lưu ra cùng định dạng trên. Khi lưu, máy chủ kiểm tra: mã đúng dạng và không trùng trong cả xe, mỗi tầng có mã riêng, có ít nhất một chỗ bán được.
