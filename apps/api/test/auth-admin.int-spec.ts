@@ -16,6 +16,7 @@ const OWNER = { phone: '0901000002', password: 'owner-password-1' };
 const SELLER = { phone: '0901000003', password: 'seller-password-1' };
 const DISPATCHER = { phone: '0901000004', password: 'dispatch-password-1' };
 const OWNER_AB = { phone: '0901000005', password: 'owner-ab-password' };
+const SELLER2 = { phone: '0901000006', password: 'seller2-password-1' };
 
 /** Mã OTP hiện tại; tiến đồng hồ 30 giây trước để mỗi lần dùng là một bước mới (không bị coi là dùng lại). */
 function nextOtp(secret: string): string {
@@ -156,7 +157,7 @@ describe('platform admin sets up an operator', () => {
 
 describe('owner manages staff and permissions are enforced', () => {
   it('owner creates a seller and a dispatcher; neither needs 2FA', async () => {
-    for (const [cred, role] of [[SELLER, 'SELLER'], [DISPATCHER, 'DISPATCHER']] as const) {
+    for (const [cred, role] of [[SELLER, 'SELLER'], [DISPATCHER, 'DISPATCHER'], [SELLER2, 'SELLER']] as const) {
       await http().post(`/api/v1/admin/operators/${pnId}/users`).set(bearer(ownerToken)).send({ fullName: role, role, ...cred }).expect(201);
     }
     const seller = await login(SELLER).expect(200);
@@ -318,9 +319,44 @@ describe('revocation and safety rails', () => {
     await http().patch(`/api/v1/admin/operators/${pnId}/users/${ownerId}`).set(bearer(ownerToken)).send({ password: 'new-password-xyz' }).expect(403);
   });
 
+  it('self-protection cannot be bypassed by writing your own id in upper case', async () => {
+    const upper = ownerId.toUpperCase();
+    expect(upper).not.toBe(ownerId);
+    for (const body of [{ password: 'new-password-xyz' }, { role: 'SELLER' }, { status: 'DISABLED' }]) {
+      const r = await http().patch(`/api/v1/admin/operators/${pnId}/users/${upper}`).set(bearer(ownerToken)).send(body);
+      expect([JSON.stringify(body), r.status]).toEqual([JSON.stringify(body), 403]);
+    }
+    await http().get('/api/v1/auth/me').set(bearer(ownerToken)).expect(200);
+  });
+
   it('an operator must keep at least one active owner', async () => {
     const r = await http().patch(`/api/v1/admin/operators/${pnId}/users/${ownerId}`).set(bearer(adminToken)).send({ role: 'SELLER' }).expect(409);
     expect(r.body.error.code).toBe('CONFLICT');
+  });
+
+  it('parallel login bursts cannot test more than 5 passwords per lock window', async () => {
+    const burst = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => login({ phone: SELLER2.phone, password: `burst-wrong-${i}-pw` })),
+    );
+    const checked = burst.filter((r) => r.body.error?.code === 'INVALID_CREDENTIALS').length;
+    expect(checked).toBeLessThanOrEqual(5);
+    expect(burst.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(15);
+    // Đúng mật khẩu trong lúc đang khóa vẫn bị từ chối và không xóa khóa.
+    await login(SELLER2).expect(429);
+    s.clock.advanceMinutes(15);
+    await login(SELLER2).expect(200);
+  });
+
+  it('a correct password without the OTP does not reset the failure counter (no unlimited OTP guessing)', async () => {
+    await login(ADMIN, nextOtp(adminSecret)).expect(200); // bộ đếm về 0
+    for (let i = 0; i < 4; i++) await login(ADMIN, '000000').expect(401);
+    // Xen kẽ mật khẩu đúng không kèm OTP không được làm mới bộ đếm.
+    expect((await login(ADMIN).expect(401)).body.error.code).toBe('MFA_REQUIRED');
+    expect((await login(ADMIN).expect(401)).body.error.code).toBe('MFA_REQUIRED');
+    await login(ADMIN, '000000').expect(401); // lượt sai thứ 5 → khóa
+    expect((await login(ADMIN).expect(429)).body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    expect((await login(ADMIN, nextOtp(adminSecret)).expect(429)).body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    s.clock.advanceMinutes(15);
   });
 
   it('locks the account after 5 wrong passwords, even for the right password, until the lock expires', async () => {
@@ -328,5 +364,22 @@ describe('revocation and safety rails', () => {
     expect((await login(DISPATCHER).expect(429)).body.error.code).toBe('TOO_MANY_ATTEMPTS');
     s.clock.advanceMinutes(15);
     await login(DISPATCHER).expect(200);
+  });
+});
+
+describe('audit log never stores password values', () => {
+  it('an owner resetting a staff password logs which field changed but not the value', async () => {
+    const users = await http().get(`/api/v1/admin/operators/${pnId}/users`).set(bearer(ownerToken)).expect(200);
+    const dispatcherId = users.body.users.find((u: { role: string }) => u.role === 'DISPATCHER').id;
+    await http()
+      .patch(`/api/v1/admin/operators/${pnId}/users/${dispatcherId}`)
+      .set(bearer(ownerToken))
+      .send({ password: 'Reset-Value-9876' })
+      .expect(200);
+    const log = await http().get(`/api/v1/admin/operators/${pnId}/audit-logs`).set(bearer(ownerToken)).expect(200);
+    const entry = log.body.entries.find((e: { action: string; entity_id: string }) => e.action === 'user.update' && e.entity_id === dispatcherId);
+    expect(entry).toBeDefined();
+    expect(JSON.stringify(log.body)).not.toContain('Reset-Value-9876');
+    await login({ phone: DISPATCHER.phone, password: 'Reset-Value-9876' }).expect(200);
   });
 });

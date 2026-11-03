@@ -9,9 +9,9 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] **T3. Tuyến, chuyến, giá**: tạo tuyến; tạo chuyến sinh `trip_seats` từ phiên bản sơ đồ; giá theo tầng × số người (phòng đơn/đôi) bắt buộc đủ; tìm chuyến theo ngày (giờ VN); API sơ đồ chỗ công khai không lộ dữ liệu khách.
 - [x] **T4. Giữ chỗ chống bán trùng**: `POST /api/v1/bookings` giữ nhiều chỗ nguyên tử (all-or-nothing), hết hạn giữ chỗ, phòng đơn/đôi, trẻ dưới 2 tuổi theo chính sách, chụp giá/chính sách vào đơn, `Idempotency-Key`, chuẩn hóa SĐT, mã đơn an toàn. Test AC-01, AC-02, AC-03, idempotency.
 
-## Giai đoạn 2 — Tiếp theo
+## Giai đoạn 2 — Tiếp theo (T5 xong 03/11/2026 · 191 test pass)
 
-- [~] **T5. Xác thực nội bộ + phân quyền + cô lập nhà xe** (JWT, vai trò, 2FA cho chủ xe/kế toán) và API quản trị cho T2/T3. Chỉ quản trị nền tảng được sửa thư viện mẫu sơ đồ dùng chung.
+- [x] **T5. Xác thực nội bộ + phân quyền + cô lập nhà xe** (JWT, vai trò, 2FA cho chủ xe/kế toán) và API quản trị cho T2/T3. Chỉ quản trị nền tảng được sửa thư viện mẫu sơ đồ dùng chung.
 - [ ] **T5b. Chống giữ chỗ ảo mùa cao điểm**: giới hạn tần suất `POST /bookings` theo IP và SĐT, số đơn đang giữ tối đa mỗi SĐT, OTP khi bật cao điểm (PNTicketDocs mục 5.2, 12).
 - [ ] **T6. Thanh toán**: `payment_requests`, webhook SePay/payOS (xác thực chữ ký, chống trùng), phân bổ tiền, xác nhận đơn, ngoại lệ (thiếu/dư/muộn), xác nhận thủ công có quyền (mức 0).
 - [ ] **T7. Vé + outbox + gửi vé**: phát hành vé theo đơn vị bán, QR token, outbox, kênh ưu tiên miễn phí (trang vé, email, Zalo OA) rồi ZNS/SMS, hạn mức chi phí tin.
@@ -29,9 +29,29 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] 03/11/2026 · T3 · Sơ đồ chỗ công khai hiện cả chuyến DRAFT. — đã sửa: DRAFT trả NOT_FOUND
 - [x] 03/11/2026 · T2/T4 · `FOR UPDATE` trên `operators`/`trips` chặn các giao dịch chèn bản ghi có FK. — đã đổi sang `FOR NO KEY UPDATE`
 - [x] 03/11/2026 · T4 · Tổng tiền đơn có thể tràn cột `int` (giá 100 triệu + giá trẻ em không trần). — trần giá 20 triệu/chỗ, trần tổng 2 tỷ (`LIMIT_EXCEEDED`)
-- [ ] 03/11/2026 · T5 · Khi thêm API đổi trạng thái/sơ đồ xe: `createTrip` phải khóa xe (`FOR SHARE`) để không chạy đua với thay đổi xe.
-- [ ] 03/11/2026 · T5 · Biển số toàn khoảng trắng đang lưu `""` thay vì NULL; tên xe phân biệt hoa/thường ("Xe 03" ≠ "xe 03") — quyết định khi làm form quản trị.
+- [x] 03/11/2026 · T5 · `createTrip` khóa xe `FOR SHARE`; `vehicles.update` khóa `FOR UPDATE`. — đã làm
+- [x] 03/11/2026 · T5 · Biển số chuẩn hóa (cắt khoảng trắng, viết hoa, rỗng → NULL); tên xe duy nhất không phân biệt hoa/thường và chuẩn hóa Unicode NFC. — đã làm
 - [ ] 03/11/2026 · T10 · `expireDueHolds()` đã có nhưng chưa có worker gọi định kỳ (luồng giữ chỗ vẫn tự hết hạn "lười" nên không bán trùng).
+
+- [x] 03/11/2026 · T5 · **Bug (Trung bình)**: viết id của chính mình bằng chữ HOA vượt qua chốt "không tự đổi vai trò/khóa/đặt lại mật khẩu" → chiếm tài khoản từ phiên bị lộ. — đã sửa (so với id từ DB), test "self-protection cannot be bypassed…"
+- [x] 03/11/2026 · T5 · **Bug (Cao)**: gửi đăng nhập song song vượt giới hạn khóa 5 lần (thử được ~23 mật khẩu), lần đúng còn xóa khóa. — đã sửa (giữ lượt thử nguyên tử trước khi kiểm mật khẩu), test "parallel login bursts…"
+- [x] 03/11/2026 · T5 · Mật khẩu đúng không kèm OTP từng có thể làm mới bộ đếm → đoán OTP vô hạn. — đã chặn, test "a correct password without the OTP…"
+- [x] 03/11/2026 · T5 · `SecretBox.open` không cố định độ dài tag GCM. — đã đặt `authTagLength: 16`
+- [x] 03/11/2026 · T5 · `redact()` chỉ lọc tầng ngoài, ít từ khóa. — lọc mọi tầng, thêm mfa/hash/key/cred
+- [ ] 03/11/2026 · T5 · Nhật ký thao tác ghi **sau** khi transaction nghiệp vụ commit → nếu DB lỗi đúng lúc đó có thể mất dòng nhật ký. Cần ghi trong cùng transaction (truyền client từ service) — làm cùng T6 (thao tác tiền bắt buộc có nhật ký).
+- [ ] 03/11/2026 · T5 · Tài khoản bị khóa trả `TOO_MANY_ATTEMPTS` còn SĐT không tồn tại trả `INVALID_CREDENTIALS` → lộ một phần sự tồn tại tài khoản sau 5 lần thử. Thấp; xem xét cùng giới hạn theo IP ở T5b.
+- [ ] 03/11/2026 · T5 · Kế toán được `audit.read` là cách hiểu tài liệu, chưa có câu chữ rõ ràng — xác nhận với người dùng.
+
+### Rà soát subagent — T5 (03/11/2026)
+
+| Service | Subagent kết luận | Bằng chứng | Agent chính kiểm tra lại | Bị ảnh hưởng? |
+|---|---|---|---|---|
+| `AuthService` (+ jwt, password, totp) | **Bug Cao**: khóa đăng nhập bị vượt khi gửi song song; ghi chú tag GCM | `auth.service.ts` đọc `locked_until` không khóa, ~50 ms scrypt rồi mới ghi lỗi; PoC 30 yêu cầu song song → 23 lần kiểm mật khẩu | **Xác nhận**: test "parallel login bursts…" đỏ → sửa → xanh. Tự phát hiện thêm lỗ đoán OTP vô hạn → sửa + test | Có (Cao) — đã sửa |
+| `UsersService` | **Bug Trung bình**: id viết HOA vượt chốt tự bảo vệ | `users.service.ts` so `actor.id === userId` (phân biệt hoa/thường) trong khi PostgreSQL so UUID không phân biệt; PoC đặt lại mật khẩu của chính mình | **Xác nhận**: test "self-protection cannot be bypassed…" đỏ → sửa → xanh; thêm `ORDER BY id` khi khóa chủ xe (tránh deadlock) | Có (Trung bình) — đã sửa |
+| `AuthGuard` + `permissions` | Không bug; ghi chú thiếu test nhánh cho phép `mfa_setup` | Đọc 19 route quản trị đều có `@Perm`; chỉ `login` công khai | Đồng ý; thêm test nhánh `mfa_setup`, UUID viết hoa; thử bỏ `@Perm` một route → test bắt được | Không |
+| `AdminController` + `AuditService` | Không bug; ghi chú `redact` nông, nhật ký không nguyên tử, test mật khẩu yếu | `audit.service.ts` chỉ lọc khóa tầng ngoài | Đồng ý: làm `redact` đệ quy + unit test; viết test đặt lại mật khẩu thật; nhật ký nguyên tử ghi vào việc cần làm | Không (đã gia cố) |
+| `VehiclesService` | Không bug; ghi chú biển số kiểm độ dài trước khi cắt, tên chưa chuẩn hóa Unicode | `vehicles.service.ts` schema update | Đồng ý: sửa cả hai + test NFC/biển số; thêm test đổi sơ đồ xe không ảnh hưởng chuyến cũ | Không (đã gia cố) |
+| `TripsService` | Không bug; ghi chú thiếu test chuyến CLOSED, đếm chỗ khóa/hết hạn | `trips.service.ts` `setStatus` khóa `FOR NO KEY UPDATE` trùng khóa với giữ chỗ | Đồng ý; thêm test CLOSED không đặt được, không thoát/không vào CANCELLED, đếm chỗ khóa/hết hạn, cô lập nhà xe | Không |
 
 ### Rà soát subagent — T1–T4 (03/11/2026)
 

@@ -20,7 +20,7 @@ export interface VehicleRow {
 export const createVehicleSchema = z
   .object({
     code: z.string().regex(/^[A-Z]{2,4}\d{2,3}$/, 'Mã xe = tiền tố nhà xe + 2–3 chữ số, ví dụ PN03'),
-    name: z.string().trim().min(1).max(60),
+    name: z.string().trim().min(1).max(60).transform((v) => v.normalize('NFC')),
     type: z.enum(['LIMOUSINE', 'SLEEPER', 'SEATER']),
     seatLayoutId: z.string().uuid(),
     plateNumber: z.string().trim().max(20).optional(),
@@ -30,8 +30,8 @@ export type CreateVehicleInput = z.infer<typeof createVehicleSchema>;
 
 export const updateVehicleSchema = z
   .object({
-    name: z.string().trim().min(1).max(60).optional(),
-    plateNumber: z.string().max(20).nullable().optional(),
+    name: z.string().trim().min(1).max(60).transform((v) => v.normalize('NFC')).optional(),
+    plateNumber: z.string().trim().max(20).nullable().optional(),
     status: z.enum(['ACTIVE', 'MAINTENANCE', 'RETIRED']).optional(),
     seatLayoutId: z.string().uuid().optional(),
   })

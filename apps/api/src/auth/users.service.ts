@@ -68,20 +68,24 @@ export class UsersService {
     if (data.role && !OPERATOR_ASSIGNABLE_ROLES.has(data.role)) {
       throw new DomainError('FORBIDDEN', 'Không thể gán vai trò này cho nhân viên nhà xe.');
     }
-    if (actor.id === userId && (data.role !== undefined || data.status !== undefined)) {
-      throw new DomainError('FORBIDDEN', 'Không thể tự đổi vai trò hoặc khóa tài khoản của chính mình.');
-    }
-    if (actor.id === userId && data.password !== undefined) {
-      throw new DomainError('FORBIDDEN', 'Đổi mật khẩu của chính mình qua mục Đổi mật khẩu (cần mật khẩu hiện tại).');
-    }
     return this.db.tx(async (c) => {
-      // Khóa tất cả chủ xe của nhà xe để kiểm tra "còn ít nhất một chủ xe" không bị chạy đua.
-      await c.query(`SELECT id FROM users WHERE operator_id = $1 AND role = 'OWNER' FOR UPDATE`, [operatorId]);
+      // Khóa tất cả chủ xe của nhà xe (theo thứ tự id để tránh deadlock) để kiểm tra
+      // "còn ít nhất một chủ xe" không bị chạy đua.
+      await c.query(`SELECT id FROM users WHERE operator_id = $1 AND role = 'OWNER' ORDER BY id FOR UPDATE`, [operatorId]);
       const { rows } = await c.query<UserRow>('SELECT * FROM users WHERE id = $1 AND operator_id = $2 FOR UPDATE', [
         userId, operatorId,
       ]);
       const target = rows[0];
       if (!target) throw notFound('tài khoản');
+      // So với id lấy từ DB (UUID viết hoa/thường đều trỏ cùng một hàng) — không so với chuỗi client gửi.
+      if (target.id === actor.id) {
+        if (data.role !== undefined || data.status !== undefined) {
+          throw new DomainError('FORBIDDEN', 'Không thể tự đổi vai trò hoặc khóa tài khoản của chính mình.');
+        }
+        if (data.password !== undefined) {
+          throw new DomainError('FORBIDDEN', 'Đổi mật khẩu của chính mình qua mục Đổi mật khẩu (cần mật khẩu hiện tại).');
+        }
+      }
       const nextRole = data.role ?? target.role;
       const nextStatus = data.status ?? target.status;
       if (target.role === 'OWNER' && target.status === 'ACTIVE' && (nextRole !== 'OWNER' || nextStatus !== 'ACTIVE')) {

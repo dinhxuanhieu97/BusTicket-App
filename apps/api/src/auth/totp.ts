@@ -91,7 +91,7 @@ export class SecretBox {
   open(sealed: string): string {
     const [v, iv, tag, enc] = sealed.split('.');
     if (v !== 'v1' || !iv || !tag || !enc) throw new Error('Invalid sealed secret');
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64'));
+    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64'), { authTagLength: 16 });
     decipher.setAuthTag(Buffer.from(tag, 'base64'));
     return Buffer.concat([decipher.update(Buffer.from(enc, 'base64')), decipher.final()]).toString('utf8');
   }

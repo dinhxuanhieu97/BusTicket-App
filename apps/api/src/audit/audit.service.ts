@@ -12,11 +12,23 @@ export interface AuditEntry {
   data?: Record<string, unknown>;
 }
 
-const SECRET_KEYS = /pass|token|secret|otp/i;
+const SECRET_KEYS = /pass|token|secret|otp|mfa|hash|key|cred/i;
 
-/** Bỏ các trường nhạy cảm trước khi ghi nhật ký. */
+/** Bỏ các trường nhạy cảm (ở mọi tầng lồng nhau) trước khi ghi nhật ký. */
 export function redact(data: Record<string, unknown> = {}): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(data).filter(([k]) => !SECRET_KEYS.test(k)));
+  const clean = (v: unknown, depth: number): unknown => {
+    if (depth > 5) return '[truncated]';
+    if (Array.isArray(v)) return v.map((x) => clean(x, depth + 1));
+    if (v !== null && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>)
+          .filter(([k]) => !SECRET_KEYS.test(k))
+          .map(([k, x]) => [k, clean(x, depth + 1)]),
+      );
+    }
+    return v;
+  };
+  return clean(data, 0) as Record<string, unknown>;
 }
 
 @Injectable()

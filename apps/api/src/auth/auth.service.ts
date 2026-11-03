@@ -115,22 +115,21 @@ export class AuthService {
       await verifyPassword(data.password, await dummyHash());
       throw invalidCredentials();
     }
-    const now = this.clock.now();
-    if (user.locked_until && user.locked_until > now) {
+    // Giữ chỗ một lượt thử TRƯỚC khi kiểm mật khẩu, nguyên tử trong DB: các yêu cầu song song không thể
+    // cùng lọt qua kiểm tra khóa (tối đa `maxFailedLogins` lượt mỗi cửa sổ khóa).
+    if (!(await this.reserveAttempt(user.id))) {
       throw new DomainError('TOO_MANY_ATTEMPTS', 'Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau.');
     }
     const passwordOk = await verifyPassword(data.password, user.password_hash);
-    if (!passwordOk || user.status !== 'ACTIVE') {
-      await this.recordFailure(user.id);
-      throw invalidCredentials();
-    }
+    if (!passwordOk || user.status !== 'ACTIVE') throw invalidCredentials();
     if (user.mfa_enabled) {
-      if (!data.otp) throw new DomainError('MFA_REQUIRED', 'Vui lòng nhập mã xác thực 6 số từ ứng dụng Authenticator.');
-      const ok = await this.consumeTotp(user, this.box.open(user.mfa_secret_enc!), data.otp);
-      if (!ok) {
-        await this.recordFailure(user.id);
-        throw invalidCredentials();
+      if (!data.otp) {
+        // Mật khẩu đúng nhưng thiếu OTP: trả lại lượt vừa giữ, KHÔNG xóa bộ đếm (để không đoán OTP vô hạn).
+        await this.refundAttempt(user.id);
+        throw new DomainError('MFA_REQUIRED', 'Vui lòng nhập mã xác thực 6 số từ ứng dụng Authenticator.');
       }
+      const ok = await this.consumeTotp(user, this.box.open(user.mfa_secret_enc!), data.otp);
+      if (!ok) throw invalidCredentials();
     }
     await this.db.query('UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = $1', [user.id]);
     const scope: TokenScope = MFA_REQUIRED_ROLES.has(user.role) && !user.mfa_enabled ? 'mfa_setup' : 'full';
@@ -212,14 +211,37 @@ export class AuthService {
     return res.rowCount === 1;
   }
 
-  private async recordFailure(userId: string): Promise<void> {
-    const lockUntil = new Date(this.clock.now().getTime() + this.config.lockMinutes * 60_000);
+  /**
+   * Tính trước một lượt thử. Trả false nếu tài khoản đang bị khóa. Lượt thứ `maxFailedLogins`
+   * đặt khóa; khóa đã hết hạn thì bộ đếm bắt đầu lại từ 1.
+   */
+  private async reserveAttempt(userId: string): Promise<boolean> {
+    const now = this.clock.now();
+    const lockUntil = new Date(now.getTime() + this.config.lockMinutes * 60_000);
+    const res = await this.db.query(
+      `UPDATE users SET
+         failed_login_count = CASE WHEN locked_until IS NOT NULL AND locked_until <= $2 THEN 1 ELSE failed_login_count + 1 END,
+         locked_until = CASE
+           WHEN (CASE WHEN locked_until IS NOT NULL AND locked_until <= $2 THEN 1 ELSE failed_login_count + 1 END) >= $3 THEN $4
+           WHEN locked_until IS NOT NULL AND locked_until <= $2 THEN NULL
+           ELSE locked_until END
+       WHERE id = $1 AND (locked_until IS NULL OR locked_until <= $2)`,
+      [userId, now, this.config.maxFailedLogins, lockUntil],
+    );
+    return res.rowCount === 1;
+  }
+
+  /**
+   * Trả lại lượt vừa giữ khi mật khẩu đúng nhưng chưa gửi OTP — kể cả gỡ khóa nếu chính lượt này
+   * vừa đặt khóa. An toàn vì chỉ ai biết đúng mật khẩu mới tới được đây; bộ đếm không bị xóa về 0.
+   */
+  private async refundAttempt(userId: string): Promise<void> {
     await this.db.query(
       `UPDATE users SET
-         locked_until = CASE WHEN failed_login_count + 1 >= $2 THEN $3 ELSE locked_until END,
-         failed_login_count = CASE WHEN failed_login_count + 1 >= $2 THEN 0 ELSE failed_login_count + 1 END
+         locked_until = CASE WHEN failed_login_count >= $2 THEN NULL ELSE locked_until END,
+         failed_login_count = GREATEST(failed_login_count - 1, 0)
        WHERE id = $1`,
-      [userId, this.config.maxFailedLogins, lockUntil],
+      [userId, this.config.maxFailedLogins],
     );
   }
 

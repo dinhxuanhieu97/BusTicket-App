@@ -54,7 +54,7 @@ export class AuthGuard implements CanActivate {
       const operatorId = req.params?.operatorId;
       if (operatorId !== undefined) {
         if (typeof operatorId !== 'string' || !isUuid(operatorId)) throw notFound('nhà xe');
-        if (user.operatorId !== null && user.operatorId !== operatorId) throw notFound('nhà xe');
+        if (user.operatorId !== null && user.operatorId !== operatorId.toLowerCase()) throw notFound('nhà xe');
       }
     }
     req.auth = user;

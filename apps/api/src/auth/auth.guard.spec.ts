@@ -4,13 +4,14 @@ import { Reflector } from '@nestjs/core';
 import { AdminController } from '../admin/admin.controller';
 import { DomainError } from '../common/errors';
 import { AuthController } from './auth.controller';
-import { AuthGuard, AuthOnly, Perm } from './auth.guard';
+import { AllowScopes, AuthGuard, AuthOnly, Perm } from './auth.guard';
 import { AuthService, AuthUser } from './auth.service';
 
 class Fixture {
   noDecorator() {}
   @Perm('fleet.write') write() {}
   @AuthOnly() me() {}
+  @AuthOnly() @AllowScopes('full', 'mfa_setup') setup() {}
 }
 
 const OP_A = '11111111-1111-4111-8111-111111111111';
@@ -74,6 +75,16 @@ describe('AuthGuard', () => {
   it('denies a role without the permission', async () => {
     const { guard } = guardFor({ role: 'SELLER' });
     expect(await codeOf(guard.canActivate(ctxFor('write', { operatorId: OP_A }).ctx))).toBe('FORBIDDEN');
+  });
+
+  it('accepts an mfa_setup token on a route that explicitly allows it', async () => {
+    const { guard } = guardFor({ scope: 'mfa_setup' });
+    expect(await codeOf(guard.canActivate(ctxFor('setup').ctx))).toBe('ALLOWED');
+  });
+
+  it('treats an upper-case spelling of the own operator id as the same operator', async () => {
+    const { guard } = guardFor({});
+    expect(await codeOf(guard.canActivate(ctxFor('write', { operatorId: OP_A.toUpperCase() }).ctx))).toBe('ALLOWED');
   });
 
   it('rejects an mfa_setup token on routes that only allow full tokens', async () => {
