@@ -82,7 +82,7 @@ PNTicketDocs mục 2.1 ghi "MVP phục vụ một nhà xe". Nay sản phẩm bá
 - Khi chọn phòng, khách chọn **Phòng đơn (1 người)** hoặc **Phòng đôi (2 người)**. Mặc định là phòng đơn.
 - **Giá phòng đôi > giá phòng đơn**, cấu hình theo tầng/vị trí và theo mùa. Ví dụ minh họa trong bản mẫu: tầng dưới 450.000đ / 700.000đ, tầng trên 420.000đ / 650.000đ.
 - Phòng có `capacity` (sức chứa tối đa). Phòng chỉ cho 1 người (`capacity = 1`) thì không hiện lựa chọn phòng đôi.
-- **Phòng đôi:** người đặt nhập tên người thứ hai (có thể để "khách đi cùng"). Trẻ em nằm chung có tính là người thứ hai không là **chính sách nhà xe tự cấu hình**.
+- **Phòng đôi:** người đặt nhập tên người thứ hai (có thể để "khách đi cùng"). Trẻ **dưới 2 tuổi** nằm chung mặc định **miễn phí, không tính vào số người của phòng**; nhà xe đổi được khi setup ([SETUP-NHA-XE.md](SETUP-NHA-XE.md) mục 3).
 - **Đổi đơn → đôi sau khi đặt:** tính chênh lệch và tạo yêu cầu thanh toán bổ sung. **Đôi → đơn:** khoản chênh lệch xử lý theo chính sách hoàn (PNTicketDocs mục 5.4).
 - Giá và số người được **chụp lại vào đơn** lúc đặt (PNTicketDocs mục 5.1).
 
@@ -153,8 +153,7 @@ File mẫu: [templates/mau-danh-sach-khach-theo-chuyen.xlsx](../templates/mau-da
 | 10 | Thêm `operators`, `operator_id` cho mọi bảng, `booking_passengers`, `fare_rules.occupancy`, `trips.contact_phone`, `trips.supervisor_id`, `payments.fee_amount`, `import_jobs` |
 | 13 | AC mới: cô lập dữ liệu giữa các nhà xe; đổi phòng đơn ↔ đôi; nhập Excel trùng chỗ bị từ chối |
 
-## 6. Câu hỏi còn lại
+## 6. Đã chốt thêm và câu hỏi còn lại
 
-1. Bạn thu phí các nhà xe theo cách nào (thuê bao tháng, theo số xe, theo số vé)? Câu trả lời ảnh hưởng đến báo cáo và giới hạn tài nguyên mỗi nhà xe.
-2. Nhà xe có cần **in vé giấy** hoặc in danh sách trên máy in nhiệt không?
-3. Trẻ em nằm chung phòng đơn có được không, và có tính tiền không?
+- Thu phí nhà xe: **một lần hoặc theo số vé**. Gửi vé: **ưu tiên kênh miễn phí**. Trẻ em: **dưới 2 tuổi nằm chung miễn phí**, cấu hình theo nhà xe. Chi tiết và checklist setup: [SETUP-NHA-XE.md](SETUP-NHA-XE.md).
+- Còn cần trả lời: nhà xe có cần **in vé giấy** hoặc in danh sách bằng máy in nhiệt không?

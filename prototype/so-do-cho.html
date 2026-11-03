@@ -92,6 +92,8 @@
   .seg button[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); }
   .seg button[aria-pressed="true"] small { color: var(--brand-ink); }
   .seg button:focus-visible { outline: 3px solid #2563eb; outline-offset: -3px; }
+  .infant { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+  .infant input { width: 20px; height: 20px; accent-color: var(--brand); }
   .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px;
            background: #fde2e3; color: var(--brand); }
 </style>
@@ -188,10 +190,12 @@ const MAX_SEATS = 5;
 const fmt = n => n.toLocaleString("vi-VN") + "đ";
 const k = n => (n / 1000).toLocaleString("vi-VN") + "k";
 const OCC_LABEL = { 1: "Phòng đơn", 2: "Phòng đôi" };
+// Chính sách trẻ em: mỗi nhà xe tự cấu hình khi setup (mặc định: dưới 2 tuổi nằm chung, miễn phí, tối đa 1 bé/chỗ).
+const CHILD_POLICY = { freeUnderAge: 2, maxPerUnit: 1, price: 0 };
 
 // ---- Trạng thái ---------------------------------------------------------
 // selected: mã chỗ → số người (1 hoặc 2). Xe không bán theo phòng luôn là 1.
-let vehicle, layout, seatState = {}, selected = new Map(), tick;
+let vehicle, layout, seatState = {}, selected = new Map(), infants = new Set(), tick;
 
 function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) % 100; }
 
@@ -200,7 +204,7 @@ function floorLabelOf(code) { return layout.floors.find(f => f.code === code[0])
 function loadVehicle(code) {
   vehicle = VEHICLES.find(v => v.code === code);
   layout = LAYOUTS[vehicle.layout];
-  selected.clear(); seatState = {};
+  selected.clear(); infants.clear(); seatState = {};
   for (const f of layout.floors) for (const r of f.rows) for (const t of r.split(" ")) {
     if (t === "." || t === "_") continue;
     const h = hash(vehicle.code + t);
@@ -256,7 +260,7 @@ function seatButton(code, floorLabel) {
   const b = document.createElement("button");
   b.type = "button"; b.dataset.code = code;
   b.className = `seat ${layout.kind} ${st}`;
-  const chosen = layout.rooms ? `✓ ${OCC_LABEL[selected.get(code)]}` : "✓ Đã chọn";
+  const chosen = (layout.rooms ? `✓ ${OCC_LABEL[selected.get(code)]}` : "✓ Đã chọn") + (infants.has(code) ? " + bé" : "");
   const sub = { free: freeLabel(code), selected: chosen, held: "Đang giữ", booked: "✕ Đã đặt", blocked: "Không bán" }[st];
   b.innerHTML = `<span class="code">${code}</span><span class="sub">${sub}</span>`;
   b.disabled = st === "held" || st === "booked" || st === "blocked";
@@ -264,8 +268,7 @@ function seatButton(code, floorLabel) {
   const freeText = layout.rooms
     ? `còn trống, phòng đơn ${fmt(priceOf(code, 1))}, phòng đôi ${fmt(priceOf(code, 2))}`
     : `còn trống, ${fmt(priceOf(code))}`;
-  const selText = "đang chọn" + (layout.rooms && st === "selected" ? ", " + OCC_LABEL[selected.get(code)].toLowerCase() : "");
-  b.setAttribute("aria-label", `${unitCap} ${code}, ${floorLabel.toLowerCase()}, ${{ free: freeText, selected: selText, held: "đang có người giữ", booked: "đã đặt", blocked: "không bán" }[st]}`);
+  b.setAttribute("aria-label", `${unitCap} ${code}, ${floorLabel.toLowerCase()}, ${{ free: freeText, selected: "đang chọn" + (layout.rooms && st === "selected" ? ", " + OCC_LABEL[selected.get(code)].toLowerCase() : ""), held: "đang có người giữ", booked: "đã đặt", blocked: "không bán" }[st]}`);
   b.setAttribute("aria-pressed", st === "selected");
   b.onclick = () => toggle(code);
   return b;
@@ -273,31 +276,41 @@ function seatButton(code, floorLabel) {
 
 function renderRooms() {
   const box = document.getElementById("rooms");
-  box.hidden = !layout.rooms || selected.size === 0;
+  box.hidden = selected.size === 0;
   if (box.hidden) return;
+  document.querySelector(".rooms-title").textContent =
+    layout.rooms ? "Phòng đã chọn — chọn số người" : `${layout.unit[0].toUpperCase() + layout.unit.slice(1)} đã chọn`;
   const list = document.getElementById("room-list");
   list.innerHTML = "";
+  const unitCap = layout.unit[0].toUpperCase() + layout.unit.slice(1);
   for (const [code, occ] of [...selected].sort()) {
     const row = document.createElement("div");
     row.className = "room-row";
-    row.innerHTML = `<div class="name">Phòng ${code}<small>${floorLabelOf(code)}</small></div>`;
-    const seg = document.createElement("div");
-    seg.className = "seg"; seg.setAttribute("role", "group"); seg.setAttribute("aria-label", `Số người phòng ${code}`);
-    for (const n of [1, 2]) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.setAttribute("aria-pressed", occ === n);
-      btn.innerHTML = `${OCC_LABEL[n]} · ${n} người<small>${fmt(priceOf(code, n))}</small>`;
-      btn.onclick = () => { selected.set(code, n); render(); updateBar(); };
-      seg.appendChild(btn);
+    row.innerHTML = `<div class="name">${unitCap} ${code}<small>${floorLabelOf(code)}</small></div>`;
+    if (layout.rooms) {
+      const seg = document.createElement("div");
+      seg.className = "seg"; seg.setAttribute("role", "group"); seg.setAttribute("aria-label", `Số người phòng ${code}`);
+      for (const n of [1, 2]) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", occ === n);
+        btn.innerHTML = `${OCC_LABEL[n]} · ${n} người<small>${fmt(priceOf(code, n))}</small>`;
+        btn.onclick = () => { selected.set(code, n); render(); updateBar(); };
+        seg.appendChild(btn);
+      }
+      row.appendChild(seg);
     }
-    row.appendChild(seg);
+    const lab = document.createElement("label");
+    lab.className = "infant";
+    lab.innerHTML = `<input type="checkbox" ${infants.has(code) ? "checked" : ""}> Kèm trẻ dưới ${CHILD_POLICY.freeUnderAge} tuổi nằm chung <b>(${CHILD_POLICY.price ? fmt(CHILD_POLICY.price) : "miễn phí"})</b>`;
+    lab.querySelector("input").onchange = e => { e.target.checked ? infants.add(code) : infants.delete(code); render(); updateBar(); };
+    row.appendChild(lab);
     list.appendChild(row);
   }
 }
 
 function toggle(code) {
-  if (selected.has(code)) selected.delete(code);
+  if (selected.has(code)) { selected.delete(code); infants.delete(code); }
   else if (selected.size >= MAX_SEATS) return toast(`Mỗi đơn chọn tối đa ${MAX_SEATS} ${layout.unit}.`);
   else selected.set(code, 1);
   render(); updateBar(); focusSeat(code);
@@ -308,11 +321,12 @@ function focusSeat(code) { document.querySelector(`.seat[data-code="${code}"]`)?
 function updateBar() {
   const list = [...selected].sort();
   const people = list.reduce((s, [, n]) => s + n, 0);
+  const kids = infants.size ? ` + ${infants.size} bé` : "";
   const desc = layout.rooms
-    ? `${list.length} phòng (${people} người): ` + list.map(([c, n]) => `${c} ${n === 2 ? "đôi" : "đơn"}`).join(", ")
-    : `${list.length} ${layout.unit}: ` + list.map(([c]) => c).join(", ");
+    ? `${list.length} phòng (${people} người${kids}): ` + list.map(([c, n]) => `${c} ${n === 2 ? "đôi" : "đơn"}`).join(", ")
+    : `${list.length} ${layout.unit}${kids}: ` + list.map(([c]) => c).join(", ");
   document.getElementById("picked").textContent = list.length ? desc : "Chưa chọn chỗ";
-  document.getElementById("total").textContent = fmt(list.reduce((s, [c, n]) => s + priceOf(c, n), 0));
+  document.getElementById("total").textContent = fmt(list.reduce((s, [c, n]) => s + priceOf(c, n), 0) + infants.size * CHILD_POLICY.price);
   document.getElementById("next").disabled = !list.length;
 }
 
@@ -325,7 +339,7 @@ function simulateOthers() {
   else if (st === "held") seatState[pick] = Math.random() < .6 ? "booked" : "free";
   else return;
   let lost = false;
-  if (selected.has(pick) && seatState[pick] !== "free") { selected.delete(pick); lost = true; }
+  if (selected.has(pick) && seatState[pick] !== "free") { selected.delete(pick); infants.delete(pick); lost = true; }
   const active = document.activeElement?.dataset?.code;
   render(); updateBar();
   document.querySelector(`.seat[data-code="${pick}"]`)?.classList.add("flash");
