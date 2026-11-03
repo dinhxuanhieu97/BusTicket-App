@@ -62,6 +62,13 @@ export class OperatorsService {
     }
   }
 
+  async list(): Promise<(OperatorRow & { created_at: Date })[]> {
+    const { rows } = await this.db.query<OperatorRow & { created_at: Date }>(
+      'SELECT id, code, name, created_at FROM operators ORDER BY code',
+    );
+    return rows;
+  }
+
   async getByCode(code: string, q: Queryable = this.db): Promise<OperatorRow> {
     const { rows } = await q.query<OperatorRow>('SELECT id, code, name FROM operators WHERE code = $1', [code]);
     if (!rows[0]) throw notFound('nhà xe');

@@ -14,6 +14,7 @@ async function bootstrap(): Promise<void> {
     AppModule.forRoot({
       databaseUrl: requiredEnv('DATABASE_URL'),
       bookingTokenSecret: requiredEnv('BOOKING_TOKEN_SECRET'),
+      authTokenSecret: requiredEnv('AUTH_TOKEN_SECRET'),
     }),
   );
   app.useGlobalFilters(new HttpErrorFilter());

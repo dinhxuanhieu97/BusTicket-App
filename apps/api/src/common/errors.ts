@@ -8,7 +8,13 @@ export type ErrorCode =
   | 'TRIP_NOT_ON_SALE'
   | 'SEAT_UNAVAILABLE'
   | 'LIMIT_EXCEEDED'
-  | 'IDEMPOTENCY_CONFLICT';
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'UNAUTHENTICATED'
+  | 'INVALID_CREDENTIALS'
+  | 'MFA_REQUIRED'
+  | 'MFA_SETUP_REQUIRED'
+  | 'FORBIDDEN'
+  | 'TOO_MANY_ATTEMPTS';
 
 const HTTP_STATUS: Record<ErrorCode, number> = {
   VALIDATION_FAILED: 400,
@@ -20,6 +26,12 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   TRIP_NOT_ON_SALE: 409,
   SEAT_UNAVAILABLE: 409,
   IDEMPOTENCY_CONFLICT: 409,
+  UNAUTHENTICATED: 401,
+  INVALID_CREDENTIALS: 401,
+  MFA_REQUIRED: 401,
+  MFA_SETUP_REQUIRED: 403,
+  FORBIDDEN: 403,
+  TOO_MANY_ATTEMPTS: 429,
 };
 
 /** Lỗi nghiệp vụ: `message` là tiếng Việt, khách đọc được; `details` không chứa dữ liệu cá nhân. */

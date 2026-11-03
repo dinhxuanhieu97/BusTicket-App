@@ -98,6 +98,18 @@ export class SeatLayoutsService {
     return rows[0] ?? null;
   }
 
+  /** Phiên bản mới nhất của mỗi mẫu nhà xe được dùng: của riêng nhà xe và thư viện dùng chung. */
+  async listUsable(operatorId: string): Promise<(SeatLayoutRow & { shared: boolean })[]> {
+    if (!isUuid(operatorId)) return [];
+    const { rows } = await this.db.query<SeatLayoutRow & { shared: boolean }>(
+      `SELECT DISTINCT ON (operator_id, code) *, operator_id IS NULL AS shared
+       FROM seat_layouts WHERE operator_id = $1 OR operator_id IS NULL
+       ORDER BY operator_id, code, version DESC`,
+      [operatorId],
+    );
+    return rows.sort((a, b) => Number(a.shared) - Number(b.shared) || a.code.localeCompare(b.code));
+  }
+
   /** Lấy sơ đồ mà nhà xe được dùng: của chính nhà xe đó hoặc thư viện dùng chung. */
   async getUsable(operatorId: string, layoutId: string, q: Queryable = this.db): Promise<SeatLayoutRow> {
     if (!isUuid(operatorId) || !isUuid(layoutId)) throw notFound('mẫu sơ đồ');

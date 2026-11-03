@@ -14,6 +14,7 @@ import { VehiclesService } from '../src/vehicles/vehicles.service';
 export const TEST_DB_URL =
   process.env.DATABASE_URL_TEST ?? 'postgres://pnticket:pnticket@localhost:5432/pnticket_test';
 export const TOKEN_SECRET = 'test-secret-'.padEnd(40, 'x');
+export const AUTH_SECRET = 'auth-secret-'.padEnd(40, 'y');
 
 /** Xóa sạch schema `public` của DB test rồi chạy lại migration. Chỉ dùng cho DB test. */
 export async function resetDatabase(): Promise<void> {

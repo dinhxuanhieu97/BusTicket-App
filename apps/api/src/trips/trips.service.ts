@@ -41,6 +41,7 @@ export const createTripSchema = z
     salesOpenAt: instant,
     salesCloseAt: instant,
     fares: z.array(fareSchema).min(1),
+    status: z.enum(['DRAFT', 'OPEN']).default('OPEN'),
   })
   .strict();
 export type CreateTripInput = z.input<typeof createTripSchema>;
@@ -117,7 +118,8 @@ export class TripsService {
       ]);
       if (!routes[0]) throw notFound('tuyến');
       const { rows: vehicles } = await c.query<{ id: string; seat_layout_id: string; status: string }>(
-        'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2',
+        // FOR SHARE: chặn đổi sơ đồ/trạng thái xe trong lúc đang chụp sơ đồ vào chuyến.
+        'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2 FOR SHARE',
         [data.vehicleId, operatorId],
       );
       const vehicle = vehicles[0];
@@ -148,10 +150,10 @@ export class TripsService {
 
       const { rows } = await c.query<TripRow>(
         `INSERT INTO trips (operator_id, route_id, vehicle_id, seat_layout_id, name, contact_phone,
-                            depart_at, sales_open_at, sales_close_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+                            depart_at, sales_open_at, sales_close_at, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [operatorId, data.routeId, vehicle.id, vehicle.seat_layout_id, data.name, contactPhone,
-          data.departAt, data.salesOpenAt, data.salesCloseAt],
+          data.departAt, data.salesOpenAt, data.salesCloseAt, data.status],
       );
       const trip = rows[0]!;
       await c.query(
@@ -165,6 +167,57 @@ export class TripsService {
         ]);
       }
       return trip;
+    });
+  }
+
+  async listRoutes(operatorId: string) {
+    if (!isUuid(operatorId)) return [];
+    const { rows } = await this.db.query(
+      'SELECT id, code, origin, destination FROM routes WHERE operator_id = $1 ORDER BY code',
+      [operatorId],
+    );
+    return rows;
+  }
+
+  /** Mọi chuyến (mọi trạng thái) của nhà xe trong một ngày giờ VN — cho trang quản trị. */
+  async listForAdmin(operatorId: string, date: string) {
+    const { start, end } = vnDayRange(date);
+    if (!isUuid(operatorId)) return [];
+    const now = this.clock.now();
+    const { rows } = await this.db.query(
+      `SELECT t.id, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone,
+              r.code AS route_code, v.code AS vehicle_code, v.name AS vehicle_name,
+              (SELECT COUNT(*)::int FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
+                WHERE ts.trip_id = t.id AND (${SEAT_STATUS_SQL}) = 'AVAILABLE') AS available,
+              (SELECT COUNT(*)::int FROM trip_seats ts WHERE ts.trip_id = t.id) AS capacity
+       FROM trips t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
+       WHERE t.operator_id = $1 AND t.depart_at >= $3 AND t.depart_at < $4
+       ORDER BY t.depart_at`,
+      [operatorId, now, start, end],
+    );
+    return rows;
+  }
+
+  /**
+   * Đổi trạng thái bán: DRAFT → OPEN, OPEN ↔ CLOSED. Hủy chuyến (CANCELLED) cần xử lý khách
+   * và tiền nên làm ở task sau.
+   */
+  async setStatus(operatorId: string, tripId: string, status: 'OPEN' | 'CLOSED'): Promise<TripRow> {
+    if (!isUuid(operatorId) || !isUuid(tripId)) throw notFound('chuyến');
+    const allowed: Record<string, string[]> = { DRAFT: ['OPEN'], OPEN: ['CLOSED'], CLOSED: ['OPEN'], CANCELLED: [] };
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<TripRow>(
+        'SELECT * FROM trips WHERE id = $1 AND operator_id = $2 FOR NO KEY UPDATE',
+        [tripId, operatorId],
+      );
+      const t = rows[0];
+      if (!t) throw notFound('chuyến');
+      if (t.status === status) return t;
+      if (!allowed[t.status]!.includes(status)) {
+        throw new DomainError('CONFLICT', `Không thể chuyển chuyến từ ${t.status} sang ${status}.`);
+      }
+      const { rows: updated } = await c.query<TripRow>('UPDATE trips SET status = $2 WHERE id = $1 RETURNING *', [tripId, status]);
+      return updated[0]!;
     });
   }
 

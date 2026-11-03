@@ -4,7 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { FixedClock } from '../src/common/clock';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
-import { buildServices, resetDatabase, seedOperatorWithTrips, Services, T0, TEST_DB_URL, TOKEN_SECRET } from './helpers';
+import { AUTH_SECRET, buildServices, resetDatabase, seedOperatorWithTrips, Services, T0, TEST_DB_URL, TOKEN_SECRET } from './helpers';
 
 let app: INestApplication;
 let s: Services;
@@ -15,7 +15,7 @@ beforeAll(async () => {
   s = buildServices();
   seed = await seedOperatorWithTrips(s, 'PN');
   const moduleRef = await Test.createTestingModule({
-    imports: [AppModule.forRoot({ databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, clock: new FixedClock(T0) })],
+    imports: [AppModule.forRoot({ databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET, clock: new FixedClock(T0) })],
   }).compile();
   app = moduleRef.createNestApplication({ logger: false });
   app.useGlobalFilters(new HttpErrorFilter());
