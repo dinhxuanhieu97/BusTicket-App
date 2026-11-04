@@ -36,7 +36,7 @@ export default function CheckoutPage() {
 
   const tripId = draft.tripId;
   const codes = selectedCodes(draft.selection);
-  const estimate = estimateTotal(draft.selection, map.seats, map.fares);
+  const estimate = estimateTotal(draft.selection, map.seats, map.fares, map.booking.childPolicy);
   const nameError = touched && !draft.contactName.trim() ? copy.checkout.nameRequired : undefined;
   const phoneError = touched && !isValidVnMobile(draft.contactPhone) ? copy.checkout.phoneInvalid : undefined;
   const tokenValid =

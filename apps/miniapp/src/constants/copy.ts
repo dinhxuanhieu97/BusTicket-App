@@ -40,9 +40,11 @@ export const copy = {
     single: "1 người",
     double: "2 người",
     infants: "Trẻ dưới 2 tuổi đi kèm",
+    infantsLabel: (age: number) => `Trẻ dưới ${age} tuổi đi kèm`,
+    infantsSingleOnly: "Trẻ em đi kèm chỉ áp dụng cho phòng đơn.",
     selectedCount: (n: number, unit: string) => `${n} ${unit} đã chọn`,
     estimate: "Tạm tính",
-    estimateHint: "Giá cuối cùng (kể cả trẻ em) do nhà xe xác nhận khi giữ chỗ.",
+    estimateHint: "Giá cuối cùng do nhà xe xác nhận khi giữ chỗ.",
     refreshed: "Một số chỗ bạn chọn vừa có người giữ, đã bỏ khỏi danh sách chọn.",
   },
   checkout: {

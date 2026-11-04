@@ -31,9 +31,22 @@ export interface Fare {
   price: number;
 }
 
+export interface ChildPolicy {
+  freeUnderAge: number;
+  price: number;
+  maxPerUnit: number;
+  singleOccupancyOnly: boolean;
+}
+
 export interface SeatMap {
   trip: { id: string; name: string; departAt: string; onSale: boolean };
-  booking: { requiresPhoneOtp: boolean; maxUnitsPerBooking: number; holdMinutes: number };
+  booking: {
+    requiresPhoneOtp: boolean;
+    maxUnitsPerBooking: number;
+    holdMinutes: number;
+    /** Trẻ em đi kèm (chỉ phòng/chỗ 1 người). Có thể thiếu nếu API cũ. */
+    childPolicy?: ChildPolicy;
+  };
   vehicle: { name: string; code: string };
   layout: { name: string; unit: string; kind: "room" | "bed" | "seat"; floors: LayoutFloor[] };
   seats: { code: string; floor: string; maxOccupancy: number; status: PublicSeatStatus }[];

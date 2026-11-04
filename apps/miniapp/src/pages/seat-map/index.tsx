@@ -61,7 +61,10 @@ export default function SeatMapPage() {
 
   const unit = map.layout.unit;
   const codes = selectedCodes(selection);
-  const estimate = estimateTotal(selection, map.seats, map.fares);
+  const child = map.booking.childPolicy;
+  const estimate = estimateTotal(selection, map.seats, map.fares, child);
+  const infantMax = Math.min(child?.maxPerUnit ?? MAX_INFANTS_PER_UNIT, MAX_INFANTS_PER_UNIT);
+  const infantLabel = child ? copy.seats.infantsLabel(child.freeUnderAge) : copy.seats.infants;
 
   const onSeatPress = (seat: SeatCell) => {
     const result = toggleSeat(selection, seat, map.booking.maxUnitsPerBooking);
@@ -131,16 +134,21 @@ export default function SeatMapPage() {
                       />
                     </div>
                   )}
-                  <div className="flex items-center justify-between text-xxsmall text-text-secondary">
-                    {copy.seats.infants}
-                    <Stepper
-                      label={copy.seats.infants}
-                      value={unitSel.infantCount}
-                      min={0}
-                      max={MAX_INFANTS_PER_UNIT}
-                      onChange={(n) => setSelection(setInfants(selection, code, n))}
-                    />
-                  </div>
+                  {infantMax > 0 &&
+                    (unitSel.occupancy === 1 ? (
+                      <div className="flex items-center justify-between text-xxsmall text-text-secondary">
+                        {infantLabel}
+                        <Stepper
+                          label={infantLabel}
+                          value={unitSel.infantCount}
+                          min={0}
+                          max={infantMax}
+                          onChange={(n) => setSelection(setInfants(selection, code, n, infantMax))}
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-xxxsmall text-text-secondary">{copy.seats.infantsSingleOnly}</div>
+                    ))}
                 </div>
               );
             })}

@@ -22,6 +22,11 @@ async function main(): Promise<void> {
     const operators = new OperatorsService(db, layouts, new NotConfiguredSmsSender());
     const vehicles = new VehiclesService(db, layouts);
     const trips = new TripsService(db, operators, new SystemClock());
+    const existing = await db.query('SELECT 1 FROM operators WHERE code = $1', ['PN']);
+    if (existing.rowCount) {
+      console.log('Operator PN already exists — seed skipped (drop the database to re-seed).');
+      return;
+    }
     const op = await operators.create({ code: 'PN', name: 'Nhà xe Phong Nhung' });
     const [limo, bed] = await vehicles.list(op.id);
     const route = await trips.createRoute(op.id, { code: 'HCM-HA', origin: 'TP.HCM', destination: 'Hoài Ân' });
@@ -35,14 +40,14 @@ async function main(): Promise<void> {
       routeId: route.id, vehicleId: limo!.id, name: 'TP.HCM → Hoài Ân 18:00',
       departAt: at(18), salesOpenAt: now, salesCloseAt: at(17),
       fares: [
-        { floor: 'A', occupancy: 1, price: 450_000 }, { floor: 'A', occupancy: 2, price: 700_000 },
-        { floor: 'B', occupancy: 1, price: 420_000 }, { floor: 'B', occupancy: 2, price: 650_000 },
+        { floor: '1', occupancy: 1, price: 450_000 }, { floor: '1', occupancy: 2, price: 700_000 },
+        { floor: '2', occupancy: 1, price: 420_000 }, { floor: '2', occupancy: 2, price: 650_000 },
       ],
     });
     await trips.createTrip(op.id, {
       routeId: route.id, vehicleId: bed!.id, name: 'TP.HCM → Hoài Ân 19:30',
       departAt: at(19, 30), salesOpenAt: now, salesCloseAt: at(18, 30),
-      fares: [{ floor: 'A', occupancy: 1, price: 380_000 }, { floor: 'B', occupancy: 1, price: 350_000 }],
+      fares: [{ floor: '1', occupancy: 1, price: 380_000 }, { floor: '2', occupancy: 1, price: 350_000 }],
     });
     console.log(`Seeded operator ${op.code} with 2 trips tomorrow.`);
   } finally {

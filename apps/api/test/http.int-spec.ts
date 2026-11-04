@@ -90,7 +90,7 @@ describe('POST /api/v1/bookings', () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/bookings')
       .set('Idempotency-Key', 'http-create-0001')
-      .send(body([{ seatCode: 'A2', occupancy: 2, infantCount: 1 }]))
+      .send(body([{ seatCode: 'A2', occupancy: 2 }]))
       .expect(201);
     expect(res.body.booking).toMatchObject({ status: 'HOLDING', totalAmount: 700_000 });
     expect(res.body.accessToken).toEqual(expect.any(String));
