@@ -1,0 +1,113 @@
+import tokens from "@/tokens";
+import { config } from "@/config";
+
+export const theme = tokens;
+
+/** Mọi chữ hiển thị cho khách, tập trung một chỗ để nhà xe đổi tên/thông điệp mà không sửa màn hình. */
+export const copy = {
+  brand: { name: config.operatorName },
+  nav: { book: "Đặt vé", myBookings: "Vé của tôi" },
+  common: {
+    loading: "Đang tải...",
+    error: "Đã có lỗi xảy ra",
+    networkError: "Vui lòng kiểm tra kết nối mạng",
+    retry: "Thử lại",
+    continue: "Tiếp tục",
+    currency: "đ",
+    copied: "Đã sao chép",
+    copy: "Sao chép",
+  },
+  search: {
+    title: "Chọn ngày đi",
+    otherDate: "Ngày khác",
+    allRoutes: "Tất cả tuyến",
+    empty: "Không có chuyến nào mở bán trong ngày này.",
+    emptyHint: "Thử chọn ngày khác hoặc gọi tổng đài nhà xe.",
+    available: (n: number, unit: string) => `Còn ${n} ${unit}`,
+    soldOut: "Hết chỗ",
+    fromPrice: "Từ",
+  },
+  seats: {
+    title: "Chọn chỗ",
+    legendAvailable: "Còn trống",
+    legendSelected: "Đang chọn",
+    legendHeld: "Đang giữ",
+    legendBooked: "Đã đặt",
+    legendBlocked: "Không bán",
+    notOnSale: "Chuyến này đã ngừng bán vé online.",
+    maxUnits: (n: number) => `Mỗi đơn đặt tối đa ${n} chỗ.`,
+    occupancy: "Số người",
+    single: "1 người",
+    double: "2 người",
+    infants: "Trẻ dưới 2 tuổi đi kèm",
+    selectedCount: (n: number, unit: string) => `${n} ${unit} đã chọn`,
+    estimate: "Tạm tính",
+    estimateHint: "Giá cuối cùng (kể cả trẻ em) do nhà xe xác nhận khi giữ chỗ.",
+    refreshed: "Một số chỗ bạn chọn vừa có người giữ, đã bỏ khỏi danh sách chọn.",
+  },
+  checkout: {
+    title: "Thông tin đặt vé",
+    contactName: "Họ tên người đi",
+    contactPhone: "Số điện thoại",
+    namePlaceholder: "Nguyễn Văn A",
+    phonePlaceholder: "09xxxxxxxx",
+    summary: "Chỗ đã chọn",
+    submit: "Giữ chỗ",
+    submitting: "Đang giữ chỗ...",
+    holdNotice: (minutes: number) => `Chỗ được giữ ${minutes} phút để bạn chuyển khoản.`,
+    nameRequired: "Vui lòng nhập họ tên.",
+    phoneInvalid: "Số điện thoại chưa đúng.",
+    otpTitle: "Xác thực số điện thoại",
+    otpHint: "Nhà xe đang mở bán cao điểm, cần xác thực số điện thoại trước khi giữ chỗ.",
+    otpSend: "Gửi mã",
+    otpCode: "Mã 6 số",
+    otpVerify: "Xác nhận",
+    otpVerified: "Đã xác thực số điện thoại",
+    noSelection: "Bạn chưa chọn chỗ nào.",
+  },
+  booking: {
+    title: "Đơn đặt vé",
+    code: "Mã đơn",
+    status: {
+      HOLDING: "Đang giữ chỗ, chờ thanh toán",
+      CONFIRMED: "Đã xác nhận",
+      EXPIRED: "Hết hạn giữ chỗ",
+      CANCELLED: "Đã hủy",
+      COMPLETED: "Hoàn tất",
+    } as Record<string, string>,
+    holdLeft: "Giữ chỗ còn",
+    payTitle: "Chuyển khoản để xác nhận vé",
+    payHint: "Quét mã QR bằng ứng dụng ngân hàng. Nội dung chuyển khoản phải đúng mã đơn.",
+    bank: "Ngân hàng",
+    accountNumber: "Số tài khoản",
+    accountName: "Chủ tài khoản",
+    amount: "Số tiền",
+    transferContent: "Nội dung",
+    waiting: "Đang chờ xác nhận thanh toán... Trang tự cập nhật khi nhà xe nhận được tiền.",
+    confirmed: "Nhà xe đã nhận tiền. Vé điện tử sẽ được gửi khi tính năng vé hoàn tất.",
+    expired: "Đơn đã hết hạn giữ chỗ. Nếu bạn đã chuyển khoản, vui lòng liên hệ nhà xe.",
+    total: "Tổng tiền",
+    paid: "Đã trả",
+    due: "Cần trả lúc này",
+    paymentUnavailable: "Nhà xe chưa cấu hình tài khoản nhận tiền. Vui lòng liên hệ tổng đài.",
+    notFound: "Không tìm thấy đơn trên máy này.",
+  },
+  myBookings: {
+    title: "Vé của tôi",
+    empty: "Chưa có đơn nào",
+    emptyHint: "Các đơn bạn đặt trên máy này sẽ hiện ở đây.",
+    bookNow: "Đặt vé ngay",
+  },
+  errors: {
+    SEAT_UNAVAILABLE: "Chỗ bạn chọn vừa có người giữ. Vui lòng chọn chỗ khác.",
+    TRIP_NOT_ON_SALE: "Chuyến này đã ngừng bán vé online.",
+    TOO_MANY_ATTEMPTS: "Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.",
+    NETWORK_ERROR: "Không kết nối được máy chủ, vui lòng kiểm tra mạng.",
+  } as Record<string, string>,
+};
+
+/** Thông điệp cho khách: ưu tiên câu riêng theo mã lỗi, không thì dùng thông điệp tiếng Việt từ máy chủ. */
+export function errorMessage(error: unknown): string {
+  const e = error as { code?: string; message?: string } | null;
+  return (e?.code && copy.errors[e.code]) || e?.message || copy.common.error;
+}

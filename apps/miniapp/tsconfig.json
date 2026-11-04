@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "target": "es2020",
+    "module": "esnext",
+    "jsx": "react-jsx",
+    "lib": ["dom", "es2020"],
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "strict": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "exclude": ["node_modules", "www"],
+  "include": ["src"]
+}

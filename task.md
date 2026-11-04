@@ -18,7 +18,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [ ] **T8. Danh sách khách theo chuyến**: API + **xuất Excel để xem** theo mẫu `templates/mau-danh-sach-khach-theo-chuyen.xlsx`. Không cần in vé giấy/máy in nhiệt (chốt 03/11/2026).
 - [ ] **T9. Đếm vé tính phí nền tảng** (`billable_tickets`, bảng kê theo kỳ).
 - [ ] **T10. Worker**: hết hạn giữ chỗ định kỳ, đối soát định kỳ, nhắc giờ.
-- [ ] **T11. Zalo Mini App** (giao diện khách) dựa trên bản mẫu `prototype/so-do-cho.html`.
+- [~] **T11. Zalo Mini App** (giao diện khách) dựa trên bản mẫu `prototype/so-do-cho.html`. 04/11/2026: đã có khung `apps/miniapp` (dựng từ template ZaUI Bistro) nối API công khai: tìm chuyến → sơ đồ chỗ → giữ chỗ (OTP cao điểm) → QR chuyển khoản → tự cập nhật khi tiền về → "Vé của tôi" lưu trên máy. 49 test (vitest), typecheck, build pass; đã chạy thử với API + PostgreSQL thật. Chưa rà soát subagent. Còn chờ API: đăng nhập Zalo/`/me/tickets`, vé (T7), điểm đón/trả.
 - [ ] **T12. Web quản trị** (Next.js).
 
 ## Phát hiện mới
@@ -100,6 +100,12 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [ ] 04/11/2026 · T6 · Đối soát chỉ lấy tối đa 5.000 giao dịch/lần, chưa phân trang; worker gọi định kỳ ở T10.
 - [ ] 04/11/2026 · T6 · Hoàn tiền (refund có duyệt) chưa làm: hiện chỉ "đánh dấu đã xử lý" kèm ghi chú. Cần module hoàn tiền theo PNTicketDocs mục 5.4/6.4 (task mới).
 - [ ] 04/11/2026 · T6 · Tiền đến muộn (LATE) chưa có thao tác "cấp lại chỗ" có kiểm tra — hiện kế toán xử lý ngoài hệ thống (hoàn tiền hoặc đặt hộ đơn mới).
+- [ ] 04/11/2026 · T3 · **`scripts/seed.ts` lỗi** (`pnpm --filter api seed` báo `VALIDATION_FAILED` regex): giá vé dùng tầng `A`/`B` trong khi sơ đồ đã đổi sang tầng `1`/`2`. Seed còn tạo nhà xe trước rồi mới lỗi → chạy lại báo trùng. — chưa sửa
+- [ ] 04/11/2026 · T11 · API chưa bật CORS: Mini App chạy trên domain của Zalo sẽ bị trình duyệt chặn. Dev dùng proxy của Vite; khi phát hành cần `enableCors` với danh sách domain Mini App (hoặc reverse proxy cùng origin).
+- [ ] 04/11/2026 · T11 · Sơ đồ chỗ công khai không trả chính sách trẻ em (`childPolicy`: giá, tối đa mỗi chỗ) → Mini App chỉ tạm tính chưa gồm trẻ em và cho chọn tối đa 2 trẻ/chỗ theo schema; máy chủ mới kiểm tra đúng giới hạn. Nên thêm `childPolicy` vào `GET /trips/:id/seats`.
+- [ ] 04/11/2026 · T11 · Chưa có API công khai liệt kê tuyến và điểm đón/trả (`stops`): Mini App lọc tuyến từ danh sách chuyến trong ngày, chưa chọn được điểm đón.
+- [ ] 04/11/2026 · T11 · "Vé của tôi" đang lưu mã đơn + `accessToken` trong localStorage của máy → đổi máy/xóa dữ liệu là mất danh sách. Cần `POST /auth/zalo` + `GET /me/tickets` (ZALO-MINI-APP.md mục 6).
+- [ ] 04/11/2026 · T11 · **Giấy phép template**: ZaUI Bistro ghi "non-commercial testing and evaluation purposes only". Cần xác nhận với Zalo được dùng cho sản phẩm thương mại, nếu không thì thay phần UI lấy từ template (layout, tabs, icon, tokens).
 
 ### Rà soát subagent — T6 (04/11/2026)
 
