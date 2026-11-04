@@ -52,21 +52,28 @@ export function setInfants(selection: Selection, code: string, infantCount: numb
  * Sau khi tải lại sơ đồ: bỏ những chỗ không còn trống (người khác vừa giữ) và chỗ không còn trong sơ đồ.
  * Trả về danh sách mã bị bỏ để báo cho khách.
  */
-export function reconcileSelection(selection: Selection, seats: SeatMap["seats"]): { selection: Selection; removed: string[] } {
+export function reconcileSelection(
+  selection: Selection,
+  seats: SeatMap["seats"],
+  infantMax = MAX_INFANTS_PER_UNIT,
+): { selection: Selection; removed: string[] } {
   const byCode = new Map(seats.map((s) => [s.code, s]));
   const next: Selection = {};
   const removed: string[] = [];
   for (const [code, unit] of Object.entries(selection)) {
     const seat = byCode.get(code);
     if (seat && seat.status === "AVAILABLE") {
-      next[code] = { ...unit, occupancy: Math.min(unit.occupancy, seat.maxOccupancy) };
+      // Sức chứa hoặc giới hạn trẻ em của nhà xe có thể đổi giữa chừng: kẹp lại để không gửi yêu cầu sai.
+      const occupancy = Math.min(unit.occupancy, seat.maxOccupancy);
+      const infantCount = occupancy > 1 ? 0 : Math.min(unit.infantCount, Math.max(0, infantMax));
+      next[code] = { occupancy, infantCount };
     } else removed.push(code);
   }
   return { selection: removed.length || hasClampedOccupancy(selection, next) ? next : selection, removed };
 }
 
 function hasClampedOccupancy(a: Selection, b: Selection): boolean {
-  return Object.keys(b).some((k) => a[k]?.occupancy !== b[k].occupancy);
+  return Object.keys(b).some((k) => a[k]?.occupancy !== b[k].occupancy || a[k]?.infantCount !== b[k].infantCount);
 }
 
 /** Giá một chỗ theo (tầng, số người); null khi nhà xe chưa đặt giá cho tổ hợp đó. */

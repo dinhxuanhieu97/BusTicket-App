@@ -38,7 +38,8 @@ export default function SeatMapPage() {
   useEffect(() => {
     if (!map) return;
     const current = useBookingDraft.getState().selection;
-    const { selection: next, removed } = reconcileSelection(current, map.seats);
+    const cap = Math.min(map.booking.childPolicy?.maxPerUnit ?? MAX_INFANTS_PER_UNIT, MAX_INFANTS_PER_UNIT);
+    const { selection: next, removed } = reconcileSelection(current, map.seats, cap);
     if (next !== current) setSelection(next);
     if (removed.length) openSnackbar({ text: `${copy.seats.refreshed} (${removed.join(", ")})`, type: "warning" });
   }, [map, setSelection, openSnackbar]);
@@ -163,7 +164,7 @@ export default function SeatMapPage() {
             {estimate === null || codes.length === 0 ? "—" : formatCurrency(estimate)}
           </span>
         </div>
-        {codes.length > 0 && <div className="text-xxxsmall text-text-secondary">{copy.seats.estimateHint}</div>}
+        {codes.length > 0 && <div className="text-xxxsmall text-text-secondary">{child ? copy.seats.estimateHint : copy.seats.estimateHintNoChildPolicy}</div>}
         <Button
           fullWidth
           disabled={codes.length === 0 || !map.trip.onSale}

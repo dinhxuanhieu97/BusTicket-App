@@ -45,6 +45,7 @@ export const copy = {
     selectedCount: (n: number, unit: string) => `${n} ${unit} đã chọn`,
     estimate: "Tạm tính",
     estimateHint: "Giá cuối cùng do nhà xe xác nhận khi giữ chỗ.",
+    estimateHintNoChildPolicy: "Tạm tính chưa gồm phí trẻ em (nếu có). Giá cuối cùng do nhà xe xác nhận khi giữ chỗ.",
     refreshed: "Một số chỗ bạn chọn vừa có người giữ, đã bỏ khỏi danh sách chọn.",
   },
   checkout: {

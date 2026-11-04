@@ -90,6 +90,12 @@ describe("occupancy and infants", () => {
 });
 
 describe("reconcileSelection", () => {
+  it("clears infants above a lowered policy cap so the user is not stuck with a hidden control", () => {
+    const sel = { A1: { occupancy: 1, infantCount: 1 } };
+    expect(reconcileSelection(sel, seats, 0).selection.A1.infantCount).toBe(0);
+    expect(reconcileSelection(sel, seats, 1).selection).toBe(sel);
+  });
+
   it("drops seats somebody else just held and reports them", () => {
     const sel = { A1: { occupancy: 1, infantCount: 0 }, B2: { occupancy: 1, infantCount: 0 } };
     const r = reconcileSelection(sel, seats);
@@ -104,7 +110,7 @@ describe("reconcileSelection", () => {
   });
 
   it("returns the same object when nothing changed (no re-render loop)", () => {
-    const sel = { A1: { occupancy: 2, infantCount: 1 } };
+    const sel = { A1: { occupancy: 2, infantCount: 0 } };
     const r = reconcileSelection(sel, seats);
     expect(r.selection).toBe(sel);
     expect(r.removed).toEqual([]);
