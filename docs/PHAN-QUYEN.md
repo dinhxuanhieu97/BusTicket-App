@@ -16,11 +16,18 @@ Quyền gắn với **vai trò (role) của tài khoản**. Mỗi tài khoản c
 | Xem tuyến, chuyến | ✔ ¹ | ✔ | ✔ | ✔ | ✔ | |
 | Thêm tuyến, tạo chuyến, mở/đóng bán | ✔ ¹ | ✔ | ✔ | | | |
 | Xem nhật ký thao tác | ✔ ¹ | ✔ | | ✔ | | |
+| Thiết lập tài khoản nhận tiền SePay | ✔ ² | ✔ | | | | |
+| Xem sổ thu, khoản cần kiểm tra | | ✔ | | ✔ | ✔ | |
+| Ghi nhận **tiền mặt** cho đơn | | ✔ | | ✔ | ✔ | |
+| Xác nhận **chuyển khoản thủ công** (mức 0) | | ✔ | | ✔ | | |
+| Phân bổ tay, đánh dấu đã xử lý, chạy đối soát | | ✔ | | ✔ | | |
 | Danh sách khách chuyến được giao, xuất Excel | — | — | — | — | — | (T8) |
 
-¹ Quản trị nền tảng dùng để **setup nhà xe trước khi hoạt động chính thức**; mọi thao tác đều ghi nhật ký.
+¹ Quản trị nền tảng dùng để **setup nhà xe trước khi hoạt động chính thức**; mọi thao tác đều ghi nhật ký. Quản trị nền tảng **không xem/không động vào tiền** của nhà xe (nhật ký thao tác tiền bị ẩn).
 
-Các quyền về **đặt vé hộ, thu tiền, đối soát, hoàn tiền** sẽ thêm vào bảng khi làm T6–T8.
+² Chỉ **lần thiết lập đầu tiên**. Đổi tài khoản nhận tiền sau đó chỉ chủ xe làm được; mỗi lần đổi ghi nhật ký tài khoản cũ/mới và báo chủ xe.
+
+Các quyền về **đặt vé hộ, hoàn tiền có duyệt** sẽ thêm khi làm các task tương ứng.
 
 **Quy tắc an toàn:**
 - Bắt buộc bật xác thực 2 lớp: quản trị nền tảng, chủ xe, kế toán.

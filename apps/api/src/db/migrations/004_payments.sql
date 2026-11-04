@@ -52,16 +52,17 @@ CREATE TABLE payments (
   provider           text,
   provider_txn_id    text,
   account_number     text,
-  amount             int  NOT NULL CHECK (amount > 0),
+  amount             bigint NOT NULL CHECK (amount > 0),        -- bigint: khoản chuyển lớn bất thường vẫn ghi nhận được
   fee_amount         int  NOT NULL DEFAULT 0 CHECK (fee_amount >= 0),
   content            text,
   reference_code     text,
+  reference_norm     text GENERATED ALWAYS AS (upper(regexp_replace(coalesce(reference_code, ''), '[^A-Za-z0-9]', '', 'g'))) STORED,
   transaction_at     timestamptz NOT NULL,
   received_at        timestamptz NOT NULL,
-  allocated_amount   int  NOT NULL DEFAULT 0 CHECK (allocated_amount >= 0),
+  allocated_amount   bigint NOT NULL DEFAULT 0 CHECK (allocated_amount >= 0),
   matched_booking_id uuid REFERENCES bookings(id),      -- đơn nhận diện được từ nội dung (kể cả khi chưa phân bổ)
   review_status      text NOT NULL DEFAULT 'NONE' CHECK (review_status IN ('NONE', 'NEEDS_REVIEW', 'RESOLVED')),
-  review_reason      text CHECK (review_reason IN ('UNMATCHED', 'AMBIGUOUS', 'LATE', 'OVERPAID', 'BOOKING_CLOSED')),
+  review_reason      text CHECK (review_reason IN ('UNMATCHED', 'AMBIGUOUS', 'LATE', 'OVERPAID', 'BOOKING_CLOSED', 'POSSIBLE_DUPLICATE')),
   review_note        text,
   recorded_by        uuid REFERENCES users(id),
   idempotency_key    text,
@@ -74,6 +75,9 @@ CREATE TABLE payments (
   UNIQUE (operator_id, idempotency_key)
 );
 CREATE INDEX payments_operator_review_idx ON payments (operator_id, review_status, received_at DESC);
+-- Một mã giao dịch ngân hàng chỉ được xác nhận thủ công một lần trong nhà xe.
+CREATE UNIQUE INDEX payments_manual_bank_ref_key ON payments (operator_id, reference_norm) WHERE method = 'MANUAL_BANK';
+CREATE INDEX payments_matched_booking_idx ON payments (matched_booking_id) WHERE matched_booking_id IS NOT NULL;
 
 -- Phân bổ từng khoản thu vào đơn. Không sửa/xóa; mỗi dòng là một lần phân bổ.
 CREATE TABLE payment_allocations (

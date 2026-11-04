@@ -9,11 +9,11 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] **T3. Tuyến, chuyến, giá**: tạo tuyến; tạo chuyến sinh `trip_seats` từ phiên bản sơ đồ; giá theo tầng × số người (phòng đơn/đôi) bắt buộc đủ; tìm chuyến theo ngày (giờ VN); API sơ đồ chỗ công khai không lộ dữ liệu khách.
 - [x] **T4. Giữ chỗ chống bán trùng**: `POST /api/v1/bookings` giữ nhiều chỗ nguyên tử (all-or-nothing), hết hạn giữ chỗ, phòng đơn/đôi, trẻ dưới 2 tuổi theo chính sách, chụp giá/chính sách vào đơn, `Idempotency-Key`, chuẩn hóa SĐT, mã đơn an toàn. Test AC-01, AC-02, AC-03, idempotency.
 
-## Giai đoạn 2 — Tiếp theo (T5, T5b xong 03/11/2026 · 247 test pass)
+## Giai đoạn 2 — Tiếp theo (T5, T5b xong 03/11/2026; T6 xong 04/11/2026 · 341 test pass)
 
 - [x] **T5. Xác thực nội bộ + phân quyền + cô lập nhà xe** (JWT, vai trò, 2FA cho chủ xe/kế toán) và API quản trị cho T2/T3. Chỉ quản trị nền tảng được sửa thư viện mẫu sơ đồ dùng chung.
 - [x] **T5b. Chống giữ chỗ ảo mùa cao điểm**: giới hạn tần suất `POST /bookings` theo IP và SĐT, số đơn đang giữ tối đa mỗi SĐT, OTP khi bật cao điểm (PNTicketDocs mục 5.2, 12).
-- [~] **T6. Thanh toán (SePay)**: `payment_requests`, webhook SePay/payOS (xác thực chữ ký, chống trùng), phân bổ tiền, xác nhận đơn, ngoại lệ (thiếu/dư/muộn), xác nhận thủ công có quyền (mức 0).
+- [x] **T6. Thanh toán (SePay)**: webhook SePay (API Key theo từng tài khoản, chống trùng), phân bổ tiền, cọc theo %, xác nhận đơn, ngoại lệ (thiếu/dư/muộn/sai mã/trùng), xác nhận thủ công (mức 0), đối soát qua API SePay, QR thanh toán.
 - [ ] **T7. Vé + outbox + gửi vé**: phát hành vé theo đơn vị bán, QR token, outbox, kênh ưu tiên miễn phí (trang vé, email, Zalo OA) rồi ZNS/SMS, hạn mức chi phí tin.
 - [ ] **T8. Danh sách khách theo chuyến**: API + **xuất Excel để xem** theo mẫu `templates/mau-danh-sach-khach-theo-chuyen.xlsx`. Không cần in vé giấy/máy in nhiệt (chốt 03/11/2026).
 - [ ] **T9. Đếm vé tính phí nền tảng** (`billable_tickets`, bảng kê theo kỳ).
@@ -86,6 +86,29 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 | `AuthService` (đăng nhập) | Không bug mới; lộ tài khoản qua lỗi khóa vẫn khai thác được từ nhiều IP | `auth.service.ts` trả `TOO_MANY_ATTEMPTS` khi khóa | **Xác nhận**: test "locked account answers exactly like an unknown phone" đỏ → xanh; test dồn dập đếm số lần so mật khẩu thật (spy) | Có (Trung bình) — đã sửa |
 | `PhoneVerificationService` | Không bug nghiêm trọng; gửi OTP khi không cao điểm; khoảng cách gửi lại lách được | Đọc code + 18 test | **Xác nhận** cả hai bằng test đỏ → sửa; tự phát hiện thêm: lần bị từ chối vẫn trừ hạn mức giờ → sửa | Có (Thấp–Trung bình) — đã sửa |
 | `BookingsService` | Không bug; ghi chú gửi lại cùng khóa bị tính giới hạn | Lock ordering, đếm dưới khóa SĐT | **Xác nhận**: test "retry … even when the IP limit is used up" đỏ → xanh. Thử bỏ khóa SĐT → test song song đỏ 5/5 lần | Có (Thấp) — đã sửa |
+
+- [x] 04/11/2026 · T6 · **Bug (Cao)**: một lần chuyển khoản có thể **cộng hai lần** (kế toán xác nhận tay lúc SePay gián đoạn, sau đó webhook/đối soát đưa về cùng giao dịch) → đơn được xác nhận dù chỉ trả nửa cọc. — giao dịch SePay khớp ghi tay (cùng mã GD hoặc cùng đơn + số tiền trong 3 ngày) không tự cộng mà đánh dấu `POSSIBLE_DUPLICATE`; mã GD ghi tay là duy nhất; ghi tay khi SePay đã có khoản tương tự phải xác nhận rõ `confirmNotDuplicate`
+- [x] 04/11/2026 · T6 · **Bug (Cao)**: quản trị nền tảng (hoặc phiên bị chiếm) đổi được tài khoản nhận tiền bất cứ lúc nào → chuyển hướng tiền, đặt khóa webhook mới để giả giao dịch. — chỉ thiết lập lần đầu; đổi sau đó chỉ chủ xe; nhật ký ghi tài khoản cũ/mới; outbox `payment_account.changed` để báo chủ xe (gửi ở T7)
+- [x] 04/11/2026 · T6 · **Bug (Trung bình)**: đổi tài khoản nhưng khóa webhook của tài khoản cũ vẫn dùng được. — chỉ nhận webhook của tài khoản đang hoạt động
+- [x] 04/11/2026 · T6 · **Bug (Trung bình)**: `amountDueNow` bảo khách chuyển tiền cho đơn hết hạn/đã hủy (thậm chí toàn bộ tổng tiền). — một quy tắc chung `amountDueNow()` cho cả đơn và hướng dẫn thanh toán
+- [x] 04/11/2026 · T6 · **Bug (Trung bình)**: tên người gửi trùng tiền tố nhà xe (vd. "NGUYEN VAN AN" với nhà xe `AN`) làm mất mã đơn thật → khách trả đúng hạn vẫn có thể hết hạn. — tìm mã cho phép chồng nhau (lookahead)
+- [x] 04/11/2026 · T6 · **Bug (Trung bình)**: khoản chuyển > 2,1 tỷ làm webhook lỗi mãi và chặn đối soát các giao dịch sau. — cột tiền của `payments` là `bigint`; đối soát bắt lỗi từng giao dịch
+- [x] 04/11/2026 · T6 · **Bug (Trung bình)**: phần dư của khoản đã đánh dấu "đã xử lý" (vd. đã hoàn) vẫn phân bổ được vào đơn khác. — khoản RESOLVED bị khóa
+- [x] 04/11/2026 · T6 · Quản trị nền tảng xem được chi tiết thao tác tiền qua nhật ký. — ẩn nhật ký `payment.*` với quản trị nền tảng
+- [ ] 04/11/2026 · T6 · **Cần xác minh với SePay thật**: (1) định dạng header ký HMAC-SHA256 (hiện dùng xác thực API Key — đã xác nhận trong tài liệu), (2) tên trường API danh sách giao dịch để đối soát, (3) định dạng ảnh QR `qr.sepay.vn/img`. Môi trường này không truy cập được `developer.sepay.vn`.
+- [ ] 04/11/2026 · T6 · Một nhà xe có thể "chiếm trước" số tài khoản của nhà xe khác (ràng buộc duy nhất theo số tài khoản). Webhook vẫn cần đúng API Key do chủ tài khoản đặt trong SePay nên không giả được tiền, nhưng nhà xe thật bị chặn cấu hình → cần quy trình xác minh quyền sở hữu tài khoản (quản trị nền tảng xử lý tay).
+- [ ] 04/11/2026 · T6 · Đối soát chỉ lấy tối đa 5.000 giao dịch/lần, chưa phân trang; worker gọi định kỳ ở T10.
+- [ ] 04/11/2026 · T6 · Hoàn tiền (refund có duyệt) chưa làm: hiện chỉ "đánh dấu đã xử lý" kèm ghi chú. Cần module hoàn tiền theo PNTicketDocs mục 5.4/6.4 (task mới).
+- [ ] 04/11/2026 · T6 · Tiền đến muộn (LATE) chưa có thao tác "cấp lại chỗ" có kiểm tra — hiện kế toán xử lý ngoài hệ thống (hoàn tiền hoặc đặt hộ đơn mới).
+
+### Rà soát subagent — T6 (04/11/2026)
+
+| Service | Subagent kết luận | Bằng chứng | Agent chính kiểm tra lại | Bị ảnh hưởng? |
+|---|---|---|---|---|
+| `PaymentsService` (sổ thu, phân bổ) | **2 bug**: cộng tiền hai lần (ghi tay + SePay); phân bổ được tiền đã hoàn | PoC: `paid_amount = 200000` cho khoản 100.000đ; đơn thứ hai xác nhận bằng tiền đã hoàn | **Xác nhận**: test `payments-review.int-spec.ts` đỏ → sửa → xanh | Có (Cao) — đã sửa |
+| `sepay.ts` + webhook | **2 bug**: mã đơn bị "nuốt"; khoản > 2,1 tỷ lỗi mãi | Script: `extractBookingCodes('NGUYEN VAN AN CK AN7K3D2Q','AN')` → `['ANANCKAN']` | **Xác nhận**: test đỏ → lookahead, `bigint`, đối soát bắt lỗi từng dòng, timeout HTTP → xanh | Có (Trung bình) — đã sửa |
+| Phân quyền + route thanh toán | **1 Cao + 2 Trung bình**: đổi tài khoản nhận tiền; khóa cũ còn hiệu lực; thiếu test HTTP | `permissions.ts` SETUP có `payment.configure`; tra tài khoản không lọc `active` | **Xác nhận**: test đỏ → sửa → xanh; thêm test HTTP 403/404 cho mọi route tiền (pass) | Có (Cao) — đã sửa |
+| `BookingsService` + chính sách cọc | **1 bug**: `amountDueNow` cho đơn chết | `bookings.service.ts` dùng `status` thô | **Xác nhận**: test đỏ → quy tắc chung → xanh; làm tròn cọc kiểm 3 triệu trường hợp không sai | Có (Trung bình) — đã sửa |
 
 ### Rà soát subagent — T1–T4 (03/11/2026)
 

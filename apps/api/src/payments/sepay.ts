@@ -96,10 +96,12 @@ export function verifyApiKeyHeader(header: string | undefined, storedHash: strin
  */
 export function extractBookingCodes(content: string, operatorCode: string, providerCode?: string | null): string[] {
   const found = new Set<string>();
-  const pattern = new RegExp(`${operatorCode}[${SAFE_ALPHABET}]{6}`, 'g');
+  // Lookahead để các ứng viên được phép chồng nhau: tên người gửi trùng tiền tố (vd. "NGUYEN VAN AN" với nhà xe "AN")
+  // không được "nuốt" mất mã thật. Ứng viên thừa bị loại khi tra trong DB.
+  const pattern = new RegExp(`(?=(${operatorCode}[${SAFE_ALPHABET}]{6}))`, 'g');
   for (const text of [providerCode ?? '', content]) {
     const compact = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    for (const m of compact.matchAll(pattern)) found.add(m[0]);
+    for (const m of compact.matchAll(pattern)) found.add(m[1]!);
   }
   return [...found];
 }
@@ -133,6 +135,7 @@ export class HttpSepayTransactionsClient extends SepayTransactionsClient {
     const q = new URLSearchParams({ account_number: accountNumber, transaction_date_min: vn, limit: '5000' });
     const res = await fetch(`${this.baseUrl}/userapi/transactions/list?${q}`, {
       headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`SePay API ${res.status}`);
     return mapSepayTransactionList(await res.json());

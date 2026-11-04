@@ -138,7 +138,9 @@ Bạn làm cùng chủ xe cho **mỗi nhà xe mới**. Chỉ mở bán khi mọi
 
 ### D. Thanh toán (tiền vào tài khoản nhà xe)
 - [ ] ● Tài khoản ngân hàng nhận tiền (khuyến nghị tài khoản riêng cho tiền vé)
-- [ ] ● SePay hoặc payOS: kết nối, webhook, khóa bí mật lưu phía máy chủ
+- [ ] ● SePay: kết nối tài khoản ngân hàng; tạo webhook trỏ tới `https://<tên-miền>/api/v1/webhooks/payments/sepay`, chọn xác thực **API Key** (≥ 24 ký tự ngẫu nhiên), nhập cùng khóa đó khi cấu hình tài khoản nhận tiền trong trang quản trị
+- [ ] Token API SePay (để đối soát định kỳ, bù webhook bị lỡ)
+- [ ] ● Tỷ lệ cọc (`depositPercent`, mặc định 100% = trả đủ)
 - [ ] ZaloPay/ví điện tử qua Checkout SDK (nếu nhà xe bật)
 - [ ] ● Giao dịch thử ở môi trường thử nghiệm; giao dịch tiền thật nhỏ **có chủ tài khoản đồng ý**
 

@@ -1,5 +1,12 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { Pool, PoolClient, QueryResultRow } from 'pg';
+import { Pool, PoolClient, QueryResultRow, types } from 'pg';
+
+// bigint (int8) → number. Chỉ dùng cho tiền/đếm nằm trong phạm vi số nguyên an toàn của JS (2^53).
+types.setTypeParser(types.builtins.INT8, (v) => {
+  const n = Number(v);
+  if (!Number.isSafeInteger(n)) throw new Error(`int8 value out of safe range: ${v}`);
+  return n;
+});
 
 /** Bất cứ thứ gì chạy được SQL: Pool hoặc client trong một transaction. */
 export interface Queryable {

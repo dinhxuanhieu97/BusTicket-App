@@ -97,3 +97,38 @@ describe('priceItems', () => {
     );
   });
 });
+
+describe('depositAmount', () => {
+  const { depositAmount } = jest.requireActual('./pricing') as typeof import('./pricing');
+  it.each([
+    [700_000, 50, 350_000],
+    [450_000, 50, 225_000],
+    [380_000, 30, 114_000],
+    [380_100, 30, 115_000], // làm tròn lên bội số 1.000đ
+    [500, 30, 500], // không vượt tổng
+    [380_000, 100, 380_000],
+    [0, 50, 0],
+  ])('total %i at %i%% → %i', (total, pct, expected) => {
+    expect(depositAmount(total, pct)).toBe(expected);
+  });
+});
+
+describe('amountDueNow', () => {
+  const { amountDueNow } = jest.requireActual('./pricing') as typeof import('./pricing');
+  const now = new Date('2027-01-20T03:00:00Z');
+  const base = { deposit_amount: 350_000, total_amount: 700_000, paid_amount: 100_000 };
+  it('live hold → remaining deposit', () => {
+    expect(amountDueNow({ ...base, status: 'HOLDING', hold_expires_at: new Date(now.getTime() + 60_000) }, now)).toBe(250_000);
+  });
+  it('confirmed → remaining total', () => {
+    expect(amountDueNow({ ...base, status: 'CONFIRMED', hold_expires_at: null }, now)).toBe(600_000);
+  });
+  it.each([
+    ['expired hold not yet marked', { status: 'HOLDING', hold_expires_at: now }],
+    ['expired', { status: 'EXPIRED', hold_expires_at: now }],
+    ['cancelled', { status: 'CANCELLED', hold_expires_at: null }],
+    ['completed', { status: 'COMPLETED', hold_expires_at: null }],
+  ])('%s → 0', (_n, s) => {
+    expect(amountDueNow({ ...base, ...s }, now)).toBe(0);
+  });
+});

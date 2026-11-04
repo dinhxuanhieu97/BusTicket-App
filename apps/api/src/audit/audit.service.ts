@@ -42,13 +42,15 @@ export class AuditService {
     );
   }
 
-  async list(operatorId: string, limit = 100) {
+  /** `excludeActionPrefixes`: ẩn bớt loại nhật ký (vd. quản trị nền tảng không xem các thao tác tiền `payment.`). */
+  async list(operatorId: string, limit = 100, excludeActionPrefixes: string[] = []) {
     if (!isUuid(operatorId)) return [];
     const { rows } = await this.db.query(
       `SELECT a.id::text, a.action, a.entity, a.entity_id, a.data, a.at, u.full_name AS actor_name, u.role AS actor_role
        FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id
-       WHERE a.operator_id = $1 ORDER BY a.at DESC, a.id DESC LIMIT $2`,
-      [operatorId, Math.min(Math.max(limit, 1), 500)],
+       WHERE a.operator_id = $1 AND NOT (a.action LIKE ANY ($3::text[]))
+       ORDER BY a.at DESC, a.id DESC LIMIT $2`,
+      [operatorId, Math.min(Math.max(limit, 1), 500), excludeActionPrefixes.map((p) => `${p.replace(/[%_\\]/g, '\\$&')}%`)],
     );
     return rows;
   }

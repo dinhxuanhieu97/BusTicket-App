@@ -272,8 +272,10 @@ export class AdminController {
 
   @Get('operators/:operatorId/audit-logs')
   @Perm('audit.read')
-  async auditLogs(@Param('operatorId') operatorId: string) {
+  async auditLogs(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string) {
     await this.operators.getById(operatorId);
-    return { entries: await this.audit.list(operatorId) };
+    // Quản trị nền tảng không động vào tiền của nhà xe → không xem chi tiết thao tác tiền.
+    const hide = req.auth.role === 'PLATFORM_ADMIN' ? ['payment.'] : [];
+    return { entries: await this.audit.list(operatorId, 100, hide) };
   }
 }

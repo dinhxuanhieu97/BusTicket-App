@@ -13,7 +13,7 @@ import { normalizeVnPhone } from '../common/phone';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { OperatorsService } from '../operators/operators.service';
 import { SEAT_CODE } from '../seat-layouts/layout-parser';
-import { depositAmount, priceItems } from './pricing';
+import { amountDueNow, depositAmount, priceItems } from './pricing';
 import { TokenSecret } from './token-secret';
 
 export { TokenSecret };
@@ -354,7 +354,7 @@ export class BookingsService {
       depositAmount: b.deposit_amount,
       paidAmount: b.paid_amount,
       paymentStatus: b.payment_status,
-      amountDueNow: Math.max(0, (b.status === 'HOLDING' ? b.deposit_amount : b.total_amount) - b.paid_amount),
+      amountDueNow: amountDueNow(b, this.clock.now()),
       items: rows.map((r) => ({
         seatCode: r.seat_code,
         occupancy: r.occupancy,

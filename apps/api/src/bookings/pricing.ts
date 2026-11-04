@@ -15,6 +15,21 @@ export function depositAmount(total: number, percent: number): number {
   return Math.min(total, Math.ceil((total * percent) / 100 / 1000) * 1000);
 }
 
+/**
+ * Số tiền khách cần trả lúc này: đơn đang giữ chỗ (còn hạn) → phần cọc còn thiếu; đơn đã xác nhận →
+ * phần còn lại; đơn hết hạn/hủy/hoàn tất → 0 (không bao giờ bảo khách chuyển tiền cho đơn không còn hiệu lực).
+ */
+export function amountDueNow(
+  b: { status: string; hold_expires_at: Date | null; deposit_amount: number; total_amount: number; paid_amount: number },
+  now: Date,
+): number {
+  if (b.status === 'HOLDING') {
+    return b.hold_expires_at !== null && b.hold_expires_at > now ? Math.max(0, b.deposit_amount - b.paid_amount) : 0;
+  }
+  if (b.status === 'CONFIRMED') return Math.max(0, b.total_amount - b.paid_amount);
+  return 0;
+}
+
 export interface RequestedItem {
   seatCode: string;
   occupancy: number;

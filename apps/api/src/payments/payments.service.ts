@@ -10,6 +10,7 @@ import { Clock } from '../common/clock';
 import { verifyBookingAccessToken } from '../common/codes';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
+import { amountDueNow } from '../bookings/pricing';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import {
   BankTransfer, extractBookingCodes, hashWebhookKey, parseSepayWebhook, SepayTransactionsClient, sepayQrUrl, verifyApiKeyHeader,
@@ -35,6 +36,8 @@ export const manualPaymentSchema = z
     /** Mã giao dịch ngân hàng nhìn thấy trong app (bắt buộc với MANUAL_BANK). */
     bankReference: z.string().trim().min(3).max(100).optional(),
     note: z.string().trim().max(500).optional(),
+    /** Kế toán xác nhận đây KHÔNG phải giao dịch SePay đã ghi nhận cho đơn (cùng số tiền, gần thời điểm). */
+    confirmNotDuplicate: z.boolean().optional(),
   })
   .strict()
   .refine((v) => v.method !== 'MANUAL_BANK' || !!v.bankReference, {
@@ -48,7 +51,12 @@ export const allocateSchema = z
 
 export const resolveSchema = z.object({ note: z.string().trim().min(3).max(500) }).strict();
 
-type ReviewReason = 'UNMATCHED' | 'AMBIGUOUS' | 'LATE' | 'OVERPAID' | 'BOOKING_CLOSED';
+type ReviewReason = 'UNMATCHED' | 'AMBIGUOUS' | 'LATE' | 'OVERPAID' | 'BOOKING_CLOSED' | 'POSSIBLE_DUPLICATE';
+
+/** Khoảng thời gian coi hai ghi nhận cùng đơn, cùng số tiền là "có thể trùng". */
+const DUPLICATE_WINDOW_MS = 3 * 24 * 3600_000;
+
+const normRef = (ref: string | null | undefined) => (ref ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 interface PaymentRow {
   id: string;
@@ -108,6 +116,14 @@ export class PaymentsService {
       return await this.db.tx(async (c) => {
         const { rows: ops } = await c.query('SELECT id FROM operators WHERE id = $1 FOR NO KEY UPDATE', [operatorId]);
         if (!ops[0]) throw notFound('nhà xe');
+        const { rows: prev } = await c.query<{ account_number: string; bank_code: string }>(
+          'SELECT account_number, bank_code FROM operator_payment_accounts WHERE operator_id = $1 AND active',
+          [operatorId],
+        );
+        // Đổi nơi nhận tiền = đổi nơi tiền của nhà xe chảy về: chỉ chủ xe được làm sau lần thiết lập đầu.
+        if (prev[0] && actor.role !== 'OWNER') {
+          throw new DomainError('FORBIDDEN', 'Chỉ chủ xe được đổi tài khoản nhận tiền đã thiết lập.');
+        }
         await c.query(
           'UPDATE operator_payment_accounts SET active = false, updated_at = $2 WHERE operator_id = $1 AND active',
           [operatorId, this.clock.now()],
@@ -128,9 +144,18 @@ export class PaymentsService {
         if (!rows[0]) throw new DomainError('CONFLICT', 'Số tài khoản này đã được nhà xe khác dùng.');
         await this.audit.record(
           { operatorId, actorUserId: actor.id, action: 'payment_account.configure', entity: 'payment_account', entityId: rows[0].id,
-            data: { bankCode: data.bankCode.toUpperCase(), accountNumber: data.accountNumber, reconcile: !!data.apiToken } },
+            data: {
+              bankCode: data.bankCode.toUpperCase(), accountNumber: data.accountNumber, reconcile: !!data.apiToken,
+              previousBankCode: prev[0]?.bank_code ?? null, previousAccountNumber: prev[0]?.account_number ?? null,
+            } },
           c,
         );
+        if (prev[0]) {
+          // Báo chủ xe mỗi khi tài khoản nhận tiền đổi (gửi ở T7).
+          await this.outbox(c, operatorId, 'payment_account.changed', rows[0].id, `payment_account.changed:${rows[0].id}:${this.clock.now().getTime()}`, {
+            previousAccountNumber: prev[0].account_number, accountNumber: data.accountNumber, by: actor.id,
+          });
+        }
         return this.publicAccount(c, operatorId);
       });
     } catch (e) {
@@ -172,7 +197,7 @@ export class PaymentsService {
     if (!b || !verifyBookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version, accessToken)) throw notFound('đơn');
     const now = this.clock.now();
     const holding = b.status === 'HOLDING' && b.hold_expires_at !== null && b.hold_expires_at > now;
-    const due = holding ? b.deposit_amount - b.paid_amount : b.status === 'CONFIRMED' ? b.total_amount - b.paid_amount : 0;
+    const due = amountDueNow(b, now);
     if (due <= 0) {
       return { code, payable: false, reason: holding || b.status === 'CONFIRMED' ? 'PAID' : 'NOT_PAYABLE', amountDue: 0 };
     }
@@ -195,7 +220,7 @@ export class PaymentsService {
   async handleSepayWebhook(authorization: string | undefined, body: unknown): Promise<IngestResult> {
     const transfer = parseSepayWebhook(body);
     const { rows } = await this.db.query<{ webhook_key_hash: string }>(
-      `SELECT webhook_key_hash FROM operator_payment_accounts WHERE provider = 'SEPAY' AND account_number = $1`,
+      `SELECT webhook_key_hash FROM operator_payment_accounts WHERE provider = 'SEPAY' AND account_number = $1 AND active`,
       [transfer.accountNumber],
     );
     // Không phân biệt "sai khóa" với "tài khoản không có" trong phản hồi.
@@ -209,7 +234,7 @@ export class PaymentsService {
    * Đối soát định kỳ: lấy giao dịch tiền vào từ API SePay trong `lookbackHours` vừa qua và ghi nhận
    * những giao dịch webhook chưa gửi tới (chống trùng theo mã giao dịch).
    */
-  async reconcile(operatorId: string, lookbackHours = 72): Promise<{ fetched: number; processed: number; duplicates: number }> {
+  async reconcile(operatorId: string, lookbackHours = 72): Promise<{ fetched: number; processed: number; duplicates: number; errors: number }> {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
     const { rows } = await this.db.query<{ account_number: string; api_token_enc: string | null }>(
       `SELECT account_number, api_token_enc FROM operator_payment_accounts WHERE operator_id = $1 AND active`,
@@ -221,13 +246,19 @@ export class PaymentsService {
     const list = await this.sepay.listIncoming(this.box.open(acc.api_token_enc), acc.account_number, since);
     let processed = 0;
     let duplicates = 0;
+    let errors = 0;
     for (const t of list) {
       if (t.accountNumber !== acc.account_number) continue;
-      const r = await this.ingest(t, 'RECONCILE', t);
-      if (r.status === 'PROCESSED') processed++;
-      if (r.status === 'DUPLICATE') duplicates++;
+      // Một giao dịch lỗi không được chặn các giao dịch phía sau; lần đối soát sau sẽ thử lại.
+      try {
+        const r = await this.ingest(t, 'RECONCILE', t);
+        if (r.status === 'PROCESSED') processed++;
+        if (r.status === 'DUPLICATE') duplicates++;
+      } catch {
+        errors++;
+      }
     }
-    return { fetched: list.length, processed, duplicates };
+    return { fetched: list.length, processed, duplicates, errors };
   }
 
   /** Ghi sự kiện + khoản thu + phân bổ trong một transaction. Gửi lặp → DUPLICATE, không cộng tiền lần hai. */
@@ -236,7 +267,7 @@ export class PaymentsService {
     return this.db.tx(async (c) => {
       const { rows: acc } = await c.query<{ operator_id: string; code: string }>(
         `SELECT a.operator_id, o.code FROM operator_payment_accounts a JOIN operators o ON o.id = a.operator_id
-         WHERE a.provider = 'SEPAY' AND a.account_number = $1`,
+         WHERE a.provider = 'SEPAY' AND a.account_number = $1 AND a.active`,
         [t.accountNumber],
       );
       const account = acc[0];
@@ -274,6 +305,18 @@ export class PaymentsService {
         return { status: 'PROCESSED', paymentId: payment.id };
       }
       await c.query('UPDATE payments SET matched_booking_id = $2 WHERE id = $1', [payment.id, found[0]!.id]);
+      // Kế toán có thể đã xác nhận tay chính giao dịch này lúc SePay gián đoạn → không tự cộng lần hai.
+      const { rows: manual } = await c.query(
+        `SELECT 1 FROM payments
+         WHERE operator_id = $1 AND method = 'MANUAL_BANK' AND matched_booking_id = $2
+           AND ((reference_norm <> '' AND reference_norm = $3) OR (amount = $4 AND abs(extract(epoch FROM transaction_at - $5)) * 1000 < $6))
+         LIMIT 1`,
+        [account.operator_id, found[0]!.id, normRef(t.referenceCode), t.amount, paidAt, DUPLICATE_WINDOW_MS],
+      );
+      if (manual[0]) {
+        await this.flag(c, payment.id, 'POSSIBLE_DUPLICATE');
+        return { status: 'PROCESSED', paymentId: payment.id };
+      }
       await this.applyToBooking(c, payment, found[0]!.id, paidAt, null, true);
       return { status: 'PROCESSED', paymentId: payment.id };
     });
@@ -304,6 +347,26 @@ export class PaymentsService {
           operatorId, data.bookingCode,
         ]);
         if (!bk[0]) throw notFound('đơn');
+        if (data.method === 'MANUAL_BANK') {
+          // Mã giao dịch đã có trong sổ (SePay hoặc ghi tay) → chắc chắn trùng.
+          const { rows: sameRef } = await c.query(
+            `SELECT 1 FROM payments WHERE operator_id = $1 AND reference_norm = $2 AND reference_norm <> '' LIMIT 1`,
+            [operatorId, normRef(data.bankReference)],
+          );
+          if (sameRef[0]) throw new DomainError('CONFLICT', 'Mã giao dịch ngân hàng này đã được ghi nhận.');
+          // SePay đã ghi nhận cho đơn này một khoản cùng số tiền gần đây → có thể là cùng một lần chuyển.
+          const { rows: similar } = await c.query(
+            `SELECT 1 FROM payments WHERE operator_id = $1 AND method = 'BANK_TRANSFER' AND matched_booking_id = $2
+               AND amount = $3 AND abs(extract(epoch FROM transaction_at - $4)) * 1000 < $5 LIMIT 1`,
+            [operatorId, bk[0].id, data.amount, now, DUPLICATE_WINDOW_MS],
+          );
+          if (similar[0] && !data.confirmNotDuplicate) {
+            throw new DomainError(
+              'CONFLICT',
+              'SePay đã ghi nhận một khoản cùng số tiền cho đơn này. Kiểm tra sao kê; nếu đúng là lần chuyển khác, gửi lại với confirmNotDuplicate.',
+            );
+          }
+        }
         const { rows } = await c.query<PaymentRow>(
           `INSERT INTO payments (operator_id, method, amount, content, reference_code, transaction_at, received_at,
                                  matched_booking_id, recorded_by, idempotency_key, request_hash, review_note)
@@ -327,6 +390,9 @@ export class PaymentsService {
         const existing = await this.findByIdempotency(this.db, operatorId, key);
         if (existing) return this.replayManual(this.db, existing, requestHash);
       }
+      if (isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'payments_manual_bank_ref_key') {
+        throw new DomainError('CONFLICT', 'Mã giao dịch ngân hàng này đã được ghi nhận.');
+      }
       throw e;
     }
   }
@@ -349,6 +415,9 @@ export class PaymentsService {
       ]);
       const payment = rows[0];
       if (!payment) throw notFound('khoản thu');
+      if (payment.review_status === 'RESOLVED') {
+        throw new DomainError('CONFLICT', 'Khoản thu đã được đánh dấu xử lý xong (vd. đã hoàn tiền), không phân bổ thêm được.');
+      }
       const available = payment.amount - payment.allocated_amount;
       if (available <= 0) throw new DomainError('CONFLICT', 'Khoản thu này đã được phân bổ hết.');
       if (data.amount !== undefined && data.amount > available) {
