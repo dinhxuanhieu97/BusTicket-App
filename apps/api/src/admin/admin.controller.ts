@@ -1,9 +1,10 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AuditService } from '../audit/audit.service';
 import { AuthedRequest, AuthGuard, Perm } from '../auth/auth.guard';
 import { UsersService } from '../auth/users.service';
 import { DomainError } from '../common/errors';
+import { PaymentsService } from '../payments/payments.service';
 import { OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
@@ -25,6 +26,7 @@ export class AdminController {
     private readonly trips: TripsService,
     private readonly users: UsersService,
     private readonly audit: AuditService,
+    private readonly payments: PaymentsService,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
@@ -197,6 +199,73 @@ export class AdminController {
     const t = await this.trips.setStatus(operatorId, tripId, status);
     await this.log(req, operatorId, 'trip.status', 'trip', t.id, { status });
     return t;
+  }
+
+  // ---- Thanh toán (nhật ký ghi trong cùng transaction ở PaymentsService) ----
+
+  @Get('operators/:operatorId/payment-account')
+  @Perm('payment.configure')
+  async paymentAccount(@Param('operatorId') operatorId: string) {
+    await this.operators.getById(operatorId);
+    return { account: await this.payments.getAccount(operatorId) };
+  }
+
+  @Put('operators/:operatorId/payment-account')
+  @Perm('payment.configure')
+  async configurePaymentAccount(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
+    return { account: await this.payments.configureAccount(req.auth, operatorId, body as never) };
+  }
+
+  @Get('operators/:operatorId/payments')
+  @Perm('payment.read')
+  async listPayments(@Param('operatorId') operatorId: string, @Query('review') review?: string) {
+    await this.operators.getById(operatorId);
+    return { payments: await this.payments.list(operatorId, { review }) };
+  }
+
+  @Post('operators/:operatorId/payments/manual')
+  @Perm('payment.record')
+  recordManualPayment(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    if (!idempotencyKey) throw new DomainError('VALIDATION_FAILED', 'Thiếu header Idempotency-Key.', { field: 'Idempotency-Key' });
+    return this.payments.recordManual(req.auth, operatorId, body as never, idempotencyKey);
+  }
+
+  @Post('operators/:operatorId/payments/reconcile')
+  @HttpCode(200)
+  @Perm('payment.manage')
+  async reconcilePayments(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string) {
+    const result = await this.payments.reconcile(operatorId);
+    await this.log(req, operatorId, 'payment.reconcile', 'operator', operatorId, result);
+    return result;
+  }
+
+  @Post('operators/:operatorId/payments/:paymentId/allocate')
+  @HttpCode(200)
+  @Perm('payment.manage')
+  allocatePayment(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: unknown,
+  ) {
+    return this.payments.allocate(req.auth, operatorId, paymentId, body as never);
+  }
+
+  @Post('operators/:operatorId/payments/:paymentId/resolve')
+  @HttpCode(200)
+  @Perm('payment.manage')
+  resolvePayment(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: unknown,
+  ) {
+    return this.payments.resolve(req.auth, operatorId, paymentId, body as never);
   }
 
   // ---- Nhật ký -------------------------------------------------------------

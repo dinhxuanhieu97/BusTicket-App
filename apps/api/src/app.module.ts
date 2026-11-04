@@ -4,6 +4,8 @@ import { PhoneVerificationService } from './abuse/phone-verification.service';
 import { RateLimiter } from './abuse/rate-limiter';
 import { NotConfiguredSmsSender, SmsSender } from './abuse/sms-sender';
 import { AdminController } from './admin/admin.controller';
+import { PaymentsService } from './payments/payments.service';
+import { HttpSepayTransactionsClient, SepayTransactionsClient } from './payments/sepay';
 import { AuditService } from './audit/audit.service';
 import { AuthController } from './auth/auth.controller';
 import { AuthGuard } from './auth/auth.guard';
@@ -26,6 +28,7 @@ export interface AppOptions {
   clock?: Clock;
   abuse?: Partial<AbuseConfig>;
   smsSender?: SmsSender;
+  sepayClient?: SepayTransactionsClient;
 }
 
 @Module({})
@@ -43,6 +46,8 @@ export class AppModule {
         { provide: AbuseConfig, useValue: new AbuseConfig(opts.abuse) },
         { provide: SmsSender, useValue: opts.smsSender ?? new NotConfiguredSmsSender() },
         RateLimiter,
+        { provide: SepayTransactionsClient, useValue: opts.sepayClient ?? new HttpSepayTransactionsClient() },
+        PaymentsService,
         PhoneVerificationService,
         Db,
         SeatLayoutsService,

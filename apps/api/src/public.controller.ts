@@ -4,6 +4,7 @@ import { PhoneVerificationService } from './abuse/phone-verification.service';
 import { z } from 'zod';
 import { DomainError, notFound } from './common/errors';
 import { BookingsService } from './bookings/bookings.service';
+import { PaymentsService } from './payments/payments.service';
 import { TripsService } from './trips/trips.service';
 
 const uuid = z.string().uuid();
@@ -20,6 +21,7 @@ export class PublicController {
     private readonly trips: TripsService,
     private readonly bookings: BookingsService,
     private readonly phones: PhoneVerificationService,
+    private readonly payments: PaymentsService,
   ) {}
 
   @Get('operators/:operatorCode/trips')
@@ -60,6 +62,24 @@ export class PublicController {
   @HttpCode(200)
   verifyPhone(@Body() body: unknown) {
     return this.phones.verify(body as never);
+  }
+
+  /** Thông tin chuyển khoản + ảnh QR cho đơn (số tiền cần trả lúc này, nội dung = mã đơn). */
+  @Get('bookings/:code/payment')
+  paymentInstructions(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+    if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
+    return this.payments.paymentInstructions(code, token);
+  }
+
+  /**
+   * Webhook SePay (xác thực "API Key": header `Authorization: Apikey <key>`). Trả `{"success": true}` với
+   * HTTP 200 kể cả khi giao dịch trùng/không liên quan để SePay không gửi lại; lỗi xác thực → 401.
+   */
+  @Post('webhooks/payments/sepay')
+  @HttpCode(200)
+  async sepayWebhook(@Body() body: unknown, @Headers('authorization') authorization?: string) {
+    const result = await this.payments.handleSepayWebhook(authorization, body);
+    return { success: true, status: result.status };
   }
 
   /** Token đi trong header, không đặt trên URL để không bị ghi log (PNTicketDocs mục 11). */

@@ -13,7 +13,7 @@ import { normalizeVnPhone } from '../common/phone';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { OperatorsService } from '../operators/operators.service';
 import { SEAT_CODE } from '../seat-layouts/layout-parser';
-import { priceItems } from './pricing';
+import { depositAmount, priceItems } from './pricing';
 import { TokenSecret } from './token-secret';
 
 export { TokenSecret };
@@ -45,6 +45,12 @@ export interface BookingView {
   tripId: string;
   holdExpiresAt: string | null;
   totalAmount: number;
+  /** Số tiền phải trả để xác nhận vé (cọc hoặc toàn bộ). */
+  depositAmount: number;
+  paidAmount: number;
+  paymentStatus: string;
+  /** Còn phải trả để xác nhận vé (khi đang giữ chỗ) hoặc để trả đủ (khi đã xác nhận). */
+  amountDueNow: number;
   items: { seatCode: string; occupancy: number; infantCount: number; unitPrice: number; infantPrice: number; lineTotal: number }[];
 }
 
@@ -62,9 +68,15 @@ interface BookingRow {
   trip_id: string;
   hold_expires_at: Date | null;
   total_amount: number;
+  deposit_amount: number;
+  paid_amount: number;
+  payment_status: string;
   request_hash: string | null;
   access_token_version: number;
 }
+
+const BOOKING_COLUMNS =
+  'id, code, status, trip_id, hold_expires_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version';
 
 const MAX_CODE_ATTEMPTS = 5;
 
@@ -220,12 +232,12 @@ export class BookingsService {
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS && !booking; attempt++) {
       const { rows } = await c.query<BookingRow>(
         `INSERT INTO bookings (operator_id, trip_id, code, status, hold_expires_at, contact_name, contact_phone,
-                               total_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at)
-         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $11)
+                               total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at)
+         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
          ON CONFLICT (code) DO NOTHING
-         RETURNING id, code, status, trip_id, hold_expires_at, total_amount, request_hash, access_token_version`,
+         RETURNING ${BOOKING_COLUMNS}`,
         [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, priced.total,
-          JSON.stringify(policy), key, requestHash, now],
+          depositAmount(priced.total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now],
       );
       booking = rows[0];
     }
@@ -287,7 +299,7 @@ export class BookingsService {
   /** Xem đơn bằng mã đơn + token truy cập (không dùng mã tăng dần hay chỉ SĐT). */
   async getByCode(code: string, accessToken: string): Promise<BookingView> {
     const { rows } = await this.db.query<BookingRow>(
-      `SELECT id, code, status, trip_id, hold_expires_at, total_amount, request_hash, access_token_version
+      `SELECT ${BOOKING_COLUMNS}
        FROM bookings WHERE code = $1`,
       [code],
     );
@@ -300,7 +312,7 @@ export class BookingsService {
 
   private async findByKey(q: Queryable, operatorId: string, key: string): Promise<BookingRow | undefined> {
     const { rows } = await q.query<BookingRow>(
-      `SELECT id, code, status, trip_id, hold_expires_at, total_amount, request_hash, access_token_version
+      `SELECT ${BOOKING_COLUMNS}
        FROM bookings WHERE operator_id = $1 AND idempotency_key = $2`,
       [operatorId, key],
     );
@@ -339,6 +351,10 @@ export class BookingsService {
       tripId: b.trip_id,
       holdExpiresAt: b.hold_expires_at ? b.hold_expires_at.toISOString() : null,
       totalAmount: b.total_amount,
+      depositAmount: b.deposit_amount,
+      paidAmount: b.paid_amount,
+      paymentStatus: b.payment_status,
+      amountDueNow: Math.max(0, (b.status === 'HOLDING' ? b.deposit_amount : b.total_amount) - b.paid_amount),
       items: rows.map((r) => ({
         seatCode: r.seat_code,
         occupancy: r.occupancy,

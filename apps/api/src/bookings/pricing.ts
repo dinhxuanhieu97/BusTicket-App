@@ -6,6 +6,15 @@ export const MAX_UNIT_PRICE = 20_000_000;
 /** Trần tổng một đơn (VND), thấp hơn giới hạn `int` của PostgreSQL. */
 export const MAX_BOOKING_TOTAL = 2_000_000_000;
 
+/**
+ * Tiền cọc cần trả để xác nhận vé: làm tròn lên bội số 1.000đ, không vượt tổng tiền.
+ * 100% = trả đủ.
+ */
+export function depositAmount(total: number, percent: number): number {
+  if (percent >= 100) return total;
+  return Math.min(total, Math.ceil((total * percent) / 100 / 1000) * 1000);
+}
+
 export interface RequestedItem {
   seatCode: string;
   occupancy: number;

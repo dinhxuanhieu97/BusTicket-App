@@ -6,6 +6,10 @@ import { PhoneVerificationService } from '../src/abuse/phone-verification.servic
 import { RateLimiter } from '../src/abuse/rate-limiter';
 import { CapturingSmsSender } from '../src/abuse/sms-sender';
 import { BookingsService, TokenSecret } from '../src/bookings/bookings.service';
+import { AuditService } from '../src/audit/audit.service';
+import { SecretBox } from '../src/auth/totp';
+import { PaymentsService } from '../src/payments/payments.service';
+import { BankTransfer, SepayTransactionsClient } from '../src/payments/sepay';
 import { FixedClock } from '../src/common/clock';
 import { DomainError } from '../src/common/errors';
 import { Db, DbConfig } from '../src/db/db';
@@ -43,6 +47,19 @@ export interface Services {
   limiter: RateLimiter;
   phones: PhoneVerificationService;
   sms: CapturingSmsSender;
+  payments: PaymentsService;
+  sepay: FakeSepayClient;
+}
+
+/** Nguồn giao dịch giả cho đối soát (thay API SePay thật). */
+export class FakeSepayClient extends SepayTransactionsClient {
+  transfers: BankTransfer[] = [];
+  calls: { token: string; account: string; since: Date }[] = [];
+
+  async listIncoming(apiToken: string, accountNumber: string, since: Date): Promise<BankTransfer[]> {
+    this.calls.push({ token: apiToken, account: accountNumber, since });
+    return this.transfers.filter((t) => t.accountNumber === accountNumber && t.transactionAt >= since);
+  }
 }
 
 /**
@@ -70,7 +87,9 @@ export function buildServices(clock = new FixedClock(T0), abuse: Partial<AbuseCo
   const secret = new TokenSecret(TOKEN_SECRET);
   const phones = new PhoneVerificationService(db, clock, config, limiter, sms, secret);
   const bookings = new BookingsService(db, operators, clock, secret, limiter, config, phones);
-  return { db, clock, layouts, operators, vehicles, trips, bookings, limiter, phones, sms };
+  const sepay = new FakeSepayClient();
+  const payments = new PaymentsService(db, clock, new AuditService(db), new SecretBox(AUTH_SECRET), secret, sepay);
+  return { db, clock, layouts, operators, vehicles, trips, bookings, limiter, phones, sms, payments, sepay };
 }
 
 export const LIMO_FARES = [

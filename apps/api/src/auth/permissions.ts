@@ -16,21 +16,28 @@ export const PERMISSIONS = [
   'trip.read',
   'trip.write',
   'audit.read',
+  'payment.configure', //     tài khoản nhận tiền + khóa webhook SePay
+  'payment.read', //          xem sổ thu, khoản cần kiểm tra
+  'payment.record', //        ghi nhận tiền mặt / chuyển khoản thấy trong app ngân hàng
+  'payment.manage', //        phân bổ tay, đánh dấu đã xử lý, chạy đối soát
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 /** Quyền dùng để setup nhà xe — quản trị nền tảng được làm thay chủ xe trước khi hoạt động (SETUP-NHA-XE.md mục 4). */
 const SETUP: Permission[] = [
   'user.manage', 'policy.read', 'policy.write', 'fleet.read', 'fleet.write',
-  'route.read', 'route.write', 'trip.read', 'trip.write', 'audit.read',
+  'route.read', 'route.write', 'trip.read', 'trip.write', 'audit.read', 'payment.configure',
 ];
+/** Thao tác tiền: chỉ người của nhà xe (quản trị nền tảng không động vào tiền của nhà xe). */
+const MONEY: Permission[] = ['payment.read', 'payment.record', 'payment.manage'];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   PLATFORM_ADMIN: new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write', ...SETUP]),
-  OWNER: new Set<Permission>(SETUP),
+  OWNER: new Set<Permission>([...SETUP, ...MONEY]),
   DISPATCHER: new Set<Permission>(['policy.read', 'fleet.read', 'fleet.write', 'route.read', 'route.write', 'trip.read', 'trip.write']),
-  SELLER: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read']),
-  ACCOUNTANT: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'audit.read']),
+  // Bán vé tại quầy được ghi nhận tiền mặt khách trả cho đơn; không phân bổ tay/xử lý ngoại lệ.
+  SELLER: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'payment.read', 'payment.record']),
+  ACCOUNTANT: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'audit.read', ...MONEY]),
   // Phụ xe chỉ xem chuyến được giao — làm ở T8 (danh sách khách theo chuyến).
   ASSISTANT: new Set<Permission>(),
 };

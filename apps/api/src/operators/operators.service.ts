@@ -94,8 +94,10 @@ export class OperatorsService {
       child_policy: OperatorPolicy['childPolicy'];
       max_active_holds_per_phone: number;
       require_phone_otp: boolean;
+      deposit_percent: number;
     }>(
-      `SELECT version, hold_minutes, max_units_per_booking, child_policy, max_active_holds_per_phone, require_phone_otp
+      `SELECT version, hold_minutes, max_units_per_booking, child_policy, max_active_holds_per_phone, require_phone_otp,
+              deposit_percent
        FROM operator_policies
        WHERE operator_id = $1 ORDER BY version DESC LIMIT 1`,
       [operatorId],
@@ -110,6 +112,7 @@ export class OperatorsService {
       childPolicy: r.child_policy,
       maxActiveHoldsPerPhone: r.max_active_holds_per_phone,
       requirePhoneOtp: r.require_phone_otp,
+      depositPercent: r.deposit_percent,
     };
   }
 
@@ -130,6 +133,7 @@ export class OperatorsService {
         ...data,
         maxActiveHoldsPerPhone: data.maxActiveHoldsPerPhone ?? current.maxActiveHoldsPerPhone,
         requirePhoneOtp: data.requirePhoneOtp ?? current.requirePhoneOtp,
+        depositPercent: data.depositPercent ?? current.depositPercent,
       };
       if (next.requirePhoneOtp && !this.sms.configured) {
         throw new DomainError(
@@ -146,10 +150,10 @@ export class OperatorsService {
   private async insertPolicy(c: Queryable, operatorId: string, version: number, p: PolicyInput): Promise<void> {
     await c.query(
       `INSERT INTO operator_policies (operator_id, version, hold_minutes, max_units_per_booking, child_policy,
-                                      max_active_holds_per_phone, require_phone_otp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                                      max_active_holds_per_phone, require_phone_otp, deposit_percent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [operatorId, version, p.holdMinutes, p.maxUnitsPerBooking, JSON.stringify(p.childPolicy),
-        p.maxActiveHoldsPerPhone, p.requirePhoneOtp],
+        p.maxActiveHoldsPerPhone, p.requirePhoneOtp, p.depositPercent],
     );
   }
 }

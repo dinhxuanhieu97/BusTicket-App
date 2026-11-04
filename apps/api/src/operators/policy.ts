@@ -20,6 +20,8 @@ export const policyInputSchema = z
     maxActiveHoldsPerPhone: z.number().int().min(1).max(20).optional(),
     /** Chế độ cao điểm: bắt buộc xác thực SĐT bằng OTP trước khi giữ chỗ. Bỏ trống = giữ nguyên. */
     requirePhoneOtp: z.boolean().optional(),
+    /** Phần trăm cọc để xác nhận vé (100 = trả đủ). Bỏ trống = giữ nguyên. */
+    depositPercent: z.number().int().min(1).max(100).optional(),
   })
   .strict();
 /** Chính sách đầy đủ (mọi trường bắt buộc) — dạng lưu trong DB. */
@@ -36,4 +38,5 @@ export const DEFAULT_POLICY: PolicyInput = {
   childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false },
   maxActiveHoldsPerPhone: 2,
   requirePhoneOtp: false,
+  depositPercent: 100,
 };
