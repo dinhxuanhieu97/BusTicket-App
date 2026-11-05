@@ -1,51 +1,168 @@
-import { useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQueries } from "@tanstack/react-query";
 import { copy } from "@/constants/copy";
 import { EmptyState } from "@/components/booking/empty-state";
 import { StatusBadge } from "@/components/booking/status-badge";
-import { ChevronRightIcon } from "@/components/common/vectors";
-import { useBooking } from "@/services/booking/booking.queries";
+import { Journey } from "@/components/booking/journey";
+import { bookingQueryOptions } from "@/services/booking/booking.queries";
 import { useMyBookings, type SavedBooking } from "@/stores/my-bookings.store";
+import type { BookingView } from "@/types/api.types";
+import { needsPayment } from "@/utils/booking-status";
 import { formatVnDate, formatVnTime } from "@/utils/time";
 
 export default function MyBookingsPage() {
   const navigate = useNavigate();
   const bookings = useMyBookings((s) => s.bookings);
-
-  if (bookings.length === 0) {
-    return (
-      <EmptyState
-        title={copy.myBookings.empty}
-        hint={copy.myBookings.emptyHint}
-        actionLabel={copy.myBookings.bookNow}
-        onAction={() => navigate("/")}
-      />
+  const [pendingOnly, setPendingOnly] = useState(false);
+  const queries = useQueries({
+    queries: bookings.map((b) => bookingQueryOptions(b.code, b.accessToken)),
+  });
+  // Keep unresolved/error rows visible: absence of a response does not mean a paid booking.
+  const visible = bookings
+    .map((saved, index) => ({ saved, query: queries[index] }))
+    .filter(
+      ({ query }) =>
+        !pendingOnly ||
+        query.isError ||
+        !query.data ||
+        needsPayment(query.data),
     );
-  }
 
   return (
-    <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
-      {bookings.map((b) => (
-        <BookingRow key={b.code} saved={b} onOpen={() => navigate(`/booking/${b.code}`)} />
-      ))}
-    </div>
+    <>
+      <div
+        className="pn-tabs"
+        role="tablist"
+        aria-label={copy.myBookings.title}
+      >
+        {[false, true].map((pending) => (
+          <button
+            key={String(pending)}
+            id={pending ? "pending-tab" : "all-tab"}
+            role="tab"
+            type="button"
+            aria-selected={pendingOnly === pending}
+            aria-controls="booking-list"
+            onClick={() => setPendingOnly(pending)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "ArrowLeft" ||
+                event.key === "ArrowRight" ||
+                event.key === "Home" ||
+                event.key === "End"
+              ) {
+                event.preventDefault();
+                const next =
+                  event.key === "Home"
+                    ? false
+                    : event.key === "End"
+                      ? true
+                      : !pending;
+                setPendingOnly(next);
+                document
+                  .getElementById(next ? "pending-tab" : "all-tab")
+                  ?.focus();
+              }
+            }}
+            tabIndex={pendingOnly === pending ? 0 : -1}
+          >
+            {pending ? copy.myBookings.pending : copy.myBookings.all}
+          </button>
+        ))}
+      </div>
+      <div
+        className="pn-page"
+        id="booking-list"
+        role="tabpanel"
+        aria-labelledby={pendingOnly ? "pending-tab" : "all-tab"}
+      >
+        {visible.length === 0 ? (
+          <EmptyState
+            title={
+              pendingOnly && bookings.length
+                ? copy.myBookings.noPending
+                : copy.myBookings.empty
+            }
+            hint={copy.myBookings.emptyHint}
+            actionLabel={copy.myBookings.bookNow}
+            onAction={() => navigate("/")}
+          />
+        ) : (
+          <>
+            {visible.map(({ saved, query }) => (
+              <BookingRow
+                key={saved.code}
+                saved={saved}
+                booking={query.data}
+                failed={query.isError}
+              />
+            ))}
+            <p className="pn-meta">{copy.myBookings.emptyHint}</p>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
-function BookingRow({ saved, onOpen }: { saved: SavedBooking; onOpen: () => void }) {
-  const { data } = useBooking(saved.code, saved.accessToken);
+function BookingRow({
+  saved,
+  booking,
+  failed,
+}: {
+  saved: SavedBooking;
+  booking?: BookingView;
+  failed: boolean;
+}) {
   return (
-    <button type="button" onClick={onOpen} className="flex w-full items-center gap-3 rounded-xl bg-elevation-01 p-4 text-left">
-      <div className="flex flex-1 flex-col gap-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-normal-sb tracking-wider">{saved.code}</span>
-          {data && <StatusBadge status={data.status} />}
-        </div>
-        <div className="text-small">{saved.tripName}</div>
-        <div className="text-xxsmall text-text-secondary">
-          {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)} · {saved.seatCodes.join(", ")}
-        </div>
+    <article className="pn-card">
+      <div className="pn-row pn-ticket-heading">
+        <span className="pn-ticket-code">
+          {copy.booking.code} · {saved.code}
+        </span>
+        {booking && <StatusBadge status={booking.status} />}
       </div>
-      <ChevronRightIcon className="size-4 text-text-disabled" />
-    </button>
+      <Journey route={saved.route} fallback={saved.tripName} />
+      <div className="pn-date">
+        {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)}
+      </div>
+      <div className="pn-meta">{saved.tripName}</div>
+      <div aria-label={copy.checkout.summary}>
+        {saved.seatCodes.map((code) => (
+          <span className="pn-seat" key={code}>
+            {code}
+          </span>
+        ))}
+      </div>
+      {saved.inbound && (
+        <div className="pn-meta">
+          Lượt về · {saved.inbound.route} ·{" "}
+          {formatVnDate(saved.inbound.departAt)} ·{" "}
+          {formatVnTime(saved.inbound.departAt)} · Chỗ{" "}
+          {saved.inbound.seatCodes.join(", ")}
+        </div>
+      )}
+      {(failed || !booking) && (
+        <p className="pn-meta mt-3" role="status">
+          {failed ? copy.myBookings.statusError : copy.myBookings.statusLoading}
+        </p>
+      )}
+      <div className="pn-row pn-ticket-foot">
+        <span className="pn-meta">
+          {copy.myBookings.seats(
+            saved.seatCodes.length + (saved.inbound?.seatCodes.length ?? 0),
+          )}
+        </span>
+        <Link
+          className="pn-link"
+          to={`/booking/${saved.code}`}
+          aria-label={`${copy.myBookings.details} ${saved.code}`}
+        >
+          {copy.myBookings.details}
+          <span aria-hidden="true"> →</span>
+        </Link>
+      </div>
+    </article>
   );
 }

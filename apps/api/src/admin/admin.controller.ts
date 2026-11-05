@@ -162,6 +162,15 @@ export class AdminController {
     return { routes: await this.trips.listRoutes(operatorId) };
   }
 
+  @Put('operators/:operatorId/routes/:routeId/stops')
+  @Perm('route.write')
+  async saveStops(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string,
+    @Param('routeId') routeId: string, @Body() body: unknown) {
+    const stops = await this.trips.saveStops(operatorId, routeId, body);
+    await this.log(req, operatorId, 'route.stops.update', 'route', routeId);
+    return stops;
+  }
+
   @Post('operators/:operatorId/routes')
   @Perm('route.write')
   async createRoute(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {

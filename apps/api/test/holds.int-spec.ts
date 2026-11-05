@@ -1,4 +1,4 @@
-import { buildServices, errorCode, newKey, resetDatabase, seedOperatorWithTrips, Services, T0 } from './helpers';
+import { LIMO_FARES, buildServices, errorCode, newKey, resetDatabase, seedOperatorWithTrips, Services, T0 } from './helpers';
 
 let s: Services;
 let seed: Awaited<ReturnType<typeof seedOperatorWithTrips>>;
@@ -300,4 +300,24 @@ describe('createHold — validation and sale window', () => {
   it('returns NOT_FOUND for an unknown trip', async () => {
     expect(await errorCode(hold([{ seatCode: 'A1' }], '00000000-0000-4000-8000-000000000000'))).toBe('NOT_FOUND');
   });
+});
+
+it('holds both directions under one code or neither when a return seat is taken', async () => {
+  const other = await seedOperatorWithTrips(s, 'RT');
+  const route = await s.trips.createRoute(other.op.id, { code: 'HA-HCM', origin: 'Hoài Ân', destination: 'TP.HCM' });
+  const inbound = await s.trips.createTrip(other.op.id, { routeId: route.id, vehicleId: other.limo.id,
+    name: 'Lượt về', departAt: new Date('2027-02-03T11:00:00Z'), salesCloseAt: new Date('2027-02-03T10:00:00Z'),
+    salesOpenAt: new Date('2027-01-01T00:00:00Z'), fares: LIMO_FARES });
+  const request = { ...contact, tripId: other.limoTrip.id, items: [{seatCode: 'A2'}],
+    returnLeg: {tripId: inbound.id, items: [{seatCode: 'A2'}]} };
+  const key = newKey();
+  const result = await s.bookings.createHold(request, key);
+  expect(result.booking.totalAmount).toBe(900000);
+  expect(new Set(result.booking.items.map(i => i.tripId))).toEqual(new Set([request.tripId, inbound.id]));
+  expect((await s.bookings.createHold(request, key)).booking.code).toBe(result.booking.code);
+  expect(await errorCode(s.bookings.createHold({...request, items: [{seatCode:'A3'}]},newKey()))).toBe('SEAT_UNAVAILABLE');
+  expect(await seatStatus(request.tripId, 'A3')).toBe('AVAILABLE');
+  s.clock.set(new Date(T0.getTime()+11*60_000));
+  await s.bookings.createHold({...contact, tripId: inbound.id, items:[{seatCode:'A2'}]}, newKey());
+  expect(await seatStatus(request.tripId, 'A2')).toBe('AVAILABLE');
 });

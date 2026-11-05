@@ -9,6 +9,17 @@ import { Db, isPgError, PG_UNIQUE_VIOLATION } from '../db/db';
 import { MAX_UNIT_PRICE } from '../bookings/pricing';
 import { OperatorsService } from '../operators/operators.service';
 
+const stop = z.object({
+  name: z.string().trim().min(1).max(160),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  day: z.number().int().min(0).max(7),
+}).strict();
+const stopList = z.array(stop).max(150).refine(list => list.every((s,i) => {
+  const previous = list[i-1];
+  return !previous || s.day > previous.day || (s.day === previous.day && s.time >= previous.time);
+}), 'Các điểm cần theo thứ tự thời gian.');
+const stopsSchema = z.object({pickup: stopList, dropoff: stopList}).strict();
+
 export const createRouteSchema = z
   .object({
     code: z.string().regex(/^[A-Z0-9-]{2,32}$/),
@@ -170,10 +181,19 @@ export class TripsService {
     });
   }
 
+  async saveStops(operatorId: string, routeId: string, input: unknown) {
+    const stops = stopsSchema.parse(input);
+    if (!isUuid(routeId)) throw notFound('tuyến');
+    const result = await this.db.query('UPDATE routes SET stops=$3::jsonb WHERE operator_id=$1 AND id=$2 RETURNING id',
+      [operatorId, routeId, JSON.stringify(stops)]);
+    if (!result.rows.length) throw notFound('tuyến');
+    return stops;
+  }
+
   async listRoutes(operatorId: string) {
     if (!isUuid(operatorId)) return [];
     const { rows } = await this.db.query(
-      'SELECT id, code, origin, destination FROM routes WHERE operator_id = $1 ORDER BY code',
+      'SELECT id, code, origin, destination, stops FROM routes WHERE operator_id = $1 ORDER BY code',
       [operatorId],
     );
     return rows;
@@ -260,6 +280,30 @@ export class TripsService {
     }));
   }
 
+  /** One row per bookable route. Pick a departure that actually offers the displayed fare. */
+  async discover(operatorCode: string) {
+    const op = await this.operators.getByCode(operatorCode);
+    const { rows } = await this.db.query<{
+      code: string; origin: string; destination: string; depart_at: Date; from_price: number | null; count: number;
+    }>(
+      `WITH bookable AS (
+         SELECT r.code, r.origin, r.destination, t.depart_at,
+                (SELECT MIN(f.price) FROM trip_fares f WHERE f.trip_id = t.id AND f.occupancy = 1) AS price
+           FROM trips t JOIN routes r ON r.id = t.route_id
+          WHERE t.operator_id = $1 AND t.status = 'OPEN' AND t.depart_at > $2
+            AND t.sales_open_at <= $2 AND t.sales_close_at > $2
+            AND EXISTS (SELECT 1 FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
+                         WHERE ts.trip_id = t.id AND (${SEAT_STATUS_SQL}) = 'AVAILABLE')
+       )
+       SELECT code, origin, destination, MIN(price)::int AS from_price, COUNT(*)::int AS count,
+              (array_agg(depart_at ORDER BY price NULLS LAST, depart_at))[1] AS depart_at
+         FROM bookable GROUP BY code, origin, destination ORDER BY from_price NULLS LAST, code`,
+      [op.id, this.clock.now()],
+    );
+    return rows.map(r => ({ code: r.code, origin: r.origin, destination: r.destination,
+      fromPrice: r.from_price, tripCount: r.count, departAt: r.depart_at.toISOString() }));
+  }
+
   /** Sơ đồ chỗ công khai: chỉ mã chỗ, trạng thái, sức chứa và giá — không có dữ liệu khách. */
   async seatMap(tripId: string) {
     if (!isUuid(tripId)) throw notFound('chuyến');
@@ -267,12 +311,12 @@ export class TripsService {
     const { rows: trips } = await this.db.query<{
       id: string; operator_id: string; name: string; depart_at: Date; status: string; sales_open_at: Date; sales_close_at: Date;
       definition: { floors: { code: string; label: string; rows: string[] }[] }; layout_name: string; unit: string; kind: string;
-      vehicle_name: string; vehicle_code: string;
+      stops: z.output<typeof stopsSchema>; vehicle_name: string; vehicle_code: string;
     }>(
-      `SELECT t.id, t.operator_id, t.name, t.depart_at, t.status, t.sales_open_at, t.sales_close_at,
+      `SELECT r.stops, t.id, t.operator_id, t.name, t.depart_at, t.status, t.sales_open_at, t.sales_close_at,
               sl.definition, sl.name AS layout_name, sl.unit, sl.kind,
               v.name AS vehicle_name, v.code AS vehicle_code
-       FROM trips t JOIN seat_layouts sl ON sl.id = t.seat_layout_id JOIN vehicles v ON v.id = t.vehicle_id
+       FROM trips t JOIN routes r ON r.id=t.route_id JOIN seat_layouts sl ON sl.id = t.seat_layout_id JOIN vehicles v ON v.id = t.vehicle_id
        WHERE t.id = $1 AND t.status <> 'DRAFT'`,
       [tripId],
     );
@@ -292,6 +336,7 @@ export class TripsService {
     const onSale = t.status === 'OPEN' && t.sales_open_at <= now && now < t.sales_close_at;
     const policy = await this.operators.currentPolicy(t.operator_id);
     return {
+      stops: t.stops,
       trip: { id: t.id, name: t.name, departAt: t.depart_at.toISOString(), onSale },
       /** Cho giao diện biết cần làm bước OTP trước khi giữ chỗ hay không, và giới hạn mỗi đơn. */
       booking: {

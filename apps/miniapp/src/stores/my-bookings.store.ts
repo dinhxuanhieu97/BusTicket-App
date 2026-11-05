@@ -9,6 +9,7 @@ export interface SavedBooking {
   code: string;
   accessToken: string;
   tripId: string;
+  inbound?: { tripId: string; route: string; departAt: string; seatCodes: string[] };
   tripName: string;
   departAt: string;
   route: string;
@@ -23,7 +24,7 @@ interface MyBookingsState {
 }
 
 /** localStorage có thể bị chặn hoặc ném lỗi (chế độ riêng tư, webview hạn chế): khi đó chỉ giữ trong bộ nhớ. */
-const safeStorage: StateStorage = {
+export const safeStorage: StateStorage = {
   getItem: (k) => {
     try {
       return globalThis.localStorage?.getItem(k) ?? null;

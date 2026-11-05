@@ -31,6 +31,12 @@ export class PublicController {
     return { trips: await this.trips.search(operatorCode, date, route || undefined) };
   }
 
+  @Get('operators/:operatorCode/open-routes')
+  async openRoutes(@Param('operatorCode') code: string) {
+    if (!/^[A-Z]{2,4}$/.test(code)) throw notFound('nhà xe');
+    return { routes: await this.trips.discover(code) };
+  }
+
   @Get('trips/:tripId/seats')
   seatMap(@Param('tripId') tripId: string) {
     return this.trips.seatMap(parseUuid(tripId, 'chuyến'));

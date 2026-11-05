@@ -1,163 +1,286 @@
-import { useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { Spinner, useSnackbar } from "zmp-ui";
 import { copy, errorMessage } from "@/constants/copy";
 import { EmptyState } from "@/components/booking/empty-state";
 import { StatusBadge } from "@/components/booking/status-badge";
+import { Journey } from "@/components/booking/journey";
 import { useNow } from "@/hooks/use-now";
-import { useBooking, usePaymentInstructions } from "@/services/booking/booking.queries";
+import {
+  useBooking,
+  usePaymentInstructions,
+} from "@/services/booking/booking.queries";
 import { useMyBookings } from "@/stores/my-bookings.store";
 import type { BookingView, PaymentInstructions } from "@/types/api.types";
+import { needsPayment } from "@/utils/booking-status";
 import { formatCurrency } from "@/utils/format";
-import { formatCountdown, formatVnDate, formatVnTime, secondsLeft } from "@/utils/time";
+import {
+  formatCountdown,
+  formatVnDate,
+  formatVnTime,
+  secondsLeft,
+} from "@/utils/time";
 
 export default function BookingDetailPage() {
+  const navigate = useNavigate();
   const { code = "" } = useParams();
   const saved = useMyBookings((s) => s.bookings.find((b) => b.code === code));
-  const { data: booking, isLoading, isError, error, refetch } = useBooking(code, saved?.accessToken);
+  const {
+    data: booking,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useBooking(code, saved?.accessToken);
   const holding = booking?.status === "HOLDING";
   const now = useNow(holding);
   const left = secondsLeft(booking?.holdExpiresAt ?? null, now);
-  const payable = !!booking && booking.amountDueNow > 0;
-  const payment = usePaymentInstructions(code, saved?.accessToken, payable);
+  const payable = !!booking && needsPayment(booking);
+  const payment = usePaymentInstructions(
+    code,
+    saved?.accessToken,
+    payable,
+    booking?.amountDueNow,
+  );
 
-  // Hết giờ giữ chỗ trên đồng hồ: hỏi lại máy chủ (tiền có thể vừa về đúng lúc).
   useEffect(() => {
     if (holding && left === 0) void refetch();
   }, [holding, left, refetch]);
 
-  if (!saved) return <EmptyState title={copy.booking.notFound} />;
-  if (isLoading) {
+  if (!saved)
     return (
-      <div className="flex justify-center py-10">
-        <Spinner />
+      <div className="pn-page">
+        <EmptyState
+          title={copy.booking.notFound}
+          actionLabel={copy.myBookings.title}
+          onAction={() => navigate("/my-bookings")}
+        />
       </div>
     );
-  }
-  if (isError || !booking) {
-    return <EmptyState title={errorMessage(error)} actionLabel={copy.common.retry} onAction={() => void refetch()} />;
-  }
+  if (isLoading)
+    return (
+      <div className="pn-loading" role="status">
+        <Spinner />
+        {copy.common.loading}
+      </div>
+    );
+  if (isError || !booking)
+    return (
+      <div className="pn-page">
+        <EmptyState
+          title={errorMessage(error)}
+          actionLabel={copy.common.retry}
+          onAction={() => void refetch()}
+        />
+      </div>
+    );
 
   return (
-    <div className="flex flex-col gap-3 px-4 pb-8 pt-2">
-      <section className="flex flex-col gap-2 rounded-xl bg-elevation-01 p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-xxsmall text-text-secondary">{copy.booking.code}</span>
+    <div className="pn-page">
+      {holding && (
+        <div className="pn-notice pn-row">
+          <span>{copy.booking.holdLeft}</span>
+          <strong role="timer" aria-label={copy.booking.holdLeft}>
+            {formatCountdown(left)}
+          </strong>
+        </div>
+      )}
+      <section className="pn-card" aria-label={copy.booking.title}>
+        <div className="pn-row pn-ticket-heading">
+          <span className="pn-ticket-code">
+            {copy.booking.code} · {booking.code}
+          </span>
           <StatusBadge status={booking.status} />
         </div>
-        <div className="text-xxlarge-m tracking-wider">{booking.code}</div>
-        <div className="text-small-m">{saved.tripName}</div>
-        <div className="text-xxsmall text-text-secondary">
+        <Journey route={saved.route} fallback={saved.tripName} />
+        <div className="pn-date">
           {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)}
-          {saved.route ? ` · ${saved.route}` : ""}
         </div>
-        {holding && (
-          <div className="mt-1 flex items-center justify-between rounded-lg bg-yellow100 px-3 py-2 text-small text-yellow700">
-            <span>{copy.booking.holdLeft}</span>
-            <span className="text-large-sb tabular-nums">{formatCountdown(left)}</span>
-          </div>
-        )}
+        <div className="pn-meta">{saved.tripName}</div>
+        <div aria-label={copy.checkout.summary}>
+          {booking.items
+            .filter((i) => !saved.inbound || i.tripId === booking.tripId)
+            .map((item) => (
+              <span key={item.seatCode} className="pn-seat">
+                {item.seatCode}
+              </span>
+            ))}
+        </div>
       </section>
-
+      {saved.inbound && (
+        <section className="pn-card">
+          <h2 className="pn-section-title">Lượt về</h2>
+          <Journey route={saved.inbound.route} fallback="" />
+          <p>
+            {formatVnDate(saved.inbound.departAt)} ·{" "}
+            {formatVnTime(saved.inbound.departAt)}
+          </p>
+          {booking.items
+            .filter((i) => i.tripId === saved.inbound?.tripId)
+            .map((i) => (
+              <span className="pn-seat" key={i.seatCode}>
+                {i.seatCode}
+              </span>
+            ))}
+        </section>
+      )}
+      {booking.note && (
+        <section className="pn-card">
+          <h2 className="pn-section-title">Ghi chú cho nhà xe</h2>
+          <p className="whitespace-pre-wrap break-words">{booking.note}</p>
+        </section>
+      )}
       <Amounts booking={booking} />
-
       {payable &&
         (payment.isLoading ? (
-          <div className="flex justify-center py-6">
+          <div className="pn-loading" role="status">
             <Spinner />
+            {copy.common.loading}
           </div>
-        ) : payment.data ? (
-          <PaymentBox payment={payment.data} />
         ) : payment.isError ? (
-          <div className="rounded-lg bg-red100 px-3 py-2 text-xxsmall text-danger">{errorMessage(payment.error)}</div>
+          <div className="pn-error" role="alert">
+            <p>{errorMessage(payment.error)}</p>
+            <button
+              className="pn-link"
+              type="button"
+              onClick={() => void payment.refetch()}
+            >
+              {copy.common.retry}
+            </button>
+          </div>
+        ) : payment.data?.payable ? (
+          <PaymentBox key={payment.data.qrImageUrl} payment={payment.data} />
+        ) : payment.data ? (
+          <div className="pn-notice">
+            <p>{copy.booking.paymentNotPayable}</p>
+            <button
+              className="pn-link"
+              type="button"
+              onClick={() => {
+                void refetch();
+                void payment.refetch();
+              }}
+            >
+              {copy.common.retry}
+            </button>
+          </div>
         ) : null)}
-
-      <div className="text-xxsmall text-text-secondary">
+      <p className="pn-meta" role="status">
         {booking.status === "HOLDING"
           ? copy.booking.waiting
           : booking.status === "CONFIRMED" || booking.status === "COMPLETED"
             ? copy.booking.confirmed
-            : copy.booking.expired}
-      </div>
+            : booking.status === "CANCELLED"
+              ? copy.booking.cancelled
+              : copy.booking.expired}
+      </p>
     </div>
   );
 }
 
 function Amounts({ booking }: { booking: BookingView }) {
   return (
-    <section className="flex flex-col gap-2 rounded-xl bg-elevation-01 p-4 text-small">
-      {booking.items.map((it) => (
-        <div key={it.seatCode} className="flex justify-between text-xxsmall">
-          <span>
-            {it.seatCode}
-            {it.occupancy > 1 ? ` · ${it.occupancy} người` : ""}
-            {it.infantCount > 0 ? ` · ${it.infantCount} trẻ em` : ""}
-          </span>
-          <span>{formatCurrency(it.lineTotal)}</span>
+    <section className="pn-card">
+      <h2 className="pn-section-title">{copy.booking.amountsTitle}</h2>
+      <dl>
+        {booking.items.map((item) => (
+          <div
+            key={item.tripId + ":" + item.seatCode}
+            className="pn-amount-row"
+          >
+            <dt>
+              {booking.items.some(
+                (i) => i.tripId && i.tripId !== booking.tripId,
+              ) && (item.tripId === booking.tripId ? "Đi · " : "Về · ")}
+              {item.seatCode} · {item.occupancy} người
+              {item.infantCount > 0 ? ` · ${item.infantCount} trẻ em` : ""}
+            </dt>
+            <dd>{formatCurrency(item.lineTotal)}</dd>
+          </div>
+        ))}
+        <div className="pn-amount-row pn-amount-total">
+          <dt>{copy.booking.total}</dt>
+          <dd>{formatCurrency(booking.totalAmount)}</dd>
         </div>
-      ))}
-      <Row label={copy.booking.total} value={formatCurrency(booking.totalAmount)} strong />
-      <Row label={copy.booking.paid} value={formatCurrency(booking.paidAmount)} />
-      {booking.amountDueNow > 0 && <Row label={copy.booking.due} value={formatCurrency(booking.amountDueNow)} accent />}
+        <div className="pn-amount-row">
+          <dt>{copy.booking.paid}</dt>
+          <dd>{formatCurrency(booking.paidAmount)}</dd>
+        </div>
+        {needsPayment(booking) && (
+          <div className="pn-amount-row">
+            <dt>{copy.booking.due}</dt>
+            <dd>{formatCurrency(booking.amountDueNow)}</dd>
+          </div>
+        )}
+      </dl>
     </section>
   );
 }
 
-function Row({ label, value, strong, accent }: { label: string; value: string; strong?: boolean; accent?: boolean }) {
-  return (
-    <div className={`flex justify-between ${strong ? "border-t border-divider01 pt-2 text-small-m" : "text-xxsmall"}`}>
-      <span className="text-text-secondary">{label}</span>
-      <span className={accent ? "text-primary" : undefined}>{value}</span>
-    </div>
-  );
-}
-
-function PaymentBox({ payment }: { payment: PaymentInstructions }) {
+function PaymentBox({
+  payment,
+}: {
+  payment: Extract<PaymentInstructions, { payable: true }>;
+}) {
   const { openSnackbar } = useSnackbar();
-  if (!payment.payable) return null;
-
+  const [qrFailed, setQrFailed] = useState(false);
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       openSnackbar({ text: copy.common.copied, type: "success" });
     } catch {
-      openSnackbar({ text: text, type: "default" });
+      openSnackbar({ text, type: "default" });
     }
   };
-
   const rows: [string, string, boolean][] = [
     [copy.booking.bank, payment.bank.code, false],
     [copy.booking.accountNumber, payment.bank.accountNumber, true],
     [copy.booking.accountName, payment.bank.accountName, false],
-    [copy.booking.amount, formatCurrency(payment.amountDue), false],
     [copy.booking.transferContent, payment.transferContent, true],
   ];
-
   return (
-    <section className="flex flex-col items-center gap-3 rounded-xl border border-primary/30 p-4">
-      <div className="text-normal-sb">{copy.booking.payTitle}</div>
-      <img
-        src={payment.qrImageUrl}
-        alt={`QR ${payment.transferContent}`}
-        className="size-56 rounded-lg bg-white object-contain"
-        draggable={false}
-      />
-      <div className="text-center text-xxsmall text-text-secondary">{copy.booking.payHint}</div>
-      <div className="flex w-full flex-col gap-2">
+    <section className="pn-card">
+      <h2 className="pn-section-title">{copy.booking.payTitle}</h2>
+      <div className="pn-row pn-pay-summary">
+        <span>{copy.booking.due}</span>
+        <strong className="pn-price">
+          {formatCurrency(payment.amountDue)}
+        </strong>
+      </div>
+      {qrFailed ? (
+        <p className="pn-error" role="alert">
+          {copy.booking.qrError}
+        </p>
+      ) : (
+        <img
+          src={payment.qrImageUrl}
+          alt={`QR ${payment.transferContent}`}
+          className="pn-qr"
+          draggable={false}
+          onError={() => setQrFailed(true)}
+        />
+      )}
+      <p className="pn-meta mb-4 text-center">{copy.booking.payHint}</p>
+      <dl>
         {rows.map(([label, value, copyable]) => (
-          <div key={label} className="flex items-center justify-between gap-2 text-xxsmall">
-            <span className="text-text-secondary">{label}</span>
-            <span className="flex items-center gap-2 text-right text-small-m">
+          <div className="pn-bank-row" key={label}>
+            <dt>{label}</dt>
+            <dd>
               {value}
               {copyable && (
-                <button type="button" className="text-xxsmall text-primary" onClick={() => void copyText(value)}>
+                <button
+                  type="button"
+                  className="pn-copy"
+                  aria-label={`${copy.common.copy} ${label.toLowerCase()}`}
+                  onClick={() => void copyText(value)}
+                >
                   {copy.common.copy}
                 </button>
               )}
-            </span>
+            </dd>
           </div>
         ))}
-      </div>
+      </dl>
     </section>
   );
 }

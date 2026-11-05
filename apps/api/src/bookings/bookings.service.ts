@@ -18,12 +18,7 @@ import { TokenSecret } from './token-secret';
 
 export { TokenSecret };
 
-export const createHoldSchema = z
-  .object({
-    tripId: z.string().uuid(),
-    contactName: z.string().trim().min(1).max(120),
-    contactPhone: z.string().min(1).max(30),
-    items: z
+const holdItems = z
       .array(
         z
           .object({
@@ -34,7 +29,17 @@ export const createHoldSchema = z
           .strict(),
       )
       .min(1)
-      .max(20),
+      .max(20);
+type Leg = { tripId: string; items: z.output<typeof holdItems> };
+
+export const createHoldSchema = z
+  .object({
+    tripId: z.string().uuid(),
+    contactName: z.string().trim().min(1).max(120),
+    contactPhone: z.string().min(1).max(30),
+    note: z.string().trim().max(500).optional(),
+    items: holdItems,
+    returnLeg: z.object({ tripId: z.string().uuid(), items: holdItems }).strict().optional(),
   })
   .strict();
 export type CreateHoldInput = z.input<typeof createHoldSchema>;
@@ -44,6 +49,7 @@ export interface BookingView {
   status: string;
   tripId: string;
   holdExpiresAt: string | null;
+  note?: string;
   totalAmount: number;
   /** Số tiền phải trả để xác nhận vé (cọc hoặc toàn bộ). */
   depositAmount: number;
@@ -51,7 +57,7 @@ export interface BookingView {
   paymentStatus: string;
   /** Còn phải trả để xác nhận vé (khi đang giữ chỗ) hoặc để trả đủ (khi đã xác nhận). */
   amountDueNow: number;
-  items: { seatCode: string; occupancy: number; infantCount: number; unitPrice: number; infantPrice: number; lineTotal: number }[];
+  items: { tripId?: string; seatCode: string; occupancy: number; infantCount: number; unitPrice: number; infantPrice: number; lineTotal: number }[];
 }
 
 export interface HoldResult {
@@ -72,11 +78,12 @@ interface BookingRow {
   paid_amount: number;
   payment_status: string;
   request_hash: string | null;
+  passenger_note: string | null;
   access_token_version: number;
 }
 
 const BOOKING_COLUMNS =
-  'id, code, status, trip_id, hold_expires_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version';
+  'id, code, status, trip_id, hold_expires_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note';
 
 const MAX_CODE_ATTEMPTS = 5;
 
@@ -101,8 +108,8 @@ export class BookingsService {
   ) {}
 
   /**
-   * Tạo đơn giữ chỗ cho nhiều chỗ/phòng trên một chuyến — thành công toàn bộ hoặc không giữ gì
-   * (AC-01, AC-02). Khóa hàng của chuyến để các yêu cầu cùng chuyến xếp hàng tuần tự.
+   * Tạo đơn giữ chỗ cho các chỗ/phòng của cả hành trình — thành công toàn bộ hoặc không giữ gì
+   * (AC-01, AC-02). Khóa các chuyến theo thứ tự ID trước khi kiểm tra tồn chỗ.
    */
   async createHold(input: CreateHoldInput, idempotencyKey: string, ctx: HoldContext = {}): Promise<HoldResult> {
     const data = createHoldSchema.parse(input);
@@ -111,13 +118,15 @@ export class BookingsService {
       throw new DomainError('VALIDATION_FAILED', 'Idempotency-Key phải dài 8–100 ký tự (chữ, số, "-", "_").');
     }
     const phone = normalizeVnPhone(data.contactPhone);
-    const codes = data.items.map((i) => i.seatCode);
-    if (new Set(codes).size !== codes.length) {
-      throw new DomainError('VALIDATION_FAILED', 'Một chỗ chỉ được chọn một lần trong đơn.');
+    const legs = [{ tripId: data.tripId, items: data.items }, ...(data.returnLeg ? [data.returnLeg] : [])];
+    for (const leg of legs) {
+      leg.items.sort((a,b) => a.seatCode.localeCompare(b.seatCode));
+      if (new Set(leg.items.map(i => i.seatCode)).size !== leg.items.length)
+        throw new DomainError('VALIDATION_FAILED', 'Một chỗ chỉ được chọn một lần trên cùng chuyến.');
     }
-    const items = [...data.items].sort((a, b) => a.seatCode.localeCompare(b.seatCode));
+    const items = data.items;
     const requestHash = createHash('sha256')
-      .update(JSON.stringify({ tripId: data.tripId, name: data.contactName, phone, items }))
+      .update(JSON.stringify({ tripId: data.tripId, name: data.contactName, phone, items, ...(data.returnLeg ? { returnLeg: data.returnLeg } : {}), ...(data.note ? { note: data.note } : {}) }))
       .digest('hex');
 
     const { rows: tripOps } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [data.tripId]);
@@ -136,7 +145,7 @@ export class BookingsService {
     }
 
     try {
-      return await this.db.tx((c) => this.holdInTx(c, data.tripId, data.contactName, phone, items, key, requestHash, ctx));
+      return await this.db.tx((c) => this.holdInTx(c, legs, data.contactName, phone, key, requestHash, ctx, data.note));
     } catch (e) {
       // Cùng khóa nhưng gửi cho chuyến khác, chạy song song: ràng buộc duy nhất chặn, trả kết quả nhất quán.
       if (isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'bookings_operator_id_idempotency_key_key') {
@@ -149,32 +158,37 @@ export class BookingsService {
 
   private async holdInTx(
     c: PoolClient,
-    tripId: string,
+    legs: Leg[],
     contactName: string,
     phone: string,
-    items: { seatCode: string; occupancy: number; infantCount: number }[],
     key: string,
     requestHash: string,
     ctx: HoldContext,
+    note?: string,
   ): Promise<HoldResult> {
+    const tripId = legs[0]!.tripId;
     const now = this.clock.now();
     const { rows: trips } = await c.query<{
-      id: string; operator_id: string; status: string; sales_open_at: Date; sales_close_at: Date; depart_at: Date;
+      id: string; origin: string; destination: string; operator_id: string; status: string; sales_open_at: Date; sales_close_at: Date; depart_at: Date;
     }>(
-      'SELECT id, operator_id, status, sales_open_at, sales_close_at, depart_at FROM trips WHERE id = $1 FOR NO KEY UPDATE',
-      [tripId],
+      `SELECT t.*, r.origin, r.destination FROM trips t JOIN routes r ON r.id=t.route_id
+       WHERE t.id = ANY($1::uuid[]) ORDER BY t.id FOR NO KEY UPDATE OF t`, [legs.map(l => l.tripId)],
     );
-    const trip = trips[0];
-    if (!trip) throw notFound('chuyến');
+    const trip = trips.find(t => t.id === tripId);
+    if (!trip || trips.length !== legs.length) throw notFound('chuyến');
+    const inbound = trips.find(t => t.id !== tripId);
+    if (inbound && (inbound.operator_id !== trip.operator_id || inbound.origin !== trip.destination ||
+        inbound.destination !== trip.origin || inbound.depart_at <= trip.depart_at))
+      throw new DomainError('VALIDATION_FAILED', 'Chuyến về phải đúng tuyến ngược chiều và khởi hành sau chuyến đi.');
 
     const existing = await this.findByKey(c, trip.operator_id, key);
     if (existing) return this.replay(existing, requestHash);
 
-    if (trip.status !== 'OPEN' || now < trip.sales_open_at || now >= trip.sales_close_at || now >= trip.depart_at) {
+    if (trips.some(t => t.status !== 'OPEN' || now < t.sales_open_at || now >= t.sales_close_at || now >= t.depart_at)) {
       throw new DomainError('TRIP_NOT_ON_SALE', 'Chuyến hiện không mở bán.');
     }
     const policy = await this.operators.currentPolicy(trip.operator_id, c);
-    if (items.length > policy.maxUnitsPerBooking) {
+    if (legs.some(l => l.items.length > policy.maxUnitsPerBooking)) {
       throw new DomainError('LIMIT_EXCEEDED', `Mỗi đơn chọn tối đa ${policy.maxUnitsPerBooking} chỗ.`, {
         max: policy.maxUnitsPerBooking,
       });
@@ -184,7 +198,7 @@ export class BookingsService {
       throw new DomainError('PHONE_VERIFICATION_REQUIRED', 'Vui lòng xác thực số điện thoại bằng mã OTP trước khi giữ chỗ.');
     }
 
-    await this.expireDueHoldsForTrip(c, tripId, now);
+    for (const t of trips) await this.expireDueHoldsForTrip(c, t.id, now);
 
     // Số đơn đang giữ của SĐT này trong nhà xe. Khóa theo (nhà xe, SĐT) để các yêu cầu song song
     // (kể cả ở chuyến khác) không cùng lọt qua bước đếm. Luôn khóa chuyến trước rồi mới khóa SĐT.
@@ -202,60 +216,67 @@ export class BookingsService {
       );
     }
 
-    const codes = items.map((i) => i.seatCode);
-    const { rows: seats } = await c.query<{ seat_code: string; floor: string; max_occupancy: number; sellable: boolean; booking_id: string | null }>(
-      `SELECT seat_code, floor, max_occupancy, sellable, booking_id FROM trip_seats
-       WHERE trip_id = $1 AND seat_code = ANY($2::text[]) ORDER BY seat_code`,
-      [tripId, codes],
-    );
-    const unknown = codes.filter((code) => !seats.some((s) => s.seat_code === code));
-    if (unknown.length) throw new DomainError('VALIDATION_FAILED', 'Chuyến không có một số chỗ đã chọn.', { seats: unknown });
-    const taken = seats.filter((s) => !s.sellable || s.booking_id !== null).map((s) => s.seat_code);
-    if (taken.length) {
-      throw new DomainError('SEAT_UNAVAILABLE', `Chỗ ${taken.join(', ')} vừa có người khác giữ hoặc không bán.`, { seats: taken });
+    const pricedLegs = [];
+    for (const { tripId, items } of legs) {
+      const codes = items.map((i) => i.seatCode);
+      const { rows: seats } = await c.query<{ seat_code: string; floor: string; max_occupancy: number; sellable: boolean; booking_id: string | null }>(
+        `SELECT seat_code, floor, max_occupancy, sellable, booking_id FROM trip_seats
+         WHERE trip_id = $1 AND seat_code = ANY($2::text[]) ORDER BY seat_code`,
+        [tripId, codes],
+      );
+      const unknown = codes.filter((code) => !seats.some((s) => s.seat_code === code));
+      if (unknown.length) throw new DomainError('VALIDATION_FAILED', 'Chuyến không có một số chỗ đã chọn.', { seats: unknown });
+      const taken = seats.filter((s) => !s.sellable || s.booking_id !== null).map((s) => s.seat_code);
+      if (taken.length) {
+        throw new DomainError('SEAT_UNAVAILABLE', `Chỗ ${taken.join(', ')} vừa có người khác giữ hoặc không bán.`, { seats: taken, tripId });
+      }
+
+      const { rows: fares } = await c.query<{ floor: string; occupancy: number; price: number }>(
+        'SELECT floor, occupancy, price FROM trip_fares WHERE trip_id = $1',
+        [tripId],
+      );
+      const priced = priceItems(
+        items,
+        seats.map((s) => ({ seatCode: s.seat_code, floor: s.floor, maxOccupancy: s.max_occupancy })),
+        fares,
+        policy.childPolicy,
+      );
+
+      pricedLegs.push({ tripId, codes, priced });
     }
-
-    const { rows: fares } = await c.query<{ floor: string; occupancy: number; price: number }>(
-      'SELECT floor, occupancy, price FROM trip_fares WHERE trip_id = $1',
-      [tripId],
-    );
-    const priced = priceItems(
-      items,
-      seats.map((s) => ({ seatCode: s.seat_code, floor: s.floor, maxOccupancy: s.max_occupancy })),
-      fares,
-      policy.childPolicy,
-    );
-
+    const total = pricedLegs.reduce((sum, leg) => sum + leg.priced.total, 0);
     const { rows: ops } = await c.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [trip.operator_id]);
     const holdExpiresAt = new Date(now.getTime() + policy.holdMinutes * 60_000);
     let booking: BookingRow | undefined;
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS && !booking; attempt++) {
       const { rows } = await c.query<BookingRow>(
         `INSERT INTO bookings (operator_id, trip_id, code, status, hold_expires_at, contact_name, contact_phone,
-                               total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at)
-         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+                               total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at, passenger_note)
+         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13)
          ON CONFLICT (code) DO NOTHING
          RETURNING ${BOOKING_COLUMNS}`,
-        [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, priced.total,
-          depositAmount(priced.total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now],
+        [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, total,
+          depositAmount(total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now, note || null],
       );
       booking = rows[0];
     }
     if (!booking) throw new Error('Could not generate a unique booking code');
 
-    for (const it of priced.items) {
-      await c.query(
-        `INSERT INTO booking_items (booking_id, trip_id, seat_code, occupancy, infant_count, unit_price, infant_price, line_total)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [booking.id, tripId, it.seatCode, it.occupancy, it.infantCount, it.unitPrice, it.infantPrice, it.lineTotal],
+    for (const { tripId, codes, priced } of pricedLegs) {
+      for (const it of priced.items) {
+        await c.query(
+          `INSERT INTO booking_items (booking_id, trip_id, seat_code, occupancy, infant_count, unit_price, infant_price, line_total)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [booking.id, tripId, it.seatCode, it.occupancy, it.infantCount, it.unitPrice, it.infantPrice, it.lineTotal],
+        );
+      }
+      const upd = await c.query(
+        `UPDATE trip_seats SET booking_id = $1 WHERE trip_id = $2 AND seat_code = ANY($3::text[]) AND booking_id IS NULL`,
+        [booking.id, tripId, codes],
       );
-    }
-    const upd = await c.query(
-      `UPDATE trip_seats SET booking_id = $1 WHERE trip_id = $2 AND seat_code = ANY($3::text[]) AND booking_id IS NULL`,
-      [booking.id, tripId, codes],
-    );
-    if (upd.rowCount !== codes.length) throw new Error('Seat inventory changed while the trip row was locked');
+      if (upd.rowCount !== codes.length) throw new Error('Seat inventory changed while the trip row was locked');
 
+    }
     return { booking: await this.view(c, booking), accessToken: this.token(booking), replayed: false };
   }
 
@@ -263,7 +284,7 @@ export class BookingsService {
   private async expireDueHoldsForTrip(c: Queryable, tripId: string, now: Date): Promise<void> {
     const { rows } = await c.query<{ id: string }>(
       `UPDATE bookings SET status = 'EXPIRED', updated_at = $2
-       WHERE trip_id = $1 AND status = 'HOLDING' AND hold_expires_at <= $2 RETURNING id`,
+       WHERE id IN (SELECT booking_id FROM booking_items WHERE trip_id = $1) AND status = 'HOLDING' AND hold_expires_at <= $2 RETURNING id`,
       [tripId, now],
     );
     if (rows.length) {
@@ -337,16 +358,18 @@ export class BookingsService {
 
   private async view(q: Queryable, b: BookingRow): Promise<BookingView> {
     const { rows } = await q.query<{
-      seat_code: string; occupancy: number; infant_count: number; unit_price: number; infant_price: number; line_total: number;
+      trip_id: string; seat_code: string; occupancy: number; infant_count: number; unit_price: number; infant_price: number; line_total: number;
     }>(
-      `SELECT seat_code, occupancy, infant_count, unit_price, infant_price, line_total
+      `SELECT trip_id, seat_code, occupancy, infant_count, unit_price, infant_price, line_total
        FROM booking_items WHERE booking_id = $1 ORDER BY seat_code`,
       [b.id],
     );
+    const roundTrip = rows.some(r => r.trip_id !== b.trip_id);
     // Đơn giữ chỗ quá hạn hiển thị là EXPIRED ngay cả khi tác vụ nền chưa chạy.
     const expired = b.status === 'HOLDING' && b.hold_expires_at !== null && b.hold_expires_at <= this.clock.now();
     return {
       code: b.code,
+      ...(b.passenger_note ? { note: b.passenger_note } : {}),
       status: expired ? 'EXPIRED' : b.status,
       tripId: b.trip_id,
       holdExpiresAt: b.hold_expires_at ? b.hold_expires_at.toISOString() : null,
@@ -356,7 +379,7 @@ export class BookingsService {
       paymentStatus: b.payment_status,
       amountDueNow: amountDueNow(b, this.clock.now()),
       items: rows.map((r) => ({
-        seatCode: r.seat_code,
+        ...(roundTrip ? {tripId: r.trip_id} : {}), seatCode: r.seat_code,
         occupancy: r.occupancy,
         infantCount: r.infant_count,
         unitPrice: r.unit_price,

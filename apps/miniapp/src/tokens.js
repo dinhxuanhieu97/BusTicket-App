@@ -121,13 +121,13 @@ const base = {
 
 const semantic = {
   colors: {
-    primary: "#0B63CE",
-    background: "#F7F7F7",
+    primary: "rgb(var(--pn-primary-rgb) / 1)",
+    background: "var(--pn-background)",
     text: {
-      primary: base.colors.neutral900,
-      secondary: "#767A7F",
+      primary: "var(--pn-text)",
+      secondary: "var(--pn-muted)",
       tertiary: "#6F7071",
-      disabled: "#A9ADB2",
+      disabled: "var(--pn-disabled)",
       title: base.colors.gray600,
     },
     border: {

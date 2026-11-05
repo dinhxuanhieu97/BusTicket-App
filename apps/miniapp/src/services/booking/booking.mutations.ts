@@ -15,6 +15,7 @@ export function useCreateHold() {
     onSettled: (_r, _e, v) => {
       // Thành công hay hết chỗ đều làm sơ đồ thay đổi.
       void qc.invalidateQueries({ queryKey: tripKeys.seatMap(v.request.tripId) });
+      if (v.request.returnLeg) void qc.invalidateQueries({queryKey: tripKeys.seatMap(v.request.returnLeg.tripId)});
       void qc.invalidateQueries({ queryKey: ["trips"] });
     },
   });

@@ -1,4 +1,5 @@
-import { Outlet, useMatches } from "react-router-dom";
+import { useLayoutEffect, useRef } from "react";
+import { Outlet, useMatches, useLocation } from "react-router-dom";
 import Header from "./header";
 import Footer from "./footer";
 
@@ -14,13 +15,23 @@ export interface RouteHandle {
 
 export default function Layout() {
   const matches = useMatches();
+  const { pathname } = useLocation();
+  const scrollArea = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    scrollArea.current?.scrollTo(0, 0);
+  }, [pathname]);
   const handle = (matches[matches.length - 1]?.handle ?? {}) as RouteHandle;
 
   return (
-    <div className="relative flex h-screen w-screen flex-col bg-background">
-      {!handle.whiteBackground && <div className="absolute left-0 top-0 h-66 w-full bg-peach-fade" />}
-      {!handle.hideHeader && <Header title={handle.title} back={handle.back} position={handle.headerPosition} />}
-      <div className="relative min-h-0 flex-1 overflow-y-auto">
+    <div className="pn-shell">
+      {!handle.hideHeader && (
+        <Header
+          title={handle.title}
+          back={handle.back}
+          position={handle.headerPosition}
+        />
+      )}
+      <div className="pn-main" ref={scrollArea}>
         <Outlet />
       </div>
       {!handle.hideFooter && (

@@ -1,3 +1,5 @@
+@use "./theme.scss";
+@use "./booking-ui.scss";
 @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap");
 
 :root {
@@ -5,7 +7,7 @@
 }
 
 * {
-  font-family: "Roboto", sans-serif;
+  font-family: var(--pn-font);
 }
 
 .zaui-list-item {

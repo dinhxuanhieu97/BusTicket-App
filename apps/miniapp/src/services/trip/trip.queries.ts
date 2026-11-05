@@ -9,9 +9,10 @@ export const tripKeys = {
 /** Sơ đồ chỗ tự tải lại mỗi 5 giây; kết quả giữ chỗ của máy chủ mới là quyết định cuối cùng. */
 export const SEAT_MAP_REFRESH_MS = 5_000;
 
-export function useTrips(date: string) {
+export function useTrips(date: string, enabled = true) {
   return useQuery({
     queryKey: tripKeys.search(date),
+    enabled: enabled && !!date,
     queryFn: () => tripService.search(date),
     placeholderData: keepPreviousData,
     staleTime: 30_000,
@@ -26,5 +27,13 @@ export function useSeatMap(tripId: string) {
     staleTime: 0,
     refetchInterval: SEAT_MAP_REFRESH_MS,
     refetchIntervalInBackground: false,
+  });
+}
+
+export function useOpenRoutes() {
+  return useQuery({
+    queryKey: ["open-routes"],
+    queryFn: tripService.openRoutes,
+    staleTime: 30_000,
   });
 }

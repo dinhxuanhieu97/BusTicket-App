@@ -2,7 +2,7 @@ import { config } from "@/config";
 import { APIError } from "./api-error";
 
 interface RequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT";
   body?: unknown;
   headers?: Record<string, string | undefined>;
   signal?: AbortSignal;

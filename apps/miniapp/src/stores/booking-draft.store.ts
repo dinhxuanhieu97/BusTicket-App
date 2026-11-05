@@ -11,10 +11,15 @@ import { newIdempotencyKey } from "@/utils/ids";
  * (`IDEMPOTENCY_CONFLICT`).
  */
 interface BookingDraftState {
+  pair: [TripSummary, TripSummary] | null;
+  selections: Record<string, Selection>;
+  startJourney: (trip: TripSummary, inbound?: TripSummary) => void;
   tripId: string | null;
   /** Thông tin chuyến từ màn tìm chuyến (không có khi mở thẳng đường dẫn sơ đồ chỗ). */
   trip: TripSummary | null;
   selection: Selection;
+  note: string;
+  setNote: (note: string) => void;
   contactName: string;
   contactPhone: string;
   /** Token "đã xác thực SĐT" (chế độ cao điểm), gắn với đúng số đã xác thực. */
@@ -24,7 +29,10 @@ interface BookingDraftState {
   /** Mở một chuyến; đổi sang chuyến khác thì bỏ các chỗ đã chọn của chuyến cũ. */
   openTrip: (tripId: string, trip?: TripSummary) => void;
   setSelection: (selection: Selection) => void;
-  setContact: (contact: { contactName?: string; contactPhone?: string }) => void;
+  setContact: (contact: {
+    contactName?: string;
+    contactPhone?: string;
+  }) => void;
   setPhoneToken: (phoneToken: BookingDraftState["phoneToken"]) => void;
   /** Khóa của lần giữ chỗ hiện tại (tạo nếu chưa có). */
   ensureIdempotencyKey: () => string;
@@ -33,9 +41,23 @@ interface BookingDraftState {
 }
 
 export const useBookingDraft = create<BookingDraftState>((set, get) => ({
+  pair: null,
+  selections: {},
+  startJourney: (trip, inbound) =>
+    set({
+      pair: inbound ? [trip, inbound] : null,
+      trip,
+      tripId: trip.id,
+      selection: {},
+      selections: {},
+      idempotencyKey: null,
+      note: "",
+    }),
   tripId: null,
   trip: null,
   selection: {},
+  note: "",
+  setNote: (note) => set({ note, idempotencyKey: null }),
   contactName: "",
   contactPhone: "",
   phoneToken: null,
@@ -47,12 +69,29 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
       if (trip) set({ trip });
       return;
     }
-    set({ tripId, trip: trip ?? null, selection: {}, idempotencyKey: null });
+    set({
+      tripId,
+      trip: trip ?? s.pair?.find((t) => t.id === tripId) ?? null,
+      pair: s.pair?.some((t) => t.id === tripId) ? s.pair : null,
+      selection: s.pair?.some((t) => t.id === tripId)
+        ? (s.selections[tripId] ?? {})
+        : {},
+      note: "",
+      idempotencyKey: null,
+    });
   },
-  setSelection: (selection) => set({ selection, idempotencyKey: null }),
+  setSelection: (selection) =>
+    set((s) => ({
+      selection,
+      selections:
+        s.pair && s.tripId ? { ...s.selections, [s.tripId]: selection } : {},
+      idempotencyKey: null,
+    })),
   setContact: (contact) =>
     set((s) => {
-      const phoneChanged = contact.contactPhone !== undefined && contact.contactPhone !== s.contactPhone;
+      const phoneChanged =
+        contact.contactPhone !== undefined &&
+        contact.contactPhone !== s.contactPhone;
       return {
         ...contact,
         idempotencyKey: null,
@@ -67,5 +106,12 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
     set({ idempotencyKey: key });
     return key;
   },
-  completed: () => set({ selection: {}, idempotencyKey: null }),
+  completed: () =>
+    set({
+      pair: null,
+      selections: {},
+      selection: {},
+      note: "",
+      idempotencyKey: null,
+    }),
 }));

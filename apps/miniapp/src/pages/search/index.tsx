@@ -1,133 +1,277 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Spinner } from "zmp-ui";
 import { copy } from "@/constants/copy";
-import { useTrips } from "@/services/trip/trip.queries";
-import { useBookingDraft } from "@/stores/booking-draft.store";
-import type { TripSummary } from "@/types/api.types";
-import { cn } from "@/utils/cn";
-import { formatCurrency } from "@/utils/format";
-import { formatVnTime, upcomingDays, vnDate } from "@/utils/time";
-import { EmptyState } from "@/components/booking/empty-state";
-
-const DAYS_SHOWN = 7;
+import { useOpenRoutes } from "@/services/trip/trip.queries";
+import { formatVnDate, vnDate } from "@/utils/time";
+import { DiscoverRoutes } from "@/components/home/discover-routes";
+import { Stepper } from "@/components/booking/stepper";
+import { BannerSlider } from "@/components/home/banner-slider";
+import { RouteSelect } from "@/components/booking/route-select";
+import { useTripSearch } from "@/stores/trip-search.store";
+import { tripResultsUrl, validRoundTrip } from "@/utils/trip-search";
+import { SearchIcon } from "@/components/common/vectors";
 
 export default function SearchPage() {
   const navigate = useNavigate();
-  const openTrip = useBookingDraft((s) => s.openTrip);
-  const days = useMemo(() => upcomingDays(new Date(), DAYS_SHOWN), []);
-  const [date, setDate] = useState(days[0].date);
-  const [route, setRoute] = useState<string>("");
-  const { data: trips = [], isLoading, isFetching, refetch, isError } = useTrips(date);
-
-  const routes = useMemo(() => {
-    const seen = new Map<string, TripSummary["route"]>();
-    trips.forEach((t) => seen.set(t.route.code, t.route));
-    return [...seen.values()];
-  }, [trips]);
-  const visible = route ? trips.filter((t) => t.route.code === route) : trips;
-
-  const pick = (trip: TripSummary) => {
-    openTrip(trip.id, trip);
-    navigate(`/trip/${trip.id}`);
+  const { search, submit: setSearch } = useTripSearch();
+  const [date, setDate] = useState(search.date);
+  const [origin, setOrigin] = useState(search.origin);
+  const [destination, setDestination] = useState(search.destination);
+  const [roundTrip, setRoundTrip] = useState(search.roundTrip);
+  const [returnDate, setReturnDate] = useState(search.returnDate);
+  const [adults, setAdults] = useState(search.adults ?? 1);
+  const [infants, setInfants] = useState(search.infants ?? 0);
+  const [showPassengers, setShowPassengers] = useState(false);
+  const initialized = useRef(!!search.origin);
+  const [formError, setFormError] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const catalog = useOpenRoutes();
+  const origins = useMemo(
+    () => [...new Set(catalog.data?.map((route) => route.origin))],
+    [catalog.data],
+  );
+  const destinations = useMemo(
+    () => [
+      ...new Set(
+        catalog.data
+          ?.filter((route) => !origin || route.origin === origin)
+          .map((route) => route.destination),
+      ),
+    ],
+    [catalog.data, origin],
+  );
+  useEffect(() => {
+    const first = catalog.data?.[0];
+    if (initialized.current || !first) return;
+    initialized.current = true;
+    setOrigin(first.origin);
+    setDestination(first.destination);
+  }, [catalog.data]);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const next = {
+      date,
+      origin,
+      destination,
+      roundTrip,
+      returnDate,
+      adults,
+      infants,
+    };
+    if (!validRoundTrip(next)) {
+      setFormError(true);
+      return;
+    }
+    setFormError(false);
+    setSearch(next);
+    navigate(tripResultsUrl(next));
   };
-
   return (
-    <div className="relative flex flex-col gap-3 px-4 pb-6 pt-2">
-      <div className="text-large-m">{copy.search.title}</div>
-      <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
-        {days.map((d) => (
-          <button
-            key={d.date}
-            type="button"
-            onClick={() => setDate(d.date)}
-            className={cn(
-              "flex min-w-16 shrink-0 flex-col items-center rounded-xl px-3 py-2",
-              date === d.date ? "bg-primary text-white" : "bg-white text-text-primary",
-            )}
-          >
-            <span className="text-xxsmall">{d.label}</span>
-            <span className="text-normal-sb">{d.sub}</span>
-          </button>
-        ))}
-        <label className="flex min-w-24 shrink-0 flex-col items-center justify-center rounded-xl bg-white px-3 py-2 text-xxsmall text-text-secondary">
-          {copy.search.otherDate}
-          <input
-            type="date"
-            className="w-24 bg-transparent text-xxsmall text-text-primary"
-            min={vnDate(new Date())}
-            value={days.some((d) => d.date === date) ? "" : date}
-            onChange={(e) => e.target.value && setDate(e.target.value)}
-          />
-        </label>
-      </div>
-
-      {routes.length > 1 && (
-        <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
-          {[{ code: "", origin: copy.search.allRoutes, destination: "" }, ...routes].map((r) => (
+    <div className="pn-home">
+      <BannerSlider
+        onSearch={() => {
+          formRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+          formRef.current
+            ?.querySelector<HTMLButtonElement>("button")
+            ?.focus({ preventScroll: true });
+        }}
+      />
+      <div className="pn-page pn-overlap">
+        <form
+          ref={formRef}
+          className="pn-card pn-flight-form"
+          onSubmit={submit}
+        >
+          <fieldset className="pn-journey-tabs">
+            <legend className="sr-only">{copy.search.journeyType}</legend>
+            {[false, true].map((value) => (
+              <label key={String(value)}>
+                <input
+                  type="radio"
+                  name="journey-type"
+                  checked={roundTrip === value}
+                  onChange={() => {
+                    setRoundTrip(value);
+                    setFormError(false);
+                  }}
+                />
+                <span>
+                  {value ? copy.search.roundTrip : copy.search.oneWay}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <div className="pn-search-route">
+            <RouteSelect
+              label={copy.search.origin}
+              value={origin}
+              options={origins}
+              placeholder={copy.search.allOrigins}
+              onChange={(value) => {
+                setOrigin(value);
+                setDestination("");
+              }}
+            />
             <button
-              key={r.code || "all"}
               type="button"
-              onClick={() => setRoute(r.code)}
-              className={cn(
-                "shrink-0 rounded-full border px-3 py-1 text-xxsmall",
-                route === r.code ? "border-primary text-primary" : "border-transparent bg-white text-text-secondary",
-              )}
+              className="pn-swap"
+              aria-label="Đổi điểm đi và điểm đến"
+              disabled={!origin || !destination}
+              onClick={() => {
+                setOrigin(destination);
+                setDestination(origin);
+              }}
             >
-              {r.destination ? `${r.origin} → ${r.destination}` : r.origin}
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M3 8h17m-4-4 4 4-4 4M21 16H4m4-4-4 4 4 4" />
+              </svg>
             </button>
-          ))}
-        </div>
-      )}
-
-      {isLoading ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
-        </div>
-      ) : isError ? (
-        <EmptyState title={copy.common.error} actionLabel={copy.common.retry} onAction={() => void refetch()} />
-      ) : visible.length === 0 ? (
-        <EmptyState title={copy.search.empty} hint={copy.search.emptyHint} />
-      ) : (
-        <div className={cn("flex flex-col gap-3", isFetching && "opacity-60")}>
-          {visible.map((trip) => (
-            <TripCard key={trip.id} trip={trip} onPick={() => pick(trip)} />
-          ))}
-        </div>
-      )}
+            <RouteSelect
+              label={copy.search.destination}
+              value={destination}
+              options={destinations}
+              placeholder={copy.search.allDestinations}
+              onChange={setDestination}
+              alignEnd
+            />
+          </div>
+          <div className={`pn-search-date ${roundTrip ? "pn-date-pair" : ""}`}>
+            <TravelDate
+              label={copy.search.date}
+              value={date}
+              min={vnDate(new Date())}
+              onChange={(value) => {
+                setDate(value);
+                if (returnDate && returnDate < value) setReturnDate("");
+              }}
+            />
+            {roundTrip && (
+              <TravelDate
+                label={copy.search.returnDate}
+                value={returnDate}
+                min={date || vnDate(new Date())}
+                onChange={setReturnDate}
+              />
+            )}
+          </div>
+          <div className="pn-passenger-field">
+            <button
+              type="button"
+              className="pn-passenger-toggle"
+              aria-expanded={showPassengers}
+              onClick={() => setShowPassengers(!showPassengers)}
+            >
+              <span>
+                <small>Hành khách</small>
+                <strong className="pn-people-value">
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <circle cx="10" cy="7" r="3.5" />
+                    <path d="M3 21v-2a7 7 0 0 1 14 0v2m-1-17a3.5 3.5 0 0 1 0 7m2 3a6 6 0 0 1 4 6" />
+                  </svg>
+                  {adults} người lớn
+                  {infants > 0 && ` · ${infants} trẻ dưới 2 tuổi`}
+                </strong>
+              </span>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            {showPassengers && (
+              <div className="pn-passenger-counts">
+                <div className="pn-row">
+                  <span>Người lớn</span>
+                  <Stepper
+                    label="người lớn"
+                    value={adults}
+                    min={1}
+                    max={40}
+                    onChange={setAdults}
+                  />
+                </div>
+                <div className="pn-row">
+                  <span>Trẻ dưới 2 tuổi</span>
+                  <Stepper
+                    label="trẻ dưới 2 tuổi"
+                    value={infants}
+                    min={0}
+                    max={40}
+                    onChange={setInfants}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          {roundTrip && (
+            <p className="pn-meta mb-4">{copy.search.roundTripHint}</p>
+          )}
+          {formError && (
+            <p className="pn-error" role="alert">
+              {copy.search.roundTripRequired}
+            </p>
+          )}
+          <button
+            className="pn-button pn-button-primary"
+            type="submit"
+            disabled={!date}
+          >
+            <SearchIcon className="size-5" aria-hidden="true" />
+            {copy.search.submit}
+          </button>
+        </form>
+        <DiscoverRoutes
+          onChoose={(route) => {
+            const routeDate = vnDate(new Date(route.departAt));
+            const next = {
+              origin: route.origin,
+              destination: route.destination,
+              date: routeDate,
+              roundTrip: false,
+              returnDate: "",
+              adults,
+              infants,
+            };
+            setSearch(next);
+            navigate(tripResultsUrl(next));
+          }}
+        />
+      </div>
     </div>
   );
 }
 
-function TripCard({ trip, onPick }: { trip: TripSummary; onPick: () => void }) {
-  const soldOut = trip.availableUnits <= 0;
+function TravelDate({
+  label,
+  value,
+  min,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  min: string;
+  onChange: (date: string) => void;
+}) {
   return (
-    <button
-      type="button"
-      disabled={soldOut}
-      onClick={onPick}
-      className="flex w-full flex-col gap-2 rounded-xl bg-white p-4 text-left disabled:opacity-50"
-    >
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xlarge-sb">{formatVnTime(trip.departAt)}</span>
-        {trip.fromPrice !== null && (
-          <span className="text-normal-sb text-primary">
-            <span className="text-xxsmall text-text-secondary">{copy.search.fromPrice} </span>
-            {formatCurrency(trip.fromPrice)}
-          </span>
-        )}
-      </div>
-      <div className="text-small">
-        {trip.route.origin} → {trip.route.destination}
-      </div>
-      <div className="flex items-center justify-between text-xxsmall text-text-secondary">
-        <span>
-          {trip.vehicle.layoutName} · {trip.vehicle.name}
+    <label className="pn-field">
+      <span>{label}</span>
+      <div className="pn-date-display">
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="16" rx="3" />
+          <path d="M7 3v5m10-5v5M3 11h18" />
+        </svg>
+        <span aria-hidden="true">
+          {value ? formatVnDate(`${value}T00:00:00+07:00`) : "Chọn ngày về"}
         </span>
-        <span className={soldOut ? "text-danger" : "text-green500"}>
-          {soldOut ? copy.search.soldOut : copy.search.available(trip.availableUnits, trip.unit)}
-        </span>
+        <input
+          type="date"
+          required
+          aria-label={label}
+          min={min}
+          value={value}
+          onClick={(event) => event.currentTarget.showPicker?.()}
+          onChange={(event) => onChange(event.target.value)}
+        />
       </div>
-    </button>
+    </label>
   );
 }

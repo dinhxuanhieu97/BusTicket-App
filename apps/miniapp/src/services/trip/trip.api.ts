@@ -1,6 +1,6 @@
 import { config } from "@/config";
 import { apiRequest } from "@/lib/api-client";
-import type { SeatMap, TripSummary } from "@/types/api.types";
+import type { OpenRoute, SeatMap, TripSummary } from "@/types/api.types";
 
 export const tripService = {
   /** Chuyến đang mở bán trong ngày (giờ VN) của nhà xe mà bản Mini App này phục vụ. */
@@ -12,5 +12,11 @@ export const tripService = {
     ).then((r) => r.trips);
   },
 
-  seatMap: (tripId: string) => apiRequest<SeatMap>(`/trips/${encodeURIComponent(tripId)}/seats`),
+  openRoutes: () =>
+    apiRequest<{ routes: OpenRoute[] }>(
+      `/operators/${encodeURIComponent(config.operatorCode)}/open-routes`,
+    ).then((response) => response.routes),
+
+  seatMap: (tripId: string) =>
+    apiRequest<SeatMap>(`/trips/${encodeURIComponent(tripId)}/seats`),
 };

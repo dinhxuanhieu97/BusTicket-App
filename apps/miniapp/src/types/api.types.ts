@@ -3,12 +3,26 @@
  * Giữ khớp với máy chủ: TripsService.search / seatMap, BookingsService.BookingView, PaymentsService.paymentInstructions.
  */
 
+export interface OpenRoute {
+  code: string;
+  origin: string;
+  destination: string;
+  fromPrice: number | null;
+  tripCount: number;
+  departAt: string;
+}
+
 export interface TripSummary {
   id: string;
   name: string;
   departAt: string;
   route: { code: string; origin: string; destination: string };
-  vehicle: { name: string; code: string; type: "LIMOUSINE" | "SLEEPER" | "SEATER" | string; layoutName: string };
+  vehicle: {
+    name: string;
+    code: string;
+    type: "LIMOUSINE" | "SLEEPER" | "SEATER" | string;
+    layoutName: string;
+  };
   /** "phòng" | "giường" | "ghế" */
   unit: string;
   availableUnits: number;
@@ -31,18 +45,37 @@ export interface Fare {
   price: number;
 }
 
+export interface RouteStop { name: string; time: string; day: number }
+export type Stops = Record<"pickup" | "dropoff", RouteStop[]>;
 export interface SeatMap {
+  stops?: Stops;
   trip: { id: string; name: string; departAt: string; onSale: boolean };
-  booking: { requiresPhoneOtp: boolean; maxUnitsPerBooking: number; holdMinutes: number };
+  booking: {
+    requiresPhoneOtp: boolean;
+    maxUnitsPerBooking: number;
+    holdMinutes: number;
+  };
   vehicle: { name: string; code: string };
-  layout: { name: string; unit: string; kind: "room" | "bed" | "seat"; floors: LayoutFloor[] };
-  seats: { code: string; floor: string; maxOccupancy: number; status: PublicSeatStatus }[];
+  layout: {
+    name: string;
+    unit: string;
+    kind: "room" | "bed" | "seat";
+    floors: LayoutFloor[];
+  };
+  seats: {
+    code: string;
+    floor: string;
+    maxOccupancy: number;
+    status: PublicSeatStatus;
+  }[];
   fares: Fare[];
 }
 
-export type BookingStatus = "HOLDING" | "CONFIRMED" | "EXPIRED" | "CANCELLED" | "COMPLETED";
+export type BookingStatus =
+  "HOLDING" | "CONFIRMED" | "EXPIRED" | "CANCELLED" | "COMPLETED";
 
 export interface BookingItem {
+  tripId?: string;
   seatCode: string;
   occupancy: number;
   infantCount: number;
@@ -52,6 +85,7 @@ export interface BookingItem {
 }
 
 export interface BookingView {
+  note?: string;
   code: string;
   status: BookingStatus;
   tripId: string;
@@ -72,6 +106,8 @@ export interface HoldResult {
 }
 
 export interface CreateHoldRequest {
+  returnLeg?: { tripId: string; items: CreateHoldRequest["items"] };
+  note?: string;
   tripId: string;
   contactName: string;
   contactPhone: string;
@@ -88,7 +124,12 @@ export type PaymentInstructions =
       bank: { code: string; accountNumber: string; accountName: string };
       qrImageUrl: string;
     }
-  | { code: string; payable: false; reason: "PAID" | "NOT_PAYABLE"; amountDue: 0 };
+  | {
+      code: string;
+      payable: false;
+      reason: "PAID" | "NOT_PAYABLE";
+      amountDue: 0;
+    };
 
 export interface PhoneVerificationStarted {
   verificationId: string;
