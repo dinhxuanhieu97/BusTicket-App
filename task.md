@@ -100,12 +100,24 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [ ] 04/11/2026 · T6 · Đối soát chỉ lấy tối đa 5.000 giao dịch/lần, chưa phân trang; worker gọi định kỳ ở T10.
 - [ ] 04/11/2026 · T6 · Hoàn tiền (refund có duyệt) chưa làm: hiện chỉ "đánh dấu đã xử lý" kèm ghi chú. Cần module hoàn tiền theo PNTicketDocs mục 5.4/6.4 (task mới).
 - [ ] 04/11/2026 · T6 · Tiền đến muộn (LATE) chưa có thao tác "cấp lại chỗ" có kiểm tra — hiện kế toán xử lý ngoài hệ thống (hoàn tiền hoặc đặt hộ đơn mới).
-- [ ] 04/11/2026 · T3 · **`scripts/seed.ts` lỗi** (`pnpm --filter api seed` báo `VALIDATION_FAILED` regex): giá vé dùng tầng `A`/`B` trong khi sơ đồ đã đổi sang tầng `1`/`2`. Seed còn tạo nhà xe trước rồi mới lỗi → chạy lại báo trùng. — chưa sửa
+- [x] 04/11/2026 · T3 · **`scripts/seed.ts` lỗi** (`pnpm --filter api seed` báo `VALIDATION_FAILED` regex): giá vé dùng tầng `A`/`B` trong khi sơ đồ đã đổi sang tầng `1`/`2`. Seed còn tạo nhà xe trước rồi mới lỗi → chạy lại báo trùng. — đã sửa: tầng `1`/`2`, chạy lại thì bỏ qua (05/11/2026)
 - [ ] 04/11/2026 · T11 · API chưa bật CORS: Mini App chạy trên domain của Zalo sẽ bị trình duyệt chặn. Dev dùng proxy của Vite; khi phát hành cần `enableCors` với danh sách domain Mini App (hoặc reverse proxy cùng origin).
-- [ ] 04/11/2026 · T11 · Sơ đồ chỗ công khai không trả chính sách trẻ em (`childPolicy`: giá, tối đa mỗi chỗ) → Mini App chỉ tạm tính chưa gồm trẻ em và cho chọn tối đa 2 trẻ/chỗ theo schema; máy chủ mới kiểm tra đúng giới hạn. Nên thêm `childPolicy` vào `GET /trips/:id/seats`.
+- [x] 04/11/2026 · T11 · Sơ đồ chỗ công khai không trả chính sách trẻ em (`childPolicy`: giá, tối đa mỗi chỗ) → Mini App chỉ tạm tính chưa gồm trẻ em và cho chọn tối đa 2 trẻ/chỗ theo schema; máy chủ mới kiểm tra đúng giới hạn. Nên thêm `childPolicy` vào `GET /trips/:id/seats`.
 - [ ] 04/11/2026 · T11 · Chưa có API công khai liệt kê tuyến và điểm đón/trả (`stops`): Mini App lọc tuyến từ danh sách chuyến trong ngày, chưa chọn được điểm đón.
 - [ ] 04/11/2026 · T11 · "Vé của tôi" đang lưu mã đơn + `accessToken` trong localStorage của máy → đổi máy/xóa dữ liệu là mất danh sách. Cần `POST /auth/zalo` + `GET /me/tickets` (ZALO-MINI-APP.md mục 6).
 - [ ] 04/11/2026 · T11 · **Giấy phép template**: ZaUI Bistro ghi "non-commercial testing and evaluation purposes only". Cần xác nhận với Zalo được dùng cho sản phẩm thương mại, nếu không thì thay phần UI lấy từ template (layout, tabs, icon, tokens).
+
+- [x] 05/11/2026 · Quy tắc · **Trẻ em đi kèm chỉ áp dụng cho phòng đơn** (chỗ/phòng đặt cho 1 người; giường, ghế luôn là 1 người). API từ chối trẻ em kèm phòng đôi; sơ đồ chỗ trả `booking.childPolicy`; Mini App ẩn ô trẻ em khi chọn phòng đôi, tự bỏ trẻ em khi đổi sang phòng đôi, kẹp theo `maxPerUnit`, tạm tính gồm giá trẻ em.
+- [x] 05/11/2026 · T11 · Nhà xe hạ giới hạn trẻ em giữa chừng → ô trẻ em bị ẩn nhưng số trẻ cũ vẫn gửi lên → máy chủ từ chối, khách không tự sửa được. — `reconcileSelection` kẹp lại số trẻ khi sơ đồ tải lại
+- [ ] 05/11/2026 · T3 · Seed (chỉ dùng dev) không gói trong một transaction: lỗi giữa chừng để lại dữ liệu dở, chạy lại thì bỏ qua → phải xóa DB. Thấp.
+- [ ] 05/11/2026 · T11 · **Giao diện kiểu app vé máy bay**: chờ ảnh tham khảo — thư mục `Images/app ve may bay` chưa có trong repo (chỉ có trên máy người dùng). — **chờ người dùng**
+
+### Rà soát subagent — Trẻ em chỉ phòng đơn (05/11/2026)
+
+| Service | Subagent kết luận | Bằng chứng | Agent chính kiểm tra lại | Bị ảnh hưởng? |
+|---|---|---|---|---|
+| API (`pricing.ts`, `seatMap`, seed) | Không bug; quy tắc phủ mọi đường tạo đơn (chỉ `holdInTx`); 340 test pass trên DB riêng | `bookings.service.ts` chỉ một chỗ `INSERT INTO booking_items` | Đồng ý; thêm test sơ đồ chỗ trả `childPolicy` và không lộ `countsTowardCapacity` | Không |
+| Mini App (`seat-selection.ts`, trang chọn chỗ) | **Bug thấp**: số trẻ cũ không bị kẹp khi giới hạn giảm → ô ẩn, máy chủ từ chối | `reconcileSelection` chỉ kẹp số người | **Xác nhận**: test đỏ → sửa → xanh; khôi phục ghi chú "chưa gồm phí trẻ em" khi API cũ không trả chính sách | Có (Thấp) — đã sửa |
 
 ### Rà soát subagent — T6 (04/11/2026)
 

@@ -343,6 +343,13 @@ export class TripsService {
         requiresPhoneOtp: policy.requirePhoneOtp,
         maxUnitsPerBooking: policy.maxUnitsPerBooking,
         holdMinutes: policy.holdMinutes,
+        /** Trẻ em đi kèm: chỉ áp dụng cho phòng/chỗ 1 người. */
+        childPolicy: {
+          freeUnderAge: policy.childPolicy.freeUnderAge,
+          price: policy.childPolicy.price,
+          maxPerUnit: policy.childPolicy.maxPerUnit,
+          singleOccupancyOnly: true,
+        },
       },
       vehicle: { name: t.vehicle_name, code: t.vehicle_code },
       layout: {

@@ -72,6 +72,8 @@ describe('GET /api/v1/trips/:id/seats', () => {
       code: 'A1', floor: '1', maxOccupancy: 2, status: 'HELD',
     });
     expect(res.body.fares).toHaveLength(4);
+    expect(res.body.booking.childPolicy).toEqual({ freeUnderAge: 2, price: 0, maxPerUnit: 1, singleOccupancyOnly: true });
+    expect(JSON.stringify(res.body.booking)).not.toContain('countsTowardCapacity');
     const text = JSON.stringify(res.body);
     expect(text).not.toContain('Trần Thị B');
     expect(text).not.toContain('987654321');
@@ -90,7 +92,7 @@ describe('POST /api/v1/bookings', () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/bookings')
       .set('Idempotency-Key', 'http-create-0001')
-      .send(body([{ seatCode: 'A2', occupancy: 2, infantCount: 1 }]))
+      .send(body([{ seatCode: 'A2', occupancy: 2 }]))
       .expect(201);
     expect(res.body.booking).toMatchObject({ status: 'HOLDING', totalAmount: 700_000 });
     expect(res.body.accessToken).toEqual(expect.any(String));

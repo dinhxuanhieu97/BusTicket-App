@@ -74,6 +74,10 @@ export function priceItems(
         seatCode: it.seatCode,
       });
     }
+    // Trẻ em đi kèm chỉ áp dụng cho phòng/chỗ 1 người (phòng đôi đã đủ 2 người) — chốt 04/11/2026.
+    if (it.infantCount > 0 && it.occupancy > 1) {
+      throw new DomainError('VALIDATION_FAILED', 'Trẻ em đi kèm chỉ áp dụng cho phòng đơn.', { seatCode: it.seatCode });
+    }
     if (it.infantCount < 0 || it.infantCount > child.maxPerUnit) {
       throw new DomainError(
         'VALIDATION_FAILED',

@@ -50,6 +50,11 @@ describe('priceItems', () => {
     expect(r.total).toBe(500_000);
   });
 
+  it('allows an accompanying infant only in a single room (occupancy 1)', () => {
+    expect(priceItems([{ seatCode: 'A1', occupancy: 1, infantCount: 1 }], seats, fares, child).total).toBe(450_000);
+    expect(codeOf(() => priceItems([{ seatCode: 'A1', occupancy: 2, infantCount: 1 }], seats, fares, child))).toBe('VALIDATION_FAILED');
+  });
+
   it('rejects more people than the seat holds', () => {
     expect(codeOf(() => priceItems([{ seatCode: 'A2', occupancy: 2, infantCount: 0 }], seats, fares, child))).toBe(
       'VALIDATION_FAILED',

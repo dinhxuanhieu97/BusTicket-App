@@ -25,8 +25,8 @@ describe('createHold — happy path', () => {
         tripId: seed.limoTrip.id,
         ...contact,
         items: [
-          { seatCode: 'A2', occupancy: 2, infantCount: 1 },
-          { seatCode: 'B1', occupancy: 1 },
+          { seatCode: 'A2', occupancy: 2 },
+          { seatCode: 'B1', occupancy: 1, infantCount: 1 },
         ],
       },
       newKey(),
@@ -36,8 +36,8 @@ describe('createHold — happy path', () => {
     expect(r.booking.status).toBe('HOLDING');
     expect(r.booking.holdExpiresAt).toBe(new Date(T0.getTime() + 10 * 60_000).toISOString());
     expect(r.booking.items).toEqual([
-      { seatCode: 'A2', occupancy: 2, infantCount: 1, unitPrice: 700_000, infantPrice: 0, lineTotal: 700_000 },
-      { seatCode: 'B1', occupancy: 1, infantCount: 0, unitPrice: 420_000, infantPrice: 0, lineTotal: 420_000 },
+      { seatCode: 'A2', occupancy: 2, infantCount: 0, unitPrice: 700_000, infantPrice: 0, lineTotal: 700_000 },
+      { seatCode: 'B1', occupancy: 1, infantCount: 1, unitPrice: 420_000, infantPrice: 0, lineTotal: 420_000 },
     ]);
     expect(r.booking.totalAmount).toBe(1_120_000);
 
@@ -265,6 +265,7 @@ describe('createHold — validation and sale window', () => {
   it.each([
     ['two people on a sleeper bed', [{ seatCode: 'B7', occupancy: 2 }], 'bed'],
     ['two infants on one room', [{ seatCode: 'B7', infantCount: 2 }], 'limo'],
+    ['an infant in a double room', [{ seatCode: 'B7', occupancy: 2, infantCount: 1 }], 'limo'],
     ['a seat the trip does not have', [{ seatCode: 'C1' }], 'limo'],
     ['the same seat twice', [{ seatCode: 'B7' }, { seatCode: 'B7' }], 'limo'],
   ] as const)('rejects %s with VALIDATION_FAILED and holds nothing', async (_n, items, which) => {

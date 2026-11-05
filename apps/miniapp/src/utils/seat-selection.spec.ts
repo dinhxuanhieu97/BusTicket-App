@@ -68,6 +68,21 @@ describe("occupancy and infants", () => {
     expect(setInfants(sel, "A1", -1).A1.infantCount).toBe(0);
   });
 
+  it("infants only go with a single room: switching to a double room drops them", () => {
+    const withInfant = setInfants(sel, "A1", 1);
+    expect(withInfant.A1.infantCount).toBe(1);
+    expect(setOccupancy(withInfant, "A1", 2, 2).A1).toEqual({ occupancy: 2, infantCount: 0 });
+  });
+
+  it("does not add infants to a double room", () => {
+    expect(setInfants({ A1: { occupancy: 2, infantCount: 0 } }, "A1", 1).A1.infantCount).toBe(0);
+  });
+
+  it("caps infants at the operator's maxPerUnit when given", () => {
+    expect(setInfants(sel, "A1", 2, 1).A1.infantCount).toBe(1);
+    expect(setInfants(sel, "A1", 2, 0).A1.infantCount).toBe(0);
+  });
+
   it("ignores seats that are not selected", () => {
     expect(setOccupancy(sel, "B1", 2, 2)).toBe(sel);
     expect(setInfants(sel, "B1", 1)).toBe(sel);
@@ -75,6 +90,12 @@ describe("occupancy and infants", () => {
 });
 
 describe("reconcileSelection", () => {
+  it("clears infants above a lowered policy cap so the user is not stuck with a hidden control", () => {
+    const sel = { A1: { occupancy: 1, infantCount: 1 } };
+    expect(reconcileSelection(sel, seats, 0).selection.A1.infantCount).toBe(0);
+    expect(reconcileSelection(sel, seats, 1).selection).toBe(sel);
+  });
+
   it("drops seats somebody else just held and reports them", () => {
     const sel = { A1: { occupancy: 1, infantCount: 0 }, B2: { occupancy: 1, infantCount: 0 } };
     const r = reconcileSelection(sel, seats);
@@ -89,7 +110,7 @@ describe("reconcileSelection", () => {
   });
 
   it("returns the same object when nothing changed (no re-render loop)", () => {
-    const sel = { A1: { occupancy: 2, infantCount: 1 } };
+    const sel = { A1: { occupancy: 2, infantCount: 0 } };
     const r = reconcileSelection(sel, seats);
     expect(r.selection).toBe(sel);
     expect(r.removed).toEqual([]);
@@ -114,16 +135,22 @@ describe("estimateTotal", () => {
   it("is zero for an empty selection", () => {
     expect(estimateTotal({}, seats, fares)).toBe(0);
   });
+
+  it("adds the infant price from the operator's child policy", () => {
+    const sel = { B1: { occupancy: 1, infantCount: 1 } };
+    expect(estimateTotal(sel, seats, fares, { price: 50_000 })).toBe(420_000 + 50_000);
+    expect(estimateTotal(sel, seats, fares, { price: 0 })).toBe(420_000);
+  });
 });
 
 describe("toHoldItems", () => {
   it("orders seats naturally so the same choice always gives the same request", () => {
     const items = toHoldItems({
       A10: { occupancy: 1, infantCount: 0 },
-      A2: { occupancy: 2, infantCount: 1 },
+      A2: { occupancy: 2, infantCount: 0 },
       A1: { occupancy: 1, infantCount: 0 },
     });
     expect(items.map((i) => i.seatCode)).toEqual(["A1", "A2", "A10"]);
-    expect(items[1]).toEqual({ seatCode: "A2", occupancy: 2, infantCount: 1 });
+    expect(items[1]).toEqual({ seatCode: "A2", occupancy: 2, infantCount: 0 });
   });
 });
