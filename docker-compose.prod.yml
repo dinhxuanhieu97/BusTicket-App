@@ -1,0 +1,67 @@
+# docker-compose.prod.yml — Chạy stack production tại local hoặc VPS
+# Khởi động: docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pnticket
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: pnticket
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pnticket -d pnticket"]
+      interval: 10s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://pnticket:${DB_PASSWORD}@db:5432/pnticket
+      BOOKING_TOKEN_SECRET: ${BOOKING_TOKEN_SECRET}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      SEPAY_API_TOKEN: ${SEPAY_API_TOKEN:-}
+    ports:
+      # Không expose ra ngoài khi dùng Caddy — dùng internal network
+      - "${API_PORT:-3000}:3000"
+    # Chạy migration trước khi khởi động (idempotent)
+    entrypoint: >
+      sh -c "node -e \"
+        const { Db, DbConfig } = require('./apps/api/dist/db/db');
+        const { migrate } = require('./apps/api/dist/db/migrate');
+        const url = process.env.DATABASE_URL;
+        const db = new Db(new DbConfig(url));
+        migrate(db.pool).then(() => { console.log('Migration done'); db.close(); }).catch(e => { console.error(e); process.exit(1); });
+      \" && node apps/api/dist/main.js"
+
+  # Caddy: reverse proxy + HTTPS tự động (Let's Encrypt)
+  # Bỏ comment để dùng khi có domain thật
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - api
+
+volumes:
+  pgdata:
+  # caddy_data:
+  # caddy_config:

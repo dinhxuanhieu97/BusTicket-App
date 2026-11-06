@@ -1,0 +1,19 @@
+# Caddyfile — Caddy reverse proxy + HTTPS tự động
+# Thay api.yourdomain.vn bằng domain thật của bạn
+
+api.yourdomain.vn {
+    reverse_proxy api:3000
+    # Caddy tự cấp + gia hạn chứng chỉ Let's Encrypt
+    tls {
+        protocols tls1.2 tls1.3
+    }
+    # Nén gzip/zstd tự động
+    encode gzip zstd
+    # Header bảo mật
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        -Server
+    }
+}

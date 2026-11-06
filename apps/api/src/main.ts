@@ -10,6 +10,21 @@ function requiredEnv(name: string): string {
   return v;
 }
 
+/**
+ * Phân tích CORS_ORIGINS: danh sách origin cách nhau bởi dấu phẩy, hoặc "*" để cho phép tất cả.
+ * Ví dụ: "https://miniapp.zalo.me,https://h5.zdn.vn"
+ * Nếu không đặt, CORS bị tắt (chỉ dùng khi Mini App và API cùng origin hoặc qua Vite proxy).
+ */
+function parseCorsOrigins(raw: string | undefined): string | string[] | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === '*') return '*';
+  return trimmed
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(
     AppModule.forRoot({
@@ -19,6 +34,19 @@ async function bootstrap(): Promise<void> {
     }),
   );
   app.useGlobalFilters(new HttpErrorFilter());
+
+  // CORS: cho phép Mini App / Web gọi API từ origin khác.
+  // Đặt CORS_ORIGINS=* để bật cho mọi origin (chỉ dùng khi phát triển hoặc đứng sau Caddy đã lọc).
+  const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
+  if (corsOrigins) {
+    app.enableCors({
+      origin: corsOrigins,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Booking-Token', 'Idempotency-Key'],
+      credentials: true,
+    });
+  }
+
   // Chỉ tin X-Forwarded-For khi chạy sau proxy/load balancer đã biết (vd. TRUST_PROXY=1 = một tầng proxy).
   // Không đặt thì dùng IP kết nối trực tiếp — client không thể giả IP để né giới hạn tần suất.
   const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
