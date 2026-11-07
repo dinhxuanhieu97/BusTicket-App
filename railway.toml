@@ -1,0 +1,14 @@
+# railway.toml — cấu hình deploy lên Railway
+# Docs: https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "nixpacks"
+buildCommand = "pnpm install --frozen-lockfile && pnpm --filter api build"
+
+[deploy]
+# Chạy migration trước, rồi khởi động API
+startCommand = "node apps/api/dist/db/migrate-runner.js && node apps/api/dist/main.js"
+healthcheckPath = "/api/v1/operators/PN/trips?date=2027-01-01"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
