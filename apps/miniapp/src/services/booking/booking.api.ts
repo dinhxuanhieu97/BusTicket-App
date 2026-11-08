@@ -7,6 +7,7 @@ import type {
   PaymentInstructions,
   PhoneVerificationStarted,
   PhoneVerified,
+  ZaloPhone,
 } from "@/types/api.types";
 
 export const bookingService = {
@@ -39,5 +40,12 @@ export const bookingService = {
     apiRequest<PhoneVerified>("/phone-verifications/verify", {
       method: "POST",
       body: { verificationId, code },
+    }),
+
+  /** Đổi token `getPhoneNumber` (+ access token Zalo) lấy SĐT thật; máy chủ giữ Secret Key của Mini App. */
+  zaloPhone: (accessToken: string, code: string) =>
+    apiRequest<ZaloPhone>("/zalo/phone", {
+      method: "POST",
+      body: { operatorCode: config.operatorCode, accessToken, code },
     }),
 };

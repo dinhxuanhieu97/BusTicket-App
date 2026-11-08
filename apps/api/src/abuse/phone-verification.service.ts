@@ -120,8 +120,13 @@ export class PhoneVerificationService {
       [data.verificationId, now],
     );
     if (consumed.rowCount !== 1) throw wrongCode();
-    const exp = Math.floor(now.getTime() / 1000) + this.config.phoneTokenTtlSeconds;
-    return { phoneToken: this.signToken(v.operator_id, v.phone, exp), expiresAt: new Date(exp * 1000).toISOString() };
+    return this.issueToken(v.operator_id, v.phone);
+  }
+
+  /** Cấp token "đã xác thực SĐT" cho một số đã được xác thực bằng kênh khác (OTP, Zalo). `phone` dạng `+84…`. */
+  issueToken(operatorId: string, phone: string): { phoneToken: string; expiresAt: string } {
+    const exp = Math.floor(this.clock.now().getTime() / 1000) + this.config.phoneTokenTtlSeconds;
+    return { phoneToken: this.signToken(operatorId, phone, exp), expiresAt: new Date(exp * 1000).toISOString() };
   }
 
   /** Token hợp lệ cho đúng nhà xe và đúng SĐT, còn hạn. */

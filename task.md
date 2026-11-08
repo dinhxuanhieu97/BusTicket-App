@@ -24,6 +24,8 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 ## Phát hiện mới
 
 <!-- Ghi mọi việc mới phát hiện trong khi làm: [ngày] [task] mô tả — trạng thái -->
+- [x] 08/11/2026 · Zalo SĐT · CORS `allowedHeaders` thiếu `X-Phone-Token`: Mini App gọi API khác origin sẽ không gửi được token SĐT (OTP cao điểm hỏng). — đã thêm vào `main.ts`
+- [ ] 08/11/2026 · Zalo SĐT · Cần đặt `ZALO_APP_SECRET_KEYS` trên Railway và deploy lại API + Mini App để nút "Dùng tên và số điện thoại Zalo" hoạt động.
 - [x] 03/11/2026 · T2 · **Sơ đồ xe thật** (`Images/`): xe 40 giường đánh mã **theo dãy** (A1 dưới, A2 trên), khác giả định "chữ cái = tầng". — đã đổi định dạng sơ đồ (tầng `1`/`2`, mã tự do 1–2 chữ + 1–2 số, ô `TX`/`CUA`/`WC`), thư viện BED40 + LIMO24 theo ảnh, bản mẫu giao diện cập nhật
 - [x] 03/11/2026 · T2–T4 · Id không đúng dạng UUID làm PostgreSQL ném lỗi 22P02 (thành lỗi 500) thay vì NOT_FOUND. — đã sửa (`src/common/ids.ts`), test `review-findings.int-spec.ts`
 - [x] 03/11/2026 · T3 · Sơ đồ chỗ công khai hiện cả chuyến DRAFT. — đã sửa: DRAFT trả NOT_FOUND
@@ -105,7 +107,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [x] 04/11/2026 · T11 · Sơ đồ chỗ công khai không trả chính sách trẻ em (`childPolicy`: giá, tối đa mỗi chỗ) → Mini App chỉ tạm tính chưa gồm trẻ em và cho chọn tối đa 2 trẻ/chỗ theo schema; máy chủ mới kiểm tra đúng giới hạn. Nên thêm `childPolicy` vào `GET /trips/:id/seats`.
 - [ ] 04/11/2026 · T11 · Chưa có API công khai liệt kê tuyến và điểm đón/trả (`stops`): Mini App lọc tuyến từ danh sách chuyến trong ngày, chưa chọn được điểm đón.
 - [ ] 04/11/2026 · T11 · "Vé của tôi" đang lưu mã đơn + `accessToken` trong localStorage của máy → đổi máy/xóa dữ liệu là mất danh sách. Cần `POST /auth/zalo` + `GET /me/tickets` (ZALO-MINI-APP.md mục 6).
-- [ ] 04/11/2026 · T11 · **Giấy phép template**: ZaUI Bistro ghi "non-commercial testing and evaluation purposes only". Cần xác nhận với Zalo được dùng cho sản phẩm thương mại, nếu không thì thay phần UI lấy từ template (layout, tabs, icon, tokens).
+- [x] 04/11/2026 · T11 · **Giấy phép template**: ZaUI Bistro ghi "non-commercial testing and evaluation purposes only". Cần xác nhận với Zalo được dùng cho sản phẩm thương mại, nếu không thì thay phần UI lấy từ template (layout, tabs, icon, tokens). — 08/11/2026: người dùng xác nhận UI là thiết kế riêng (lấy cảm hứng app vé máy bay), ZaUI Bistro chỉ để tham khảo.
 
 - [x] 05/11/2026 · Quy tắc · **Trẻ em đi kèm chỉ áp dụng cho phòng đơn** (chỗ/phòng đặt cho 1 người; giường, ghế luôn là 1 người). API từ chối trẻ em kèm phòng đôi; sơ đồ chỗ trả `booking.childPolicy`; Mini App ẩn ô trẻ em khi chọn phòng đôi, tự bỏ trẻ em khi đổi sang phòng đôi, kẹp theo `maxPerUnit`, tạm tính gồm giá trẻ em.
 - [x] 05/11/2026 · T11 · Nhà xe hạ giới hạn trẻ em giữa chừng → ô trẻ em bị ẩn nhưng số trẻ cũ vẫn gửi lên → máy chủ từ chối, khách không tự sửa được. — `reconcileSelection` kẹp lại số trẻ khi sơ đồ tải lại

@@ -7,7 +7,7 @@ export const config = {
     (import.meta.env.VITE_OPERATOR_CODE as string | undefined) || "PN",
   operatorName:
     (import.meta.env.VITE_OPERATOR_NAME as string | undefined) ||
-    "Nhà xe Phong Nhung",
+    "Đặt vé xe Hoài Ân",
   /** Rỗng = gọi `/api` cùng origin (dev qua proxy của Vite). */
   apiBaseUrl: (
     (import.meta.env.VITE_API_BASE_URL as string | undefined) || ""

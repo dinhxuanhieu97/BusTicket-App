@@ -2,7 +2,7 @@
   "name": "miniapp",
   "private": true,
   "version": "0.1.0",
-  "description": "Zalo Mini App đặt vé xe cho khách (T11). Khung giao diện dựng từ template ZaUI Bistro, gọi API công khai của apps/api.",
+  "description": "Zalo Mini App đặt vé xe cho khách (T11). Giao diện riêng theo phong cách app vé máy bay, gọi API công khai của apps/api.",
   "license": "UNLICENSED",
   "browserslist": [
     "Android >= 5",

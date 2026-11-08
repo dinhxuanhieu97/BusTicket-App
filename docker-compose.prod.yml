@@ -33,6 +33,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       TRUST_PROXY: ${TRUST_PROXY:-}
       SEPAY_API_TOKEN: ${SEPAY_API_TOKEN:-}
+      ZALO_APP_SECRET_KEYS: ${ZALO_APP_SECRET_KEYS:-}
     ports:
       # Không expose ra ngoài khi dùng Caddy — dùng internal network
       - "${API_PORT:-3000}:3000"

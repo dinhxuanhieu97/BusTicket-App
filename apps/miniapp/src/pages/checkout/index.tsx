@@ -13,6 +13,10 @@ import { useBookingDraft } from "@/stores/booking-draft.store";
 import { usePassengers } from "@/stores/passengers.store";
 import { useProfile } from "@/stores/profile.store";
 import { useMyBookings } from "@/stores/my-bookings.store";
+import {
+  useZaloContact,
+  ZaloPermissionDenied,
+} from "@/services/zalo/zalo-contact";
 import { formatCurrency } from "@/utils/format";
 import { isValidVnMobile } from "@/utils/phone";
 import {
@@ -39,6 +43,7 @@ export default function CheckoutPage() {
   const { data: map, isLoading } = useSeatMap(firstId ?? "");
   const returnMap = useSeatMap(inbound?.id ?? "");
   const createHold = useCreateHold();
+  const zaloContact = useZaloContact();
   const [touched, setTouched] = useState(false);
   const [otpRequested, setOtpRequested] = useState(false);
   // Đã giữ chỗ xong và đang chuyển sang trang đơn: không được tự chuyển về trang chủ khi lựa chọn vừa bị xóa.
@@ -108,6 +113,34 @@ export default function CheckoutPage() {
     new Date(draft.phoneToken.expiresAt).getTime() > Date.now();
   const needsOtp =
     (map.booking.requiresPhoneOtp || otpRequested) && !tokenValid;
+
+  const fillFromZalo = () => {
+    zaloContact.mutate(undefined, {
+      onSuccess: (c) => {
+        const name = c.name || draft.contactName;
+        draft.setContact({
+          ...(c.name ? { contactName: c.name } : {}),
+          contactPhone: c.phone,
+        });
+        // Số do Zalo xác nhận: dùng thay OTP khi nhà xe bật chế độ cao điểm.
+        draft.setPhoneToken({
+          phone: c.phone,
+          token: c.phoneToken,
+          expiresAt: c.expiresAt,
+        });
+        if (name.trim()) useProfile.getState().save(name, c.phone);
+        openSnackbar({ text: copy.checkout.zaloFilled, type: "success" });
+      },
+      onError: (e) =>
+        openSnackbar({
+          text:
+            e instanceof ZaloPermissionDenied
+              ? copy.checkout.zaloDenied
+              : errorMessage(e),
+          type: "warning",
+        }),
+    });
+  };
 
   const submit = () => {
     setTouched(true);
@@ -246,6 +279,17 @@ export default function CheckoutPage() {
         </section>
 
         <section className="flex flex-col gap-3">
+          <Button
+            variant="secondary"
+            size="medium"
+            loading={zaloContact.isPending}
+            disabled={zaloContact.isPending}
+            onClick={fillFromZalo}
+          >
+            {zaloContact.isPending
+              ? copy.checkout.usingZalo
+              : copy.checkout.useZalo}
+          </Button>
           {passengers.length > 0 && (
             <label className="pn-field">
               <span>{copy.passengers.choose}</span>

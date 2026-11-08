@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { parseTrustProxy } from './abuse/client-ip';
+import { parseZaloSecretKeys } from './abuse/zalo-phone';
 import { AppModule } from './app.module';
 import { HttpErrorFilter } from './common/http-error.filter';
 
@@ -31,6 +32,7 @@ async function bootstrap(): Promise<void> {
       databaseUrl: requiredEnv('DATABASE_URL'),
       bookingTokenSecret: requiredEnv('BOOKING_TOKEN_SECRET'),
       authTokenSecret: requiredEnv('AUTH_TOKEN_SECRET'),
+      zaloSecretKeys: parseZaloSecretKeys(process.env.ZALO_APP_SECRET_KEYS),
     }),
   );
   app.useGlobalFilters(new HttpErrorFilter());
@@ -42,7 +44,7 @@ async function bootstrap(): Promise<void> {
     app.enableCors({
       origin: corsOrigins,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Booking-Token', 'Idempotency-Key'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Booking-Token', 'X-Phone-Token', 'Idempotency-Key'],
       credentials: true,
     });
   }

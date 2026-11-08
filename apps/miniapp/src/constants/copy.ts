@@ -95,6 +95,10 @@ export const copy = {
     otpCode: "Mã 6 số",
     otpVerify: "Xác nhận",
     otpVerified: "Đã xác thực số điện thoại",
+    useZalo: "Dùng tên và số điện thoại Zalo",
+    usingZalo: "Đang lấy thông tin từ Zalo...",
+    zaloDenied: "Bạn chưa cho phép chia sẻ số điện thoại. Bạn có thể nhập tay.",
+    zaloFilled: "Đã điền thông tin từ Zalo",
     noSelection: "Bạn chưa chọn chỗ nào.",
   },
   booking: {

@@ -3,6 +3,8 @@ import { AbuseConfig } from './abuse/abuse-config';
 import { PhoneVerificationService } from './abuse/phone-verification.service';
 import { RateLimiter } from './abuse/rate-limiter';
 import { NotConfiguredSmsSender, SmsSender } from './abuse/sms-sender';
+import { HttpZaloPhoneResolver, ZaloPhoneResolver } from './abuse/zalo-phone';
+import { ZaloPhoneService } from './abuse/zalo-phone.service';
 import { AdminController } from './admin/admin.controller';
 import { PaymentsService } from './payments/payments.service';
 import { HttpSepayTransactionsClient, SepayTransactionsClient } from './payments/sepay';
@@ -29,6 +31,9 @@ export interface AppOptions {
   abuse?: Partial<AbuseConfig>;
   smsSender?: SmsSender;
   sepayClient?: SepayTransactionsClient;
+  /** Secret Key Mini App theo mã nhà xe (env `ZALO_APP_SECRET_KEYS`). */
+  zaloSecretKeys?: Record<string, string>;
+  zaloPhoneResolver?: ZaloPhoneResolver;
 }
 
 @Module({})
@@ -49,6 +54,11 @@ export class AppModule {
         { provide: SepayTransactionsClient, useValue: opts.sepayClient ?? new HttpSepayTransactionsClient() },
         PaymentsService,
         PhoneVerificationService,
+        {
+          provide: ZaloPhoneResolver,
+          useValue: opts.zaloPhoneResolver ?? new HttpZaloPhoneResolver(opts.zaloSecretKeys ?? {}),
+        },
+        ZaloPhoneService,
         Db,
         SeatLayoutsService,
         OperatorsService,

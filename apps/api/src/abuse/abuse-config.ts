@@ -14,6 +14,8 @@ export class AbuseConfig {
   otpMaxAttempts = 5;
   /** Token "đã xác thực SĐT": hiệu lực (giây). */
   phoneTokenTtlSeconds = 30 * 60;
+  /** Đổi token Zalo lấy SĐT: tối đa theo IP mỗi giờ (nới rộng vì nhà mạng di động dùng chung IP cho nhiều khách). */
+  zaloPhonePerIpPerHour = 120;
   /** Đăng nhập nội bộ: tối đa theo IP trong 15 phút (mọi tài khoản cộng lại). */
   loginsPerIpPer15Min = 30;
 

@@ -140,3 +140,8 @@ export interface PhoneVerified {
   phoneToken: string;
   expiresAt: string;
 }
+
+/** SĐT do Zalo xác nhận (dạng 0xxxxxxxxx) kèm token dùng thay OTP. */
+export interface ZaloPhone extends PhoneVerified {
+  phone: string;
+}

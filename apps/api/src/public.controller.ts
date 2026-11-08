@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { PhoneVerificationService } from './abuse/phone-verification.service';
+import { ZaloPhoneService } from './abuse/zalo-phone.service';
 import { z } from 'zod';
 import { DomainError, notFound } from './common/errors';
 import { BookingsService } from './bookings/bookings.service';
@@ -22,6 +23,7 @@ export class PublicController {
     private readonly bookings: BookingsService,
     private readonly phones: PhoneVerificationService,
     private readonly payments: PaymentsService,
+    private readonly zaloPhone: ZaloPhoneService,
   ) {}
 
   @Get('operators/:operatorCode/trips')
@@ -68,6 +70,16 @@ export class PublicController {
   @HttpCode(200)
   verifyPhone(@Body() body: unknown) {
     return this.phones.verify(body as never);
+  }
+
+  /**
+   * Mini App: đổi token `getPhoneNumber` + access token Zalo lấy SĐT của chính khách.
+   * Trả kèm `phoneToken` (số do Zalo xác nhận, dùng thay OTP khi giữ chỗ).
+   */
+  @Post('zalo/phone')
+  @HttpCode(200)
+  zaloPhoneNumber(@Body() body: unknown, @Req() req: Request) {
+    return this.zaloPhone.exchange(body as never, req.ip ?? 'unknown');
   }
 
   /** Thông tin chuyển khoản + ảnh QR cho đơn (số tiền cần trả lúc này, nội dung = mã đơn). */
