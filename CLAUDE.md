@@ -30,13 +30,18 @@ Integration test dùng `DATABASE_URL_TEST` (mặc định `postgres://pnticket:p
 - API công khai không trả tên/số điện thoại khách.
 - Thời gian lưu UTC (`timestamptz`), ngày nghiệp vụ theo `Asia/Ho_Chi_Minh`.
 
+## Git và nhánh
+- Repo backend + Mini App: `BusTicket-App` (`apps/api`, `apps/miniapp`). Dashboard: repo riêng `BusTicket-DashboardAdmin`.
+- Mọi nhánh đẩy lên GitHub đặt theo mẫu `hieufeature_<tên-ngắn-kebab-case>`, ví dụ `hieufeature_hold-grace-release`. Không tạo nhánh `claude/...`.
+- Không commit `.env*`, `.next/`, `test-results/`, `node_modules/` hay file chứa mật khẩu/token.
+
 ## Quy trình mỗi task
 1. Lấy task tiếp theo trong `task.md`, đánh dấu đang làm.
 2. Viết test trước hoặc cùng lúc với code (theo skill `fullstack-dev-skills:test-master`): happy path **và** lỗi/biên; integration test với PostgreSQL thật cho logic khóa chỗ/tiền; không test chi tiết nội bộ.
 3. Task chỉ **xong** khi `pnpm --filter api typecheck` và **toàn bộ** `pnpm --filter api test` pass. Không skip/xóa test để có màu xanh.
 4. Rà soát bằng subagent (xem bên dưới) trước khi đánh dấu xong.
 5. Đánh dấu `[x]` trong `task.md`; ghi **mọi việc mới phát hiện** vào mục "Phát hiện mới" của `task.md`.
-6. Commit, push lên nhánh được giao.
+6. Commit, push lên nhánh `hieufeature_<tên-ngắn>` (xem mục Git và nhánh).
 
 ## Rà soát bằng subagent
 - Giao **mỗi service cho một subagent riêng**. Subagent **chỉ đọc đúng service đó** (file service, file test của nó, và schema/migration nó dùng), không sửa code, rồi báo: có bug hay không, kèm **bằng chứng** (đường dẫn `file:dòng`, đoạn code, kịch bản đầu vào → kết quả sai).
