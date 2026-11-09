@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { Clock } from '../common/clock';
@@ -5,7 +6,7 @@ import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
 import { normalizeVnPhone } from '../common/phone';
 import { vnDayRange } from '../common/vn-time';
-import { Db, isPgError, PG_UNIQUE_VIOLATION } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { MAX_UNIT_PRICE } from '../bookings/pricing';
 import { OperatorsService } from '../operators/operators.service';
 
@@ -69,7 +70,14 @@ export interface TripRow {
   sales_open_at: Date;
   sales_close_at: Date;
   status: 'DRAFT' | 'OPEN' | 'CLOSED' | 'CANCELLED';
+  idempotency_key?: string | null;
+  request_hash?: string | null;
 }
+
+/** Kết quả tạo chuyến; `replayed` = trả lại chuyến đã tạo trước đó với cùng Idempotency-Key. */
+export type CreateTripResult = Omit<TripRow, 'idempotency_key' | 'request_hash'> & { replayed: boolean };
+
+export type AdminSeatStatus = PublicSeatStatus;
 
 export type PublicSeatStatus = 'AVAILABLE' | 'HELD' | 'BOOKED' | 'BLOCKED';
 
@@ -85,6 +93,25 @@ export const SEAT_STATUS_SQL = `
     WHEN b.status IN ('CONFIRMED', 'COMPLETED') THEN 'BOOKED'
     ELSE 'AVAILABLE'
   END`;
+
+/**
+ * Giờ tới dự kiến: điểm trả cuối của tuyến (ngày lệch so với ngày khởi hành, giờ VN).
+ * Tuyến chưa khai báo điểm trả → null (giao diện dùng quy tắc mặc định của nhà xe).
+ */
+export function expectedArrival(departAt: Date, stops: { dropoff?: { time: string; day: number }[] } | null): string | null {
+  const last = stops?.dropoff?.at(-1);
+  if (!last) return null;
+  const vnMidnight = Math.floor((departAt.getTime() + VN_OFFSET_MS) / DAY_MS) * DAY_MS - VN_OFFSET_MS;
+  const [h, m] = last.time.split(':').map(Number);
+  return new Date(vnMidnight + last.day * DAY_MS + (h! * 60 + m!) * 60_000).toISOString();
+}
+const VN_OFFSET_MS = 7 * 3600_000;
+const DAY_MS = 24 * 3600_000;
+
+function publicTrip(t: TripRow): Omit<TripRow, 'idempotency_key' | 'request_hash'> {
+  const { idempotency_key: _k, request_hash: _h, ...rest } = t;
+  return rest;
+}
 
 @Injectable()
 export class TripsService {
@@ -114,71 +141,110 @@ export class TripsService {
    * Tạo chuyến: chụp phiên bản sơ đồ hiện tại của xe vào `trip_seats`, bắt buộc có đủ giá
    * cho mọi (tầng × số người) bán được.
    */
-  async createTrip(operatorId: string, input: CreateTripInput): Promise<TripRow> {
+  async createTrip(operatorId: string, input: CreateTripInput, idempotencyKey?: string): Promise<CreateTripResult> {
     const data = createTripSchema.parse(input);
+    const key = idempotencyKey?.trim();
+    if (key !== undefined && !/^[\w-]{8,100}$/.test(key)) {
+      throw new DomainError('VALIDATION_FAILED', 'Idempotency-Key phải dài 8–100 ký tự (chữ, số, "-", "_").', { field: 'Idempotency-Key' });
+    }
     if (!(data.salesOpenAt < data.salesCloseAt && data.salesCloseAt <= data.departAt)) {
       throw new DomainError('VALIDATION_FAILED', 'Thời gian không hợp lệ: mở bán < đóng bán ≤ giờ khởi hành.');
     }
     const contactPhone = data.contactPhone ? normalizeVnPhone(data.contactPhone) : null;
+    // Hash theo ngữ nghĩa (có phiên bản): thứ tự giá và cách viết SĐT không làm đổi yêu cầu.
+    const requestHash = key
+      ? createHash('sha256')
+          .update('trip-create:v1:' + JSON.stringify({
+            ...data,
+            contactPhone,
+            fares: [...data.fares].sort((a, b) => a.floor.localeCompare(b.floor) || a.occupancy - b.occupancy),
+          }))
+          .digest('hex')
+      : null;
     if (!isUuid(operatorId)) throw notFound('nhà xe');
 
-    return this.db.tx(async (c) => {
-      const { rows: routes } = await c.query('SELECT id FROM routes WHERE id = $1 AND operator_id = $2', [
-        data.routeId,
-        operatorId,
-      ]);
-      if (!routes[0]) throw notFound('tuyến');
-      const { rows: vehicles } = await c.query<{ id: string; seat_layout_id: string; status: string }>(
-        // FOR SHARE: chặn đổi sơ đồ/trạng thái xe trong lúc đang chụp sơ đồ vào chuyến.
-        'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2 FOR SHARE',
-        [data.vehicleId, operatorId],
-      );
-      const vehicle = vehicles[0];
-      if (!vehicle) throw notFound('xe');
-      if (vehicle.status !== 'ACTIVE') throw new DomainError('VALIDATION_FAILED', 'Xe đang không hoạt động.');
-
-      const { rows: needs } = await c.query<{ floor: string; max_occ: number }>(
-        `SELECT floor, MAX(max_occupancy) AS max_occ FROM seats
-         WHERE seat_layout_id = $1 AND sellable GROUP BY floor ORDER BY floor`,
-        [vehicle.seat_layout_id],
-      );
-      const fareKey = (f: string, o: number) => `${f}:${o}`;
-      const given = new Map<string, number>();
-      for (const f of data.fares) {
-        const k = fareKey(f.floor, f.occupancy);
-        if (given.has(k)) throw new DomainError('VALIDATION_FAILED', `Giá tầng ${f.floor}, ${f.occupancy} người bị khai báo trùng.`);
-        given.set(k, f.price);
-      }
-      const required = needs.flatMap((n) => Array.from({ length: n.max_occ }, (_, i) => fareKey(n.floor, i + 1)));
-      const missing = required.filter((k) => !given.has(k));
-      if (missing.length) {
-        throw new DomainError('FARE_NOT_CONFIGURED', 'Thiếu giá cho một số tầng/số người.', { missing });
-      }
-      const extra = [...given.keys()].filter((k) => !required.includes(k));
-      if (extra.length) {
-        throw new DomainError('VALIDATION_FAILED', 'Có giá cho tầng/số người mà sơ đồ xe không có.', { extra });
-      }
-
-      const { rows } = await c.query<TripRow>(
-        `INSERT INTO trips (operator_id, route_id, vehicle_id, seat_layout_id, name, contact_phone,
-                            depart_at, sales_open_at, sales_close_at, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [operatorId, data.routeId, vehicle.id, vehicle.seat_layout_id, data.name, contactPhone,
-          data.departAt, data.salesOpenAt, data.salesCloseAt, data.status],
-      );
-      const trip = rows[0]!;
-      await c.query(
-        `INSERT INTO trip_seats (trip_id, seat_code, floor, max_occupancy, sellable)
-         SELECT $1, code, floor, max_occupancy, sellable FROM seats WHERE seat_layout_id = $2`,
-        [trip.id, vehicle.seat_layout_id],
-      );
-      for (const f of data.fares) {
-        await c.query('INSERT INTO trip_fares (trip_id, floor, occupancy, price) VALUES ($1, $2, $3, $4)', [
-          trip.id, f.floor, f.occupancy, f.price,
+    try {
+      return await this.db.tx(async (c) => {
+        if (key) {
+          const existing = await this.findTripByKey(c, operatorId, key);
+          if (existing) return this.replayTrip(existing, requestHash!);
+        }
+        const { rows: routes } = await c.query('SELECT id FROM routes WHERE id = $1 AND operator_id = $2', [
+          data.routeId,
+          operatorId,
         ]);
+        if (!routes[0]) throw notFound('tuyến');
+        const { rows: vehicles } = await c.query<{ id: string; seat_layout_id: string; status: string }>(
+          // FOR SHARE: chặn đổi sơ đồ/trạng thái xe trong lúc đang chụp sơ đồ vào chuyến.
+          'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2 FOR SHARE',
+          [data.vehicleId, operatorId],
+        );
+        const vehicle = vehicles[0];
+        if (!vehicle) throw notFound('xe');
+        if (vehicle.status !== 'ACTIVE') throw new DomainError('VALIDATION_FAILED', 'Xe đang không hoạt động.');
+
+        const { rows: needs } = await c.query<{ floor: string; max_occ: number }>(
+          `SELECT floor, MAX(max_occupancy) AS max_occ FROM seats
+           WHERE seat_layout_id = $1 AND sellable GROUP BY floor ORDER BY floor`,
+          [vehicle.seat_layout_id],
+        );
+        const fareKey = (f: string, o: number) => `${f}:${o}`;
+        const given = new Map<string, number>();
+        for (const f of data.fares) {
+          const k = fareKey(f.floor, f.occupancy);
+          if (given.has(k)) throw new DomainError('VALIDATION_FAILED', `Giá tầng ${f.floor}, ${f.occupancy} người bị khai báo trùng.`);
+          given.set(k, f.price);
+        }
+        const required = needs.flatMap((n) => Array.from({ length: n.max_occ }, (_, i) => fareKey(n.floor, i + 1)));
+        const missing = required.filter((k) => !given.has(k));
+        if (missing.length) {
+          throw new DomainError('FARE_NOT_CONFIGURED', 'Thiếu giá cho một số tầng/số người.', { missing });
+        }
+        const extra = [...given.keys()].filter((k) => !required.includes(k));
+        if (extra.length) {
+          throw new DomainError('VALIDATION_FAILED', 'Có giá cho tầng/số người mà sơ đồ xe không có.', { extra });
+        }
+
+        const { rows } = await c.query<TripRow>(
+          `INSERT INTO trips (operator_id, route_id, vehicle_id, seat_layout_id, name, contact_phone,
+                              depart_at, sales_open_at, sales_close_at, status, idempotency_key, request_hash)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+          [operatorId, data.routeId, vehicle.id, vehicle.seat_layout_id, data.name, contactPhone,
+            data.departAt, data.salesOpenAt, data.salesCloseAt, data.status, key ?? null, requestHash],
+        );
+        const trip = rows[0]!;
+        await c.query(
+          `INSERT INTO trip_seats (trip_id, seat_code, floor, max_occupancy, sellable)
+           SELECT $1, code, floor, max_occupancy, sellable FROM seats WHERE seat_layout_id = $2`,
+          [trip.id, vehicle.seat_layout_id],
+        );
+        for (const f of data.fares) {
+          await c.query('INSERT INTO trip_fares (trip_id, floor, occupancy, price) VALUES ($1, $2, $3, $4)', [
+            trip.id, f.floor, f.occupancy, f.price,
+          ]);
+        }
+        return { ...publicTrip(trip), replayed: false };
+      });
+    } catch (e) {
+      // Hai yêu cầu cùng khóa chạy song song: ràng buộc duy nhất chặn bản thứ hai → trả chuyến đã tạo.
+      if (key && isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'trips_operator_idempotency_key') {
+        const existing = await this.findTripByKey(this.db, operatorId, key);
+        if (existing) return this.replayTrip(existing, requestHash!);
       }
-      return trip;
-    });
+      throw e;
+    }
+  }
+
+  private async findTripByKey(q: Queryable, operatorId: string, key: string): Promise<TripRow | undefined> {
+    const { rows } = await q.query<TripRow>('SELECT * FROM trips WHERE operator_id = $1 AND idempotency_key = $2', [operatorId, key]);
+    return rows[0];
+  }
+
+  private replayTrip(existing: TripRow, requestHash: string): CreateTripResult {
+    if (existing.request_hash !== requestHash) {
+      throw new DomainError('IDEMPOTENCY_CONFLICT', 'Idempotency-Key đã được dùng cho một chuyến khác.');
+    }
+    return { ...publicTrip(existing), replayed: true };
   }
 
   async saveStops(operatorId: string, routeId: string, input: unknown) {
@@ -219,6 +285,94 @@ export class TripsService {
   }
 
   /**
+   * Chi tiết một chuyến cho quản trị (mọi trạng thái, kể cả DRAFT), chỉ trong nhà xe của người gọi.
+   * Sơ đồ là phiên bản đã chụp vào chuyến (`trips.seat_layout_id` + `trip_seats`), không phải sơ đồ hiện tại của xe.
+   * Không trả tên/số điện thoại khách; chỉ mã đơn để đối chiếu.
+   */
+  async adminDetail(operatorId: string, tripId: string) {
+    if (!isUuid(operatorId) || !isUuid(tripId)) throw notFound('chuyến');
+    const now = this.clock.now();
+    const { rows: trips } = await this.db.query<{
+      id: string; name: string; status: TripRow['status']; depart_at: Date; sales_open_at: Date; sales_close_at: Date;
+      contact_phone: string | null; created_at: Date;
+      route_id: string; route_code: string; origin: string; destination: string; stops: z.output<typeof stopsSchema>;
+      vehicle_id: string; vehicle_code: string; vehicle_name: string; vehicle_type: string; plate_number: string | null;
+      vehicle_status: string; vehicle_layout_id: string;
+      layout_id: string; layout_code: string; layout_version: number; layout_name: string; unit: string; kind: string;
+      definition: { floors: { code: string; label: string; rows: string[] }[] };
+    }>(
+      `SELECT t.id, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone, t.created_at,
+              r.id AS route_id, r.code AS route_code, r.origin, r.destination, r.stops,
+              v.id AS vehicle_id, v.code AS vehicle_code, v.name AS vehicle_name, v.type AS vehicle_type,
+              v.plate_number, v.status AS vehicle_status, v.seat_layout_id AS vehicle_layout_id,
+              sl.id AS layout_id, sl.code AS layout_code, sl.version AS layout_version, sl.name AS layout_name,
+              sl.unit, sl.kind, sl.definition
+       FROM trips t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
+       JOIN seat_layouts sl ON sl.id = t.seat_layout_id
+       WHERE t.id = $1 AND t.operator_id = $2`,
+      [tripId, operatorId],
+    );
+    const t = trips[0];
+    if (!t) throw notFound('chuyến');
+    const { rows: seats } = await this.db.query<{
+      seat_code: string; floor: string; max_occupancy: number; sellable: boolean; row_idx: number | null; col_idx: number | null;
+      status: AdminSeatStatus; booking_code: string | null; hold_expires_at: Date | null;
+    }>(
+      `SELECT ts.seat_code, ts.floor, ts.max_occupancy, ts.sellable, s.row_idx, s.col_idx, ${SEAT_STATUS_SQL} AS status,
+              b.code AS booking_code, b.hold_expires_at
+       FROM trip_seats ts
+       JOIN trips t ON t.id = ts.trip_id
+       LEFT JOIN seats s ON s.seat_layout_id = t.seat_layout_id AND s.code = ts.seat_code
+       LEFT JOIN bookings b ON b.id = ts.booking_id
+       WHERE ts.trip_id = $1
+       ORDER BY ts.floor, substring(ts.seat_code from '^[A-Z]+'), substring(ts.seat_code from '[0-9]+$')::int`,
+      [tripId, now],
+    );
+    const { rows: fares } = await this.db.query<{ floor: string; occupancy: number; price: number }>(
+      'SELECT floor, occupancy, price FROM trip_fares WHERE trip_id = $1 ORDER BY floor, occupancy',
+      [tripId],
+    );
+    const count = (st: AdminSeatStatus) => seats.filter((x) => x.status === st).length;
+    const floorLabel = new Map(t.definition.floors.map((f) => [f.code, f.label]));
+    return {
+      trip: {
+        id: t.id,
+        name: t.name,
+        status: t.status,
+        departAt: t.depart_at.toISOString(),
+        arriveAt: expectedArrival(t.depart_at, t.stops),
+        salesOpenAt: t.sales_open_at.toISOString(),
+        salesCloseAt: t.sales_close_at.toISOString(),
+        contactPhone: t.contact_phone,
+        createdAt: t.created_at.toISOString(),
+        onSale: t.status === 'OPEN' && t.sales_open_at <= now && now < t.sales_close_at,
+      },
+      route: { id: t.route_id, code: t.route_code, origin: t.origin, destination: t.destination },
+      vehicle: {
+        id: t.vehicle_id, code: t.vehicle_code, name: t.vehicle_name, type: t.vehicle_type,
+        plateNumber: t.plate_number, status: t.vehicle_status,
+        /** Xe đã đổi sang sơ đồ khác sau khi tạo chuyến: chuyến vẫn giữ sơ đồ đã chụp. */
+        layoutChangedSinceTrip: t.vehicle_layout_id !== t.layout_id,
+      },
+      layout: {
+        id: t.layout_id, code: t.layout_code, version: t.layout_version, name: t.layout_name, unit: t.unit, kind: t.kind,
+        floors: t.definition.floors.map((f) => ({ code: f.code, label: f.label, rows: f.rows })),
+      },
+      fares: fares.map((f) => ({ ...f, floorLabel: floorLabel.get(f.floor) ?? `Tầng ${f.floor}` })),
+      seats: seats.map((x) => ({
+        code: x.seat_code, floor: x.floor, row: x.row_idx, col: x.col_idx, maxOccupancy: x.max_occupancy,
+        sellable: x.sellable, status: x.status,
+        bookingCode: x.status === 'HELD' || x.status === 'BOOKED' ? x.booking_code : null,
+        holdExpiresAt: x.status === 'HELD' && x.hold_expires_at ? x.hold_expires_at.toISOString() : null,
+      })),
+      summary: {
+        capacity: seats.length, available: count('AVAILABLE'), held: count('HELD'), booked: count('BOOKED'), blocked: count('BLOCKED'),
+      },
+      fetchedAt: now.toISOString(),
+    };
+  }
+
+  /**
    * Đổi trạng thái bán: DRAFT → OPEN, OPEN ↔ CLOSED. Hủy chuyến (CANCELLED) cần xử lý khách
    * và tiền nên làm ở task sau.
    */
@@ -232,12 +386,12 @@ export class TripsService {
       );
       const t = rows[0];
       if (!t) throw notFound('chuyến');
-      if (t.status === status) return t;
+      if (t.status === status) return publicTrip(t);
       if (!allowed[t.status]!.includes(status)) {
         throw new DomainError('CONFLICT', `Không thể chuyển chuyến từ ${t.status} sang ${status}.`);
       }
       const { rows: updated } = await c.query<TripRow>('UPDATE trips SET status = $2 WHERE id = $1 RETURNING *', [tripId, status]);
-      return updated[0]!;
+      return publicTrip(updated[0]!);
     });
   }
 

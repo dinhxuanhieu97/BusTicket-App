@@ -116,6 +116,15 @@ export class AdminController {
     return { layouts: await this.layouts.listUsable(operatorId) };
   }
 
+  /** Đúng phiên bản sơ đồ theo ID (kể cả bản cũ mà xe đang gắn): của nhà xe hoặc thư viện dùng chung. */
+  @Get('operators/:operatorId/seat-layouts/:layoutId')
+  @Perm('fleet.read')
+  async getLayout(@Param('operatorId') operatorId: string, @Param('layoutId') layoutId: string) {
+    await this.operators.getById(operatorId);
+    const layout = await this.layouts.getUsable(operatorId, layoutId);
+    return { layout: { ...layout, shared: layout.operator_id === null } };
+  }
+
   @Post('operators/:operatorId/seat-layouts')
   @Perm('fleet.write')
   async createLayout(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
@@ -187,11 +196,23 @@ export class AdminController {
     return { trips: await this.trips.listForAdmin(operatorId, date) };
   }
 
+  @Get('operators/:operatorId/trips/:tripId')
+  @Perm('trip.read')
+  tripDetail(@Param('operatorId') operatorId: string, @Param('tripId') tripId: string) {
+    return this.trips.adminDetail(operatorId, tripId);
+  }
+
+  /** Idempotency-Key (tùy chọn, khuyến nghị): gửi lại cùng khóa trả về chuyến đã tạo thay vì tạo trùng. */
   @Post('operators/:operatorId/trips')
   @Perm('trip.write')
-  async createTrip(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    const t = await this.trips.createTrip(operatorId, body as never);
-    await this.log(req, operatorId, 'trip.create', 'trip', t.id, { name: t.name, status: t.status });
+  async createTrip(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const t = await this.trips.createTrip(operatorId, body as never, idempotencyKey);
+    if (!t.replayed) await this.log(req, operatorId, 'trip.create', 'trip', t.id, { name: t.name, status: t.status });
     return t;
   }
 
