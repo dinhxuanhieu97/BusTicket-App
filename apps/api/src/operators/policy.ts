@@ -22,6 +22,10 @@ export const policyInputSchema = z
     requirePhoneOtp: z.boolean().optional(),
     /** Phần trăm cọc để xác nhận vé (100 = trả đủ). Bỏ trống = giữ nguyên. */
     depositPercent: z.number().int().min(1).max(100).optional(),
+    /** Phút ân hạn sau hạn thanh toán: chỗ vẫn khóa chờ tiền ngân hàng báo chậm. Bỏ trống = giữ nguyên. */
+    paymentGraceMinutes: z.number().int().min(0).max(30).optional(),
+    /** Tiền về sau khi đơn hết hạn: tự xác nhận lại nếu chỗ còn trống. Bỏ trống = giữ nguyên. */
+    autoReinstateLatePayment: z.boolean().optional(),
   })
   .strict();
 /** Chính sách đầy đủ (mọi trường bắt buộc) — dạng lưu trong DB. */
@@ -39,4 +43,6 @@ export const DEFAULT_POLICY: PolicyInput = {
   maxActiveHoldsPerPhone: 2,
   requirePhoneOtp: false,
   depositPercent: 100,
+  paymentGraceMinutes: 3,
+  autoReinstateLatePayment: true,
 };

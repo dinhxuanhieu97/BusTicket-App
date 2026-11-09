@@ -89,7 +89,7 @@ export const SEAT_STATUS_SQL = `
   CASE
     WHEN NOT ts.sellable THEN 'BLOCKED'
     WHEN b.id IS NULL THEN 'AVAILABLE'
-    WHEN b.status = 'HOLDING' AND b.hold_expires_at > $2 THEN 'HELD'
+    WHEN b.status = 'HOLDING' AND b.release_at > $2 THEN 'HELD'
     WHEN b.status IN ('CONFIRMED', 'COMPLETED') THEN 'BOOKED'
     ELSE 'AVAILABLE'
   END`;

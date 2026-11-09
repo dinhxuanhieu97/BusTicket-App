@@ -89,7 +89,8 @@ describe('login', () => {
     expect(first.body).toMatchObject({ scope: 'mfa_setup', user: { role: 'PLATFORM_ADMIN', mfaEnabled: false } });
     const blocked = await http().get('/api/v1/admin/operators').set(bearer(first.body.accessToken)).expect(403);
     expect(blocked.body.error.code).toBe('MFA_SETUP_REQUIRED');
-    await http().get('/api/v1/auth/me').set(bearer(first.body.accessToken)).expect(200);
+    const me = await http().get('/api/v1/auth/me').set(bearer(first.body.accessToken)).expect(200);
+    expect(me.body).toMatchObject({ scope: 'mfa_setup', permissions: [] });
   });
 
   it('enabling 2FA revokes the setup token and returns a full token', async () => {
@@ -99,6 +100,8 @@ describe('login', () => {
     await http().get('/api/v1/auth/me').set(bearer(r.oldToken)).expect(401);
     const me = await http().get('/api/v1/auth/me').set(bearer(adminToken)).expect(200);
     expect(me.body).toMatchObject({ scope: 'full', user: { mfaEnabled: true } });
+    expect(me.body.permissions).toEqual(expect.arrayContaining(['operator.create', 'operator.list']));
+    expect(me.body.permissions).not.toContain('payment.read');
     await http().post('/api/v1/auth/mfa/setup').set(bearer(adminToken)).expect(409);
   });
 

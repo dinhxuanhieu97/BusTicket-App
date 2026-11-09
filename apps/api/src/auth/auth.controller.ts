@@ -1,3 +1,4 @@
+import { permissionsOf } from './permissions';
 import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -27,7 +28,9 @@ export class AuthController {
   @AllowScopes('full', 'mfa_setup')
   me(@Req() req: AuthedRequest) {
     const { id, operatorId, fullName, phone, role, mfaEnabled, scope } = req.auth;
-    return { user: { id, operatorId, fullName, phone, role, mfaEnabled }, scope };
+    // Phiên mới đăng nhập chưa bật 2FA (scope mfa_setup) chưa được dùng quyền nào.
+    const permissions = scope === 'full' ? permissionsOf(role) : [];
+    return { user: { id, operatorId, fullName, phone, role, mfaEnabled }, scope, permissions };
   }
 
   @Post('mfa/setup')

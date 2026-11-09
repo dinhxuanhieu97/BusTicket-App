@@ -97,8 +97,8 @@ describe('admin trip detail — fares and seat map of the trip itself', () => {
     expect(json).not.toContain('Nguyễn Văn Khách');
     expect(json).not.toMatch(/0912\s?345\s?678|84912345678/);
 
-    // Hold expired but not yet released by the background job → shown as available, no booking code.
-    s.clock.advanceMinutes(11);
+    // Hold past deadline + 3-minute grace but not yet swept by the background job → available, no booking code.
+    s.clock.advanceMinutes(13);
     const later = await s.trips.adminDetail(seed.op.id, seed.limoTrip.id);
     expect(later.seats.find((x) => x.code === 'A3')).toMatchObject({ status: 'AVAILABLE', bookingCode: null, holdExpiresAt: null });
     expect(later.summary).toMatchObject({ available: 23, held: 0, booked: 1 });

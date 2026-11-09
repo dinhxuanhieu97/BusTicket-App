@@ -33,6 +33,8 @@ async function bootstrap(): Promise<void> {
       bookingTokenSecret: requiredEnv('BOOKING_TOKEN_SECRET'),
       authTokenSecret: requiredEnv('AUTH_TOKEN_SECRET'),
       zaloSecretKeys: parseZaloSecretKeys(process.env.ZALO_APP_SECRET_KEYS),
+      // Dọn đơn giữ chỗ quá hạn mỗi phút (đặt 0 để tắt).
+      holdSweepIntervalMs: Number(process.env.HOLD_SWEEP_INTERVAL_MS ?? 60_000),
     }),
   );
   app.useGlobalFilters(new HttpErrorFilter());

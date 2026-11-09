@@ -95,9 +95,11 @@ export class OperatorsService {
       max_active_holds_per_phone: number;
       require_phone_otp: boolean;
       deposit_percent: number;
+      payment_grace_minutes: number;
+      auto_reinstate_late_payment: boolean;
     }>(
       `SELECT version, hold_minutes, max_units_per_booking, child_policy, max_active_holds_per_phone, require_phone_otp,
-              deposit_percent
+              deposit_percent, payment_grace_minutes, auto_reinstate_late_payment
        FROM operator_policies
        WHERE operator_id = $1 ORDER BY version DESC LIMIT 1`,
       [operatorId],
@@ -113,6 +115,8 @@ export class OperatorsService {
       maxActiveHoldsPerPhone: r.max_active_holds_per_phone,
       requirePhoneOtp: r.require_phone_otp,
       depositPercent: r.deposit_percent,
+      paymentGraceMinutes: r.payment_grace_minutes,
+      autoReinstateLatePayment: r.auto_reinstate_late_payment,
     };
   }
 
@@ -134,6 +138,8 @@ export class OperatorsService {
         maxActiveHoldsPerPhone: data.maxActiveHoldsPerPhone ?? current.maxActiveHoldsPerPhone,
         requirePhoneOtp: data.requirePhoneOtp ?? current.requirePhoneOtp,
         depositPercent: data.depositPercent ?? current.depositPercent,
+        paymentGraceMinutes: data.paymentGraceMinutes ?? current.paymentGraceMinutes,
+        autoReinstateLatePayment: data.autoReinstateLatePayment ?? current.autoReinstateLatePayment,
       };
       if (next.requirePhoneOtp && !this.sms.configured) {
         throw new DomainError(
@@ -150,10 +156,12 @@ export class OperatorsService {
   private async insertPolicy(c: Queryable, operatorId: string, version: number, p: PolicyInput): Promise<void> {
     await c.query(
       `INSERT INTO operator_policies (operator_id, version, hold_minutes, max_units_per_booking, child_policy,
-                                      max_active_holds_per_phone, require_phone_otp, deposit_percent)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                                      max_active_holds_per_phone, require_phone_otp, deposit_percent,
+                                      payment_grace_minutes, auto_reinstate_late_payment)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [operatorId, version, p.holdMinutes, p.maxUnitsPerBooking, JSON.stringify(p.childPolicy),
-        p.maxActiveHoldsPerPhone, p.requirePhoneOtp, p.depositPercent],
+        p.maxActiveHoldsPerPhone, p.requirePhoneOtp, p.depositPercent,
+        p.paymentGraceMinutes, p.autoReinstateLatePayment],
     );
   }
 }

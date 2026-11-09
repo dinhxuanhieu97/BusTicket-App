@@ -106,4 +106,12 @@ export class PublicController {
     if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
     return this.bookings.getByCode(code, token);
   }
+
+  /** Khách bỏ giữ chỗ để chọn lại: nhả chỗ ngay. Gọi lại nhiều lần an toàn (trả trạng thái hiện tại). */
+  @Post('bookings/:code/release')
+  @HttpCode(200)
+  releaseBooking(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+    if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
+    return this.bookings.releaseByCode(code, token);
+  }
 }

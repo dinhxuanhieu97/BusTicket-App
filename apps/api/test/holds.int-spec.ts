@@ -178,7 +178,14 @@ describe('createHold — hold expiry', () => {
     expect(
       await errorCode(s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'A1' }] }, newKey())),
     ).toBe('SEAT_UNAVAILABLE');
-    s.clock.advanceMinutes(1); // đúng 10 phút: hết hạn
+    s.clock.advanceMinutes(1); // đúng 10 phút: hết hạn thanh toán, chỗ vẫn khóa 3 phút ân hạn chờ tiền báo chậm
+    expect(
+      await errorCode(s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'A1' }] }, newKey())),
+    ).toBe('SEAT_UNAVAILABLE');
+    const inGrace = await s.bookings.getByCode(first.booking.code, first.accessToken);
+    expect(inGrace).toMatchObject({ status: 'HOLDING', amountDueNow: 0 });
+    expect(inGrace.releaseAt).toBe(new Date(T0.getTime() + 13 * 60_000).toISOString());
+    s.clock.advanceMinutes(3); // hết ân hạn: nhả chỗ
     expect(await seatStatus(seed.bedTrip.id, 'A1')).toBe('AVAILABLE');
     const second = await s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'A1' }] }, newKey());
     expect(second.booking.code).not.toBe(first.booking.code);
@@ -189,7 +196,7 @@ describe('createHold — hold expiry', () => {
 
   it('shows a stale hold as EXPIRED before any background job runs', async () => {
     const r = await s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'A2' }] }, newKey());
-    s.clock.advanceMinutes(11);
+    s.clock.advanceMinutes(13);
     expect((await s.bookings.getByCode(r.booking.code, r.accessToken)).status).toBe('EXPIRED');
     expect(await seatStatus(seed.bedTrip.id, 'A2')).toBe('AVAILABLE');
   });
@@ -318,7 +325,7 @@ it('holds both directions under one code or neither when a return seat is taken'
   expect((await s.bookings.createHold(request, key)).booking.code).toBe(result.booking.code);
   expect(await errorCode(s.bookings.createHold({...request, items: [{seatCode:'A3'}]},newKey()))).toBe('SEAT_UNAVAILABLE');
   expect(await seatStatus(request.tripId, 'A3')).toBe('AVAILABLE');
-  s.clock.set(new Date(T0.getTime()+11*60_000));
+  s.clock.set(new Date(T0.getTime()+13*60_000));
   await s.bookings.createHold({...contact, tripId: inbound.id, items:[{seatCode:'A2'}]}, newKey());
   expect(await seatStatus(request.tripId, 'A2')).toBe('AVAILABLE');
 });

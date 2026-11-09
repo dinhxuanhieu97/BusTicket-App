@@ -174,7 +174,7 @@ describe('T5 review: trips status and admin counts', () => {
       'review-count-0001',
     );
     const before = (await s.trips.listForAdmin(seed.op.id, '2027-02-01')).find((t) => t.id === seed.bedTrip.id)!;
-    s.clock.advanceMinutes(11);
+    s.clock.advanceMinutes(13); // hạn thanh toán + ân hạn
     const after = (await s.trips.listForAdmin(seed.op.id, '2027-02-01')).find((t) => t.id === seed.bedTrip.id)!;
     expect(after.capacity).toBe(40);
     expect(after.available).toBe(before.available + 1);

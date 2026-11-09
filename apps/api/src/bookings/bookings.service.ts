@@ -48,7 +48,10 @@ export interface BookingView {
   code: string;
   status: string;
   tripId: string;
+  /** Hạn thanh toán khách thấy. */
   holdExpiresAt: string | null;
+  /** Lúc nhả chỗ thật (hạn thanh toán + ân hạn chờ tiền ngân hàng báo chậm). */
+  releaseAt: string | null;
   note?: string;
   totalAmount: number;
   /** Số tiền phải trả để xác nhận vé (cọc hoặc toàn bộ). */
@@ -73,6 +76,7 @@ interface BookingRow {
   status: string;
   trip_id: string;
   hold_expires_at: Date | null;
+  release_at: Date | null;
   total_amount: number;
   deposit_amount: number;
   paid_amount: number;
@@ -83,7 +87,7 @@ interface BookingRow {
 }
 
 const BOOKING_COLUMNS =
-  'id, code, status, trip_id, hold_expires_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note';
+  'id, code, status, trip_id, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note';
 
 const MAX_CODE_ATTEMPTS = 5;
 
@@ -205,7 +209,7 @@ export class BookingsService {
     await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`hold-phone:${trip.operator_id}:${phone}`]);
     const { rows: active } = await c.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM bookings
-       WHERE operator_id = $1 AND contact_phone = $2 AND status = 'HOLDING' AND hold_expires_at > $3`,
+       WHERE operator_id = $1 AND contact_phone = $2 AND status = 'HOLDING' AND release_at > $3`,
       [trip.operator_id, phone, now],
     );
     if (active[0]!.n >= policy.maxActiveHoldsPerPhone) {
@@ -247,16 +251,18 @@ export class BookingsService {
     const total = pricedLegs.reduce((sum, leg) => sum + leg.priced.total, 0);
     const { rows: ops } = await c.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [trip.operator_id]);
     const holdExpiresAt = new Date(now.getTime() + policy.holdMinutes * 60_000);
+    const releaseAt = new Date(holdExpiresAt.getTime() + policy.paymentGraceMinutes * 60_000);
     let booking: BookingRow | undefined;
     for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS && !booking; attempt++) {
       const { rows } = await c.query<BookingRow>(
         `INSERT INTO bookings (operator_id, trip_id, code, status, hold_expires_at, contact_name, contact_phone,
-                               total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at, passenger_note)
-         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13)
+                               total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at, passenger_note,
+                               release_at)
+         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14)
          ON CONFLICT (code) DO NOTHING
          RETURNING ${BOOKING_COLUMNS}`,
         [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, total,
-          depositAmount(total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now, note || null],
+          depositAmount(total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now, note || null, releaseAt],
       );
       booking = rows[0];
     }
@@ -284,7 +290,7 @@ export class BookingsService {
   private async expireDueHoldsForTrip(c: Queryable, tripId: string, now: Date): Promise<void> {
     const { rows } = await c.query<{ id: string }>(
       `UPDATE bookings SET status = 'EXPIRED', updated_at = $2
-       WHERE id IN (SELECT booking_id FROM booking_items WHERE trip_id = $1) AND status = 'HOLDING' AND hold_expires_at <= $2 RETURNING id`,
+       WHERE id IN (SELECT booking_id FROM booking_items WHERE trip_id = $1) AND status = 'HOLDING' AND release_at <= $2 RETURNING id`,
       [tripId, now],
     );
     if (rows.length) {
@@ -299,7 +305,8 @@ export class BookingsService {
   async expireDueHolds(): Promise<number> {
     const now = this.clock.now();
     const { rows } = await this.db.query<{ trip_id: string }>(
-      `SELECT DISTINCT trip_id FROM bookings WHERE status = 'HOLDING' AND hold_expires_at <= $1 ORDER BY trip_id`,
+      `SELECT DISTINCT i.trip_id FROM bookings b JOIN booking_items i ON i.booking_id = b.id
+       WHERE b.status = 'HOLDING' AND b.release_at <= $1 ORDER BY i.trip_id`,
       [now],
     );
     let count = 0;
@@ -307,7 +314,8 @@ export class BookingsService {
       count += await this.db.tx(async (c) => {
         await c.query('SELECT id FROM trips WHERE id = $1 FOR NO KEY UPDATE', [trip_id]);
         const { rows: due } = await c.query<{ n: number }>(
-          `SELECT COUNT(*)::int AS n FROM bookings WHERE trip_id = $1 AND status = 'HOLDING' AND hold_expires_at <= $2`,
+          `SELECT COUNT(*)::int AS n FROM bookings
+           WHERE id IN (SELECT booking_id FROM booking_items WHERE trip_id = $1) AND status = 'HOLDING' AND release_at <= $2`,
           [trip_id, now],
         );
         await this.expireDueHoldsForTrip(c, trip_id, now);
@@ -329,6 +337,41 @@ export class BookingsService {
       throw notFound('đơn');
     }
     return this.view(this.db, b);
+  }
+
+  /**
+   * Khách tự bỏ giữ chỗ (đổi ý, chọn lại chỗ khác): nhả chỗ ngay thay vì chờ hết hạn.
+   * Chỉ áp dụng cho đơn đang giữ và chưa trả đồng nào; gọi lại khi đơn đã hủy/hết hạn trả về trạng thái hiện tại.
+   */
+  async releaseByCode(code: string, accessToken: string): Promise<BookingView> {
+    const { rows } = await this.db.query<BookingRow>(`SELECT ${BOOKING_COLUMNS} FROM bookings WHERE code = $1`, [code]);
+    const found = rows[0];
+    if (!found || !verifyBookingAccessToken(this.tokenSecret.value, found.id, found.access_token_version, accessToken)) {
+      throw notFound('đơn');
+    }
+    return this.db.tx(async (c) => {
+      // Cùng thứ tự khóa với giữ chỗ: mọi chuyến của đơn theo ID, rồi mới tới đơn.
+      await c.query(
+        `SELECT id FROM trips WHERE id IN (SELECT trip_id FROM booking_items WHERE booking_id = $1) ORDER BY id FOR NO KEY UPDATE`,
+        [found.id],
+      );
+      const { rows: locked } = await c.query<BookingRow>(`SELECT ${BOOKING_COLUMNS} FROM bookings WHERE id = $1 FOR UPDATE`, [found.id]);
+      const b = locked[0]!;
+      // Token có thể vừa bị thu hồi giữa lần đọc đầu và lúc khóa.
+      if (!verifyBookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version, accessToken)) throw notFound('đơn');
+      const now = this.clock.now();
+      if (b.status === 'CANCELLED' || b.status === 'EXPIRED') return this.view(c, b);
+      if (b.status !== 'HOLDING' || b.paid_amount > 0) {
+        throw new DomainError('CONFLICT', 'Đơn đã nhận tiền nên không tự hủy được. Vui lòng liên hệ nhà xe.', { status: b.status });
+      }
+      // Luôn CANCELLED (kể cả đã quá hạn): khách chủ động bỏ đơn, tiền về muộn sau đó không được tự xác nhận lại.
+      const { rows: updated } = await c.query<BookingRow>(
+        `UPDATE bookings SET status = 'CANCELLED', updated_at = $2 WHERE id = $1 RETURNING ${BOOKING_COLUMNS}`,
+        [b.id, now],
+      );
+      await c.query('UPDATE trip_seats SET booking_id = NULL WHERE booking_id = $1', [b.id]);
+      return this.view(c, updated[0]!);
+    });
   }
 
   private async findByKey(q: Queryable, operatorId: string, key: string): Promise<BookingRow | undefined> {
@@ -366,13 +409,14 @@ export class BookingsService {
     );
     const roundTrip = rows.some(r => r.trip_id !== b.trip_id);
     // Đơn giữ chỗ quá hạn hiển thị là EXPIRED ngay cả khi tác vụ nền chưa chạy.
-    const expired = b.status === 'HOLDING' && b.hold_expires_at !== null && b.hold_expires_at <= this.clock.now();
+    const expired = b.status === 'HOLDING' && b.release_at !== null && b.release_at <= this.clock.now();
     return {
       code: b.code,
       ...(b.passenger_note ? { note: b.passenger_note } : {}),
       status: expired ? 'EXPIRED' : b.status,
       tripId: b.trip_id,
       holdExpiresAt: b.hold_expires_at ? b.hold_expires_at.toISOString() : null,
+      releaseAt: b.status === 'HOLDING' && b.release_at && !expired ? b.release_at.toISOString() : null,
       totalAmount: b.total_amount,
       depositAmount: b.deposit_amount,
       paidAmount: b.paid_amount,

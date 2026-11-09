@@ -30,10 +30,17 @@ const SETUP: Permission[] = [
 ];
 /** Thao tác tiền: chỉ người của nhà xe (quản trị nền tảng không động vào tiền của nhà xe). */
 const MONEY: Permission[] = ['payment.read', 'payment.record', 'payment.manage'];
+/** Quyền chỉ của nền tảng — không thuộc phạm vi một nhà xe. */
+const PLATFORM_ONLY: ReadonlySet<Permission> = new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write']);
+/**
+ * Chủ xe có toàn quyền trong nhà xe của mình: mọi quyền trừ quyền chỉ của nền tảng.
+ * Quyền mới thêm vào PERMISSIONS tự động thuộc về chủ xe (không phải nhớ cập nhật tay).
+ */
+export const ALL_OPERATOR_PERMISSIONS: readonly Permission[] = PERMISSIONS.filter((p) => !PLATFORM_ONLY.has(p));
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   PLATFORM_ADMIN: new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write', ...SETUP]),
-  OWNER: new Set<Permission>([...SETUP, ...MONEY]),
+  OWNER: new Set<Permission>(ALL_OPERATOR_PERMISSIONS),
   DISPATCHER: new Set<Permission>(['policy.read', 'fleet.read', 'fleet.write', 'route.read', 'route.write', 'trip.read', 'trip.write']),
   // Bán vé tại quầy được ghi nhận tiền mặt khách trả cho đơn; không phân bổ tay/xử lý ngoại lệ.
   SELLER: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'payment.read', 'payment.record']),
@@ -50,4 +57,9 @@ export const OPERATOR_ASSIGNABLE_ROLES: ReadonlySet<Role> = new Set<Role>(['OWNE
 
 export function can(role: Role, perm: Permission): boolean {
   return ROLE_PERMISSIONS[role].has(perm);
+}
+
+/** Danh sách quyền của vai trò (theo thứ tự khai báo) — để giao diện dựng menu; máy chủ vẫn kiểm tra từng API. */
+export function permissionsOf(role: Role): Permission[] {
+  return PERMISSIONS.filter((p) => ROLE_PERMISSIONS[role].has(p));
 }

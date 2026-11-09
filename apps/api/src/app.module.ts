@@ -15,6 +15,7 @@ import { AuthConfig, AuthService } from './auth/auth.service';
 import { SecretBox } from './auth/totp';
 import { UsersService } from './auth/users.service';
 import { BookingsService, TokenSecret } from './bookings/bookings.service';
+import { HoldSweepConfig, HoldSweeper } from './bookings/hold-sweeper';
 import { Clock, SystemClock } from './common/clock';
 import { Db, DbConfig } from './db/db';
 import { OperatorsService } from './operators/operators.service';
@@ -34,6 +35,8 @@ export interface AppOptions {
   /** Secret Key Mini App theo mã nhà xe (env `ZALO_APP_SECRET_KEYS`). */
   zaloSecretKeys?: Record<string, string>;
   zaloPhoneResolver?: ZaloPhoneResolver;
+  /** Chu kỳ dọn đơn giữ chỗ quá hạn (ms). Bỏ trống/0 = tắt; production đặt qua env `HOLD_SWEEP_INTERVAL_MS`. */
+  holdSweepIntervalMs?: number;
 }
 
 @Module({})
@@ -65,12 +68,14 @@ export class AppModule {
         VehiclesService,
         TripsService,
         BookingsService,
+        { provide: HoldSweepConfig, useValue: new HoldSweepConfig(opts.holdSweepIntervalMs ?? 0) },
+        HoldSweeper,
         AuditService,
         AuthService,
         UsersService,
         AuthGuard,
       ],
-      exports: [Db, SeatLayoutsService, OperatorsService, VehiclesService, TripsService, BookingsService, AuthService, UsersService],
+      exports: [Db, SeatLayoutsService, OperatorsService, VehiclesService, TripsService, BookingsService, HoldSweeper, AuthService, UsersService],
     };
   }
 }

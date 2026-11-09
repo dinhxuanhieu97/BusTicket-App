@@ -1,6 +1,6 @@
 import { signJwt, verifyJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
-import { can, MFA_REQUIRED_ROLES, OPERATOR_ASSIGNABLE_ROLES, PERMISSIONS, ROLE_PERMISSIONS, ROLES } from './permissions';
+import { ALL_OPERATOR_PERMISSIONS, can, MFA_REQUIRED_ROLES, OPERATOR_ASSIGNABLE_ROLES, PERMISSIONS, permissionsOf, ROLE_PERMISSIONS, ROLES } from './permissions';
 import { base32Decode, base32Encode, hotp, SecretBox, verifyTotp } from './totp';
 
 describe('password hashing', () => {
@@ -123,6 +123,15 @@ describe('role permissions', () => {
       expect(can(role, 'trip.write')).toBe(false);
       expect(can(role, 'fleet.write')).toBe(false);
       expect(can(role, 'user.manage')).toBe(false);
+    }
+  });
+
+  it('the owner has every operator permission (only platform-only ones are excluded)', () => {
+    expect(permissionsOf('OWNER')).toEqual([...ALL_OPERATOR_PERMISSIONS]);
+    expect(PERMISSIONS.filter((p) => !can('OWNER', p))).toEqual(['operator.create', 'operator.list', 'layout.library.write']);
+    for (const role of ROLES) {
+      if (role === 'PLATFORM_ADMIN') continue;
+      for (const p of permissionsOf(role)) expect(can('OWNER', p)).toBe(true);
     }
   });
 

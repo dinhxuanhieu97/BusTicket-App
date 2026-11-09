@@ -56,6 +56,11 @@ async function hold(seatCode: string, tripId = seed.bedTrip.id, occupancy = 1) {
   );
 }
 
+async function seatStatus(tripId: string, code: string) {
+  const map = await s.trips.seatMap(tripId);
+  return map.seats.find((x) => x.code === code)!.status;
+}
+
 async function booking(code: string) {
   const { rows } = await s.db.query<{ status: string; paid_amount: number; payment_status: string; deposit_amount: number; total_amount: number }>(
     'SELECT status, paid_amount, payment_status, deposit_amount, total_amount FROM bookings WHERE code = $1',
@@ -204,7 +209,7 @@ describe('deposit and partial payments', () => {
 describe('late, unmatched and ambiguous transfers', () => {
   it('AC-09: money arriving after the hold expired and the seat was resold is flagged, the new buyer keeps the seat', async () => {
     const first = await hold('B1');
-    s.clock.advanceMinutes(11);
+    s.clock.advanceMinutes(13);
     const second = await hold('B1'); // hết hạn "lười" → bán lại
     const late = transfer(first.booking.code, 380_000);
     await webhook(late).expect(200);
@@ -222,12 +227,52 @@ describe('late, unmatched and ambiguous transfers', () => {
     expect((await booking(h.booking.code)).status).toBe('CONFIRMED');
   });
 
-  it('a transfer made after the hold expired is flagged even if nobody took the seat', async () => {
+  it('a transfer made during the grace period (after the shown deadline) still confirms', async () => {
+    const h = await hold('B4');
+    s.clock.advanceMinutes(12); // quá hạn 10 phút, còn trong 3 phút ân hạn
+    await webhook(transfer(h.booking.code, h.booking.totalAmount)).expect(200);
+    expect(await booking(h.booking.code)).toMatchObject({ status: 'CONFIRMED', paid_amount: h.booking.totalAmount });
+    expect((await paymentsFor(h.booking.code))[0]).toMatchObject({ review_status: 'NONE' });
+  });
+
+  it('a transfer made after release re-books the same seats when nobody took them (auto-reinstate)', async () => {
     const h = await hold('B5');
-    s.clock.advanceMinutes(12);
+    s.clock.advanceMinutes(14);
+    expect(await s.bookings.expireDueHolds()).toBeGreaterThanOrEqual(1);
     await webhook(transfer(h.booking.code, 380_000)).expect(200);
-    expect(await booking(h.booking.code)).toMatchObject({ status: 'HOLDING', paid_amount: 0 });
+    expect(await booking(h.booking.code)).toMatchObject({ status: 'CONFIRMED', paid_amount: 380_000 });
+    expect(await seatStatus(seed.bedTrip.id, 'B5')).toBe('BOOKED');
+    const { rows } = await s.db.query(
+      "SELECT data FROM audit_logs WHERE action = 'booking.reinstate' AND data->>'bookingCode' = $1",
+      [h.booking.code],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.data).toMatchObject({ previousStatus: 'EXPIRED' });
+  });
+
+  it('a late transfer is flagged LATE when the operator turned auto-reinstate off', async () => {
+    const policy = await s.operators.currentPolicy(seed.op.id);
+    const { operatorId: _o, version: _v, ...input } = policy;
+    await s.operators.updatePolicy(seed.op.id, { ...input, autoReinstateLatePayment: false });
+    try {
+      const h = await hold('B6');
+      s.clock.advanceMinutes(14);
+      await webhook(transfer(h.booking.code, 380_000)).expect(200);
+      expect(await booking(h.booking.code)).toMatchObject({ paid_amount: 0 });
+      expect((await paymentsFor(h.booking.code))[0]).toMatchObject({ review_reason: 'LATE', allocated_amount: 0 });
+      expect(await seatStatus(seed.bedTrip.id, 'B6')).toBe('AVAILABLE');
+    } finally {
+      await s.operators.updatePolicy(seed.op.id, { ...input, autoReinstateLatePayment: true });
+    }
+  });
+
+  it('a late partial transfer below the deposit is flagged LATE and does not re-book', async () => {
+    const h = await hold('B8');
+    s.clock.advanceMinutes(14);
+    await webhook(transfer(h.booking.code, 100_000)).expect(200);
+    expect(await booking(h.booking.code)).toMatchObject({ paid_amount: 0 });
     expect((await paymentsFor(h.booking.code))[0]).toMatchObject({ review_reason: 'LATE' });
+    expect(await seatStatus(seed.bedTrip.id, 'B8')).toBe('AVAILABLE');
   });
 
   it('AC-05: a payment and a competing hold racing on an expired booking never both win', async () => {

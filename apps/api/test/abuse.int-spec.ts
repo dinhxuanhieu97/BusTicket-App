@@ -127,7 +127,7 @@ describe('active holds per phone', () => {
     const phone = freshPhone();
     await s.bookings.createHold(holdBody('B5', phone), newKey());
     await s.bookings.createHold(holdBody('B7', phone), newKey());
-    s.clock.advanceMinutes(10);
+    s.clock.advanceMinutes(13); // hạn thanh toán 10 phút + 3 phút ân hạn
     await s.bookings.createHold(holdBody('B9', phone), newKey());
   });
 
