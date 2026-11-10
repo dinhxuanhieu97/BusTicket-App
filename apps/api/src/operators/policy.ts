@@ -11,6 +11,12 @@ export const childPolicySchema = z
   .strict();
 export type ChildPolicy = z.infer<typeof childPolicySchema>;
 
+const fixedDepositSchema = z.object({
+  single: z.number().int().min(1).max(20_000_000),
+  double: z.number().int().min(1).max(20_000_000),
+}).strict();
+export type FixedDeposit = z.infer<typeof fixedDepositSchema>;
+
 export const policyInputSchema = z
   .object({
     holdMinutes: z.number().int().min(1).max(120),
@@ -22,6 +28,8 @@ export const policyInputSchema = z
     requirePhoneOtp: z.boolean().optional(),
     /** Phần trăm cọc để xác nhận vé (100 = trả đủ). Bỏ trống = giữ nguyên. */
     depositPercent: z.number().int().min(1).max(100).optional(),
+    /** Cọc theo số người mỗi chỗ, đơn vị VND. null dùng lại tỷ lệ phần trăm. */
+    fixedDeposit: fixedDepositSchema.nullable().optional(),
     /** Phút ân hạn sau hạn thanh toán: chỗ vẫn khóa chờ tiền ngân hàng báo chậm. Bỏ trống = giữ nguyên. */
     paymentGraceMinutes: z.number().int().min(0).max(30).optional(),
     /** Tiền về sau khi đơn hết hạn: tự xác nhận lại nếu chỗ còn trống. Bỏ trống = giữ nguyên. */
@@ -43,6 +51,7 @@ export const DEFAULT_POLICY: PolicyInput = {
   maxActiveHoldsPerPhone: 2,
   requirePhoneOtp: false,
   depositPercent: 100,
+  fixedDeposit: null,
   paymentGraceMinutes: 3,
   autoReinstateLatePayment: true,
 };

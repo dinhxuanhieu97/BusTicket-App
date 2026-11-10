@@ -1,5 +1,5 @@
 import { DomainError } from '../common/errors';
-import type { ChildPolicy } from '../operators/policy';
+import type { ChildPolicy, FixedDeposit } from '../operators/policy';
 
 /** Trần giá một chỗ (VND). Giữ tổng đơn dưới giới hạn cột `int` (≈2,1 tỷ) với tối đa 20 chỗ/đơn. */
 export const MAX_UNIT_PRICE = 20_000_000;
@@ -13,6 +13,11 @@ export const MAX_BOOKING_TOTAL = 2_000_000_000;
 export function depositAmount(total: number, percent: number): number {
   if (percent >= 100) return total;
   return Math.min(total, Math.ceil((total * percent) / 100 / 1000) * 1000);
+}
+
+/** Giới hạn tiền cọc theo tổng giá của chỗ, kể cả khi có phụ phí. */
+export function fixedUnitDeposit(lineTotal: number, occupancy: number, deposit: FixedDeposit): number {
+  return Math.min(lineTotal, occupancy === 1 ? deposit.single : deposit.double);
 }
 
 /**

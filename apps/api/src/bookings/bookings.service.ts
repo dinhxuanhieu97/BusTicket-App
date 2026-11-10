@@ -13,7 +13,7 @@ import { normalizeVnPhone } from '../common/phone';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { OperatorsService } from '../operators/operators.service';
 import { SEAT_CODE } from '../seat-layouts/layout-parser';
-import { amountDueNow, depositAmount, priceItems } from './pricing';
+import { amountDueNow, depositAmount, fixedUnitDeposit, priceItems } from './pricing';
 import { TokenSecret } from './token-secret';
 
 export { TokenSecret };
@@ -249,6 +249,11 @@ export class BookingsService {
       pricedLegs.push({ tripId, codes, priced });
     }
     const total = pricedLegs.reduce((sum, leg) => sum + leg.priced.total, 0);
+    const fixedDeposit = policy.fixedDeposit;
+    const deposit = fixedDeposit
+      ? pricedLegs.flatMap(({ priced }) => priced.items)
+        .reduce((sum, item) => sum + fixedUnitDeposit(item.lineTotal, item.occupancy, fixedDeposit), 0)
+      : depositAmount(total, policy.depositPercent);
     const { rows: ops } = await c.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [trip.operator_id]);
     const holdExpiresAt = new Date(now.getTime() + policy.holdMinutes * 60_000);
     const releaseAt = new Date(holdExpiresAt.getTime() + policy.paymentGraceMinutes * 60_000);
@@ -262,7 +267,7 @@ export class BookingsService {
          ON CONFLICT (code) DO NOTHING
          RETURNING ${BOOKING_COLUMNS}`,
         [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, total,
-          depositAmount(total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now, note || null, releaseAt],
+          deposit, JSON.stringify(policy), key, requestHash, now, note || null, releaseAt],
       );
       booking = rows[0];
     }

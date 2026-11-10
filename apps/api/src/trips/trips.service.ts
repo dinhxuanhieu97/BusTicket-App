@@ -594,6 +594,8 @@ export class TripsService {
         requiresPhoneOtp: policy.requirePhoneOtp,
         maxUnitsPerBooking: policy.maxUnitsPerBooking,
         holdMinutes: policy.holdMinutes,
+        depositPercent: policy.depositPercent,
+        fixedDeposit: policy.fixedDeposit,
         /** Trẻ em đi kèm: chỉ áp dụng cho phòng/chỗ 1 người. */
         childPolicy: {
           freeUnderAge: policy.childPolicy.freeUnderAge,

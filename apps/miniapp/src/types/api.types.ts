@@ -54,6 +54,9 @@ export interface SeatMap {
     requiresPhoneOtp: boolean;
     maxUnitsPerBooking: number;
     holdMinutes: number;
+    depositPercent?: number;
+    fixedDeposit?: { single: number; double: number } | null;
+    childPolicy?: { price: number };
   };
   vehicle: { name: string; code: string };
   layout: {

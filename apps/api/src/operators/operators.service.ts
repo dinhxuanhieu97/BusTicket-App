@@ -118,11 +118,13 @@ export class OperatorsService {
       max_active_holds_per_phone: number;
       require_phone_otp: boolean;
       deposit_percent: number;
+      deposit_single: number | null;
+      deposit_double: number | null;
       payment_grace_minutes: number;
       auto_reinstate_late_payment: boolean;
     }>(
       `SELECT version, hold_minutes, max_units_per_booking, child_policy, max_active_holds_per_phone, require_phone_otp,
-              deposit_percent, payment_grace_minutes, auto_reinstate_late_payment
+              deposit_percent, deposit_single, deposit_double, payment_grace_minutes, auto_reinstate_late_payment
        FROM operator_policies
        WHERE operator_id = $1 ORDER BY version DESC LIMIT 1`,
       [operatorId],
@@ -138,6 +140,9 @@ export class OperatorsService {
       maxActiveHoldsPerPhone: r.max_active_holds_per_phone,
       requirePhoneOtp: r.require_phone_otp,
       depositPercent: r.deposit_percent,
+      fixedDeposit: r.deposit_single !== null && r.deposit_double !== null
+        ? { single: r.deposit_single, double: r.deposit_double }
+        : null,
       paymentGraceMinutes: r.payment_grace_minutes,
       autoReinstateLatePayment: r.auto_reinstate_late_payment,
     };
@@ -161,6 +166,7 @@ export class OperatorsService {
         maxActiveHoldsPerPhone: data.maxActiveHoldsPerPhone ?? current.maxActiveHoldsPerPhone,
         requirePhoneOtp: data.requirePhoneOtp ?? current.requirePhoneOtp,
         depositPercent: data.depositPercent ?? current.depositPercent,
+        fixedDeposit: data.fixedDeposit === undefined ? current.fixedDeposit : data.fixedDeposit,
         paymentGraceMinutes: data.paymentGraceMinutes ?? current.paymentGraceMinutes,
         autoReinstateLatePayment: data.autoReinstateLatePayment ?? current.autoReinstateLatePayment,
       };
@@ -180,11 +186,11 @@ export class OperatorsService {
     await c.query(
       `INSERT INTO operator_policies (operator_id, version, hold_minutes, max_units_per_booking, child_policy,
                                       max_active_holds_per_phone, require_phone_otp, deposit_percent,
-                                      payment_grace_minutes, auto_reinstate_late_payment)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                                      payment_grace_minutes, auto_reinstate_late_payment, deposit_single, deposit_double)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [operatorId, version, p.holdMinutes, p.maxUnitsPerBooking, JSON.stringify(p.childPolicy),
         p.maxActiveHoldsPerPhone, p.requirePhoneOtp, p.depositPercent,
-        p.paymentGraceMinutes, p.autoReinstateLatePayment],
+        p.paymentGraceMinutes, p.autoReinstateLatePayment, p.fixedDeposit?.single ?? null, p.fixedDeposit?.double ?? null],
     );
   }
 }

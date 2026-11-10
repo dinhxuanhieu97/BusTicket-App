@@ -13,12 +13,7 @@ export const BOOKING_POLL_MS = 5_000;
 export function bookingPollInterval(
   booking: BookingView | undefined,
 ): number | false {
-  if (!booking) return false;
-  if (booking.status === "HOLDING") return BOOKING_POLL_MS;
-  // Đã xác nhận nhưng còn nợ (trả cọc): vẫn theo dõi để cập nhật số đã trả, thưa hơn.
-  if (booking.status === "CONFIRMED" && booking.amountDueNow > 0)
-    return BOOKING_POLL_MS * 6;
-  return false;
+  return booking?.status === "HOLDING" ? BOOKING_POLL_MS : false;
 }
 
 export function bookingQueryOptions(

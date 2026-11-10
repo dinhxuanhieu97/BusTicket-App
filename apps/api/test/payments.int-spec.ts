@@ -206,6 +206,80 @@ describe('deposit and partial payments', () => {
   });
 });
 
+describe('fixed deposits', () => {
+  const account = '0123499998';
+  let fixedSeed: typeof seed;
+  let fixedOwner: AuthUser;
+
+  beforeAll(async () => {
+    fixedSeed = await seedOperatorWithTrips(s, 'CD');
+    fixedOwner = await staff(fixedSeed.op.id, 'OWNER');
+    await s.payments.configureAccount(fixedOwner, fixedSeed.op.id, {
+      bankCode: 'MB', accountNumber: account, accountName: 'FIXED DEPOSIT TEST', webhookApiKey: KEY_PN,
+    });
+    await s.operators.updatePolicy(fixedSeed.op.id, {
+      ...POLICY, fixedDeposit: { single: 300_000, double: 450_000 },
+    });
+  });
+
+  it.each([['A1', 1, 300_000], ['A2', 2, 450_000]] as const)(
+    'quotes and charges the fixed deposit for room %s with occupancy %i',
+    async (seat, occupancy, amount) => {
+      const map = await http().get(`/api/v1/trips/${fixedSeed.limoTrip.id}/seats`).expect(200);
+      expect(map.body.booking.fixedDeposit).toEqual({ single: 300_000, double: 450_000 });
+      const h = await hold(seat, fixedSeed.limoTrip.id, occupancy);
+      expect(h.booking.depositAmount).toBe(amount);
+      const response = await http().get(`/api/v1/bookings/${h.booking.code}/payment?purpose=deposit`)
+        .set('X-Booking-Token', h.accessToken).expect(200);
+      expect(response.body.amountDue).toBe(amount);
+      expect(new URL(response.body.qrImageUrl).searchParams.get('amount')).toBe(String(amount));
+    },
+  );
+
+  it('sums room deposits, requests only the unpaid deposit after a partial transfer, and stops after confirmation', async () => {
+    const h = await s.bookings.createHold({
+      tripId: fixedSeed.limoTrip.id,
+      contactName: 'Test customer',
+      contactPhone: freshPhone(),
+      items: [{ seatCode: 'A3', occupancy: 1 }, { seatCode: 'A4', occupancy: 2 }],
+    }, newKey());
+    expect(h.booking).toMatchObject({ totalAmount: 1_150_000, depositAmount: 750_000 });
+    const paymentPath = `/api/v1/bookings/${h.booking.code}/payment`;
+    const depositQr = () => http().get(paymentPath + '?purpose=deposit').set('X-Booking-Token', h.accessToken).expect(200);
+    const qr = await depositQr();
+    expect(new URL(qr.body.qrImageUrl).searchParams.get('amount')).toBe('750000');
+    await webhook(transfer(h.booking.code, 200_000, { accountNumber: account })).expect(200);
+    expect((await depositQr()).body.amountDue).toBe(550_000);
+    await webhook(transfer(h.booking.code, 550_000, { accountNumber: account })).expect(200);
+    expect(await booking(h.booking.code)).toMatchObject({ status: 'CONFIRMED', payment_status: 'DEPOSIT_PAID' });
+    expect((await depositQr()).body).toMatchObject({ payable: false, amountDue: 0 });
+    const regular = await http().get(paymentPath).set('X-Booking-Token', h.accessToken).expect(200);
+    expect(regular.body.amountDue).toBe(400_000);
+  });
+
+  it('combines two concurrent transfers toward the same fixed deposit', async () => {
+    const h = await hold('A5', fixedSeed.limoTrip.id);
+    await Promise.all([
+      webhook(transfer(h.booking.code, 100_000, { accountNumber: account })).expect(200),
+      webhook(transfer(h.booking.code, 200_000, { accountNumber: account })).expect(200),
+    ]);
+    expect(await booking(h.booking.code)).toMatchObject({ status: 'CONFIRMED', paid_amount: 300_000 });
+  });
+
+  it('counts only one transfer when webhook and manual entry arrive together', async () => {
+    const h = await hold('A6', fixedSeed.limoTrip.id);
+    const bankReference = 'FIXED-DEPOSIT-RACE';
+    const [, manualResult] = await Promise.all([
+      webhook(transfer(h.booking.code, 150_000, { accountNumber: account, referenceCode: bankReference })).expect(200),
+      errorCode(s.payments.recordManual(fixedOwner, fixedSeed.op.id, {
+        bookingCode: h.booking.code, amount: 150_000, method: 'MANUAL_BANK', bankReference,
+      }, newKey())),
+    ]);
+    expect(['NO_ERROR', 'CONFLICT']).toContain(manualResult);
+    expect(await booking(h.booking.code)).toMatchObject({ status: 'HOLDING', paid_amount: 150_000 });
+  });
+});
+
 describe('late, unmatched and ambiguous transfers', () => {
   it('AC-09: money arriving after the hold expired and the seat was resold is flagged, the new buyer keeps the seat', async () => {
     const first = await hold('B1');

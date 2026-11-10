@@ -35,7 +35,7 @@ export default function BookingDetailPage() {
   const holding = booking?.status === "HOLDING";
   const now = useNow(holding);
   const left = secondsLeft(booking?.holdExpiresAt ?? null, now);
-  const payable = !!booking && needsPayment(booking);
+  const payable = !!booking && left > 0 && needsPayment(booking);
   const payment = usePaymentInstructions(
     code,
     saved?.accessToken,
@@ -195,23 +195,12 @@ function Amounts({ booking }: { booking: BookingView }) {
               {item.seatCode} · {item.occupancy} người
               {item.infantCount > 0 ? ` · ${item.infantCount} trẻ em` : ""}
             </dt>
-            <dd>{formatCurrency(item.lineTotal)}</dd>
           </div>
         ))}
         <div className="pn-amount-row pn-amount-total">
-          <dt>{copy.booking.total}</dt>
-          <dd>{formatCurrency(booking.totalAmount)}</dd>
+          <dt>{copy.seats.totalDeposit}</dt>
+          <dd>{formatCurrency(booking.depositAmount)}</dd>
         </div>
-        <div className="pn-amount-row">
-          <dt>{copy.booking.paid}</dt>
-          <dd>{formatCurrency(booking.paidAmount)}</dd>
-        </div>
-        {needsPayment(booking) && (
-          <div className="pn-amount-row">
-            <dt>{copy.booking.due}</dt>
-            <dd>{formatCurrency(booking.amountDueNow)}</dd>
-          </div>
-        )}
       </dl>
     </section>
   );

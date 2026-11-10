@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Fare, SeatMap } from "@/types/api.types";
 import {
   MAX_INFANTS_PER_UNIT,
+  estimateDeposit,
   estimateTotal,
   reconcileSelection,
   setInfants,
@@ -140,6 +141,38 @@ describe("estimateTotal", () => {
     const sel = { B1: { occupancy: 1, infantCount: 1 } };
     expect(estimateTotal(sel, seats, fares, { price: 50_000 })).toBe(420_000 + 50_000);
     expect(estimateTotal(sel, seats, fares, { price: 0 })).toBe(420_000);
+  });
+});
+
+describe("estimateDeposit", () => {
+  const map: SeatMap = {
+    trip: { id: "trip", name: "Test trip", departAt: "", onSale: true },
+    vehicle: { code: "TEST", name: "Test vehicle" },
+    booking: { requiresPhoneOtp: false, maxUnitsPerBooking: 5, holdMinutes: 10, depositPercent: 50 },
+    layout: { name: "Test layout", unit: "phòng", kind: "room", floors: [] },
+    seats,
+    fares,
+  };
+  const fixedMap = {
+    ...map,
+    booking: { ...map.booking, fixedDeposit: { single: 300_000, double: 450_000 } },
+  };
+  const single = { A1: { occupancy: 1, infantCount: 0 } };
+  const double = { A2: { occupancy: 2, infantCount: 0 } };
+
+  it("sums fixed room deposits across both legs", () => {
+    expect(estimateDeposit(
+      { selection: single, map: fixedMap },
+      { selection: double, map: fixedMap },
+    )).toBe(750_000);
+  });
+
+  it("keeps percentage deposits for operators without fixed room deposits", () => {
+    expect(estimateDeposit({ selection: { ...single, ...double }, map })).toBe(575_000);
+  });
+
+  it("does not quote a deposit for an unpriced room occupancy", () => {
+    expect(estimateDeposit({ selection: { B1: { occupancy: 2, infantCount: 0 } }, map: fixedMap })).toBeNull();
   });
 });
 

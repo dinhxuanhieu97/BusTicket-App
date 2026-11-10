@@ -84,9 +84,13 @@ export class PublicController {
 
   /** Thông tin chuyển khoản + ảnh QR cho đơn (số tiền cần trả lúc này, nội dung = mã đơn). */
   @Get('bookings/:code/payment')
-  paymentInstructions(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+  paymentInstructions(
+    @Param('code') code: string,
+    @Query('purpose') purpose?: string,
+    @Headers('x-booking-token') token?: string,
+  ) {
     if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
-    return this.payments.paymentInstructions(code, token);
+    return this.payments.paymentInstructions(code, token, purpose === 'deposit');
   }
 
   /**
