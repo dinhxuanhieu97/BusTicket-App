@@ -330,7 +330,7 @@ export default function CheckoutPage() {
               maxLength={500}
               rows={3}
               value={draft.note}
-              placeholder="Ví dụ: Đăng ký hỗ trợ vé khám bệnh"
+              placeholder="Ví dụ: Đăng ký hỗ trợ vé khám bệnh hiểm nghèo hoặc điểm đón trên lộ trình nhà xe"
               onChange={(event) => draft.setNote(event.target.value)}
             />
           </label>
