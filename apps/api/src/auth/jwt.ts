@@ -9,6 +9,8 @@ export interface AccessClaims {
   scope: TokenScope;
   iat: number; // giây
   exp: number; // giây
+  sid?: string; // auth_sessions.id — có thì phiên phải còn hiệu lực (đăng xuất thu hồi ngay)
+  rem?: boolean; // "Ghi nhớ đăng nhập" — token thiết lập 2FA mang sang bước xác nhận
 }
 
 const HEADER = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -44,7 +46,9 @@ export function verifyJwt(token: string, secret: string, nowSeconds: number): Ac
     !Number.isInteger(c.ver) ||
     (c.scope !== 'full' && c.scope !== 'mfa_setup') ||
     !Number.isInteger(c.iat) ||
-    !Number.isInteger(c.exp)
+    !Number.isInteger(c.exp) ||
+    (c.sid !== undefined && typeof c.sid !== 'string') ||
+    (c.rem !== undefined && typeof c.rem !== 'boolean')
   ) {
     return null;
   }

@@ -22,6 +22,22 @@ export class AuthController {
     return this.auth.login(body as never, req.ip);
   }
 
+  /** Đổi refresh token (xoay vòng) lấy access token mới. */
+  @Post('refresh')
+  @HttpCode(200)
+  refresh(@Body() body: unknown) {
+    return this.auth.refresh(body);
+  }
+
+  /** Thu hồi phiên theo refresh token trong body và/hoặc access token ở header. Luôn trả 200. */
+  @Post('logout')
+  @HttpCode(200)
+  async logout(@Body() body: unknown, @Req() req: Request) {
+    const m = /^Bearer ([\w.-]+)$/.exec(req.headers.authorization ?? '');
+    await this.auth.logout(body, m?.[1]);
+    return { ok: true };
+  }
+
   @Get('me')
   @UseGuards(AuthGuard)
   @AuthOnly()

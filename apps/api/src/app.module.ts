@@ -37,6 +37,8 @@ export interface AppOptions {
   zaloPhoneResolver?: ZaloPhoneResolver;
   /** Chu kỳ dọn đơn giữ chỗ quá hạn (ms). Bỏ trống/0 = tắt; production đặt qua env `HOLD_SWEEP_INTERVAL_MS`. */
   holdSweepIntervalMs?: number;
+  /** Hạn access token quản trị (giây). Bỏ trống = 12 giờ (test); production đặt qua env `AUTH_ACCESS_TTL_SECONDS`. */
+  authAccessTtlSeconds?: number;
 }
 
 @Module({})
@@ -49,7 +51,7 @@ export class AppModule {
         { provide: DbConfig, useValue: new DbConfig(opts.databaseUrl) },
         { provide: Clock, useValue: opts.clock ?? new SystemClock() },
         { provide: TokenSecret, useValue: new TokenSecret(opts.bookingTokenSecret) },
-        { provide: AuthConfig, useValue: new AuthConfig(opts.authTokenSecret) },
+        { provide: AuthConfig, useValue: new AuthConfig(opts.authTokenSecret, { accessTtlSeconds: opts.authAccessTtlSeconds }) },
         { provide: SecretBox, useValue: new SecretBox(opts.authTokenSecret) },
         { provide: AbuseConfig, useValue: new AbuseConfig(opts.abuse) },
         { provide: SmsSender, useValue: opts.smsSender ?? new NotConfiguredSmsSender() },

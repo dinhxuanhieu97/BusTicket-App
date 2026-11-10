@@ -110,11 +110,11 @@ describe('every admin and authenticated auth route declares its access rule', ()
     expect(missing).toEqual([]);
   });
 
-  it('AuthController: only login is public', () => {
+  it('AuthController: only login, refresh and logout are public (they authenticate by credentials or refresh token)', () => {
     const open = routeMethods(AuthController).filter((name) => {
       const fn = protoOf(AuthController)[name];
       return !meta('pnticket:perm', fn) && !meta('pnticket:auth-only', fn);
     });
-    expect(open).toEqual(['login']);
+    expect(open.sort()).toEqual(['login', 'logout', 'refresh']);
   });
 });
