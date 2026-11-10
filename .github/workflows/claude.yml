@@ -33,7 +33,9 @@ jobs:
           fetch-depth: 1
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Chỉ dùng API key (tính phí theo token) khi chưa có token gói Claude Pro/Max.
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN == '' && secrets.ANTHROPIC_API_KEY || '' }}
           branch_prefix: hieufeature_ # quy ước nhánh của dự án (mặc định của action là claude/)
           additional_permissions: |
             actions: read
