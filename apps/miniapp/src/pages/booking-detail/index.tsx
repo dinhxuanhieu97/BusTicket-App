@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Spinner, useSnackbar } from "zmp-ui";
 import { copy, errorMessage } from "@/constants/copy";
+import { config } from "@/config";
 import { EmptyState } from "@/components/booking/empty-state";
 import { StatusBadge } from "@/components/booking/status-badge";
 import { Journey } from "@/components/booking/journey";
@@ -165,16 +166,43 @@ export default function BookingDetailPage() {
             </button>
           </div>
         ) : null)}
-      <p className="pn-meta" role="status">
-        {booking.status === "HOLDING"
-          ? copy.booking.waiting
-          : booking.status === "CONFIRMED" || booking.status === "COMPLETED"
-            ? copy.booking.confirmed
-            : booking.status === "CANCELLED"
-              ? copy.booking.cancelled
-              : copy.booking.expired}
-      </p>
+      <div className="pn-meta flex flex-wrap justify-between gap-x-6 gap-y-2">
+        <div className="min-w-48 flex-1">
+          <p role="status">
+            {booking.status === "HOLDING"
+              ? copy.booking.waiting
+              : booking.status === "CONFIRMED" || booking.status === "COMPLETED"
+                ? copy.booking.confirmed
+                : booking.status === "CANCELLED"
+                  ? copy.booking.cancelled
+                  : copy.booking.expired}
+          </p>
+          {(holding || booking.status === "CONFIRMED") && (
+            <p className="mt-1">{copy.booking.followContact}</p>
+          )}
+        </div>
+        <div className="ml-auto flex flex-col items-end gap-1 text-right">
+          {config.supportPhone && (
+            <ContactLink label="Hotline nhà xe" phone={config.supportPhone} />
+          )}
+          {booking.tripContacts?.map(({ tripId, phone }) => (
+            <ContactLink
+              key={tripId}
+              label={saved.inbound ? (tripId === booking.tripId ? "Phụ xe lượt đi" : "Phụ xe lượt về") : "Số phụ xe"}
+              phone={phone}
+            />
+          ))}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function ContactLink({ label, phone }: { label: string; phone: string }) {
+  return (
+    <a className="pn-link" href={`tel:${phone.replace(/[^\d+]/g, "")}`}>
+      {label} · {phone}
+    </a>
   );
 }
 

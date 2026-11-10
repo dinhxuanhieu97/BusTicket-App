@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Header, Headers, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { PhoneVerificationService } from './abuse/phone-verification.service';
 import { ZaloPhoneService } from './abuse/zalo-phone.service';
@@ -109,6 +109,13 @@ export class PublicController {
   getBooking(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
     if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
     return this.bookings.getByCode(code, token);
+  }
+
+  @Get('bookings/:code/contact')
+  @Header('Cache-Control', 'private, no-store')
+  getBookingContact(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+    if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
+    return this.bookings.contactByCode(code, token);
   }
 
   /** Khách bỏ giữ chỗ để chọn lại: nhả chỗ ngay. Gọi lại nhiều lần an toàn (trả trạng thái hiện tại). */

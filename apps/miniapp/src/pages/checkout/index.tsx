@@ -163,7 +163,8 @@ export default function CheckoutPage() {
         phoneToken: tokenValid ? draft.phoneToken!.token : undefined,
       },
       {
-        onSuccess: (result) => {
+        onSuccess: (result, { request }) => {
+          useProfile.getState().save(request.contactName, request.contactPhone);
           saveBooking({
             code: result.booking.code,
             accessToken: result.accessToken,

@@ -92,6 +92,7 @@ export interface BookingView {
   code: string;
   status: BookingStatus;
   tripId: string;
+  tripContacts?: { tripId: string; phone: string }[];
   holdExpiresAt: string | null;
   totalAmount: number;
   depositAmount: number;

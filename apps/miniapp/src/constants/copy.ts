@@ -121,6 +121,8 @@ export const copy = {
     transferContent: "Nội dung",
     waiting:
       "Đang chờ xác nhận tiền cọc. Trang tự cập nhật khi nhà xe nhận được tiền.",
+    followContact:
+      "Vui lòng theo dõi điện thoại, Zalo và SMS để nhận xác nhận từ nhà xe.",
     confirmed:
       "Nhà xe đã nhận tiền. Vé điện tử sẽ được gửi khi tính năng vé hoàn tất.",
     expired:
@@ -188,7 +190,7 @@ export const copy = {
   profile: {
     title: "Cá nhân",
     heading: "Thông tin cá nhân",
-    hint: "Lưu thông tin để điền nhanh khi đặt vé. Bạn vẫn có thể đổi người đi ở bước đặt vé.",
+    hint: "Họ tên và số điện thoại từ lần đặt vé gần nhất được lưu để điền nhanh. Bạn có thể sửa thông tin tại đây.",
     localNotice:
       "Thông tin được lưu trên thiết bị này, chưa đồng bộ sang thiết bị khác.",
     save: "Lưu thông tin",

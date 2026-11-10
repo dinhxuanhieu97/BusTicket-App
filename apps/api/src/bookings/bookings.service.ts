@@ -48,6 +48,7 @@ export interface BookingView {
   code: string;
   status: string;
   tripId: string;
+  tripContacts: { tripId: string; phone: string }[];
   /** Hạn thanh toán khách thấy. */
   holdExpiresAt: string | null;
   /** Lúc nhả chỗ thật (hạn thanh toán + ân hạn chờ tiền ngân hàng báo chậm). */
@@ -344,6 +345,21 @@ export class BookingsService {
     return this.view(this.db, b);
   }
 
+  /** Khôi phục liên hệ từ một đơn mà thiết bị đang giữ token. */
+  async contactByCode(code: string, accessToken: string): Promise<{ name: string; phone: string }> {
+    const { rows } = await this.db.query<{
+      id: string; access_token_version: number; contact_name: string; contact_phone: string;
+    }>(
+      'SELECT id, access_token_version, contact_name, contact_phone FROM bookings WHERE code = $1',
+      [code],
+    );
+    const booking = rows[0];
+    if (!booking || !verifyBookingAccessToken(this.tokenSecret.value, booking.id, booking.access_token_version, accessToken)) {
+      throw notFound('đơn');
+    }
+    return { name: booking.contact_name, phone: booking.contact_phone };
+  }
+
   /**
    * Khách tự bỏ giữ chỗ (đổi ý, chọn lại chỗ khác): nhả chỗ ngay thay vì chờ hết hạn.
    * Chỉ áp dụng cho đơn đang giữ và chưa trả đồng nào; gọi lại khi đơn đã hủy/hết hạn trả về trạng thái hiện tại.
@@ -407,12 +423,19 @@ export class BookingsService {
   private async view(q: Queryable, b: BookingRow): Promise<BookingView> {
     const { rows } = await q.query<{
       trip_id: string; seat_code: string; occupancy: number; infant_count: number; unit_price: number; infant_price: number; line_total: number;
+      trip_phone: string | null;
     }>(
-      `SELECT trip_id, seat_code, occupancy, infant_count, unit_price, infant_price, line_total
-       FROM booking_items WHERE booking_id = $1 ORDER BY seat_code`,
+      `SELECT i.trip_id, i.seat_code, i.occupancy, i.infant_count, i.unit_price, i.infant_price, i.line_total,
+              t.contact_phone AS trip_phone
+       FROM booking_items i JOIN trips t ON t.id = i.trip_id
+       WHERE i.booking_id = $1 ORDER BY i.seat_code`,
       [b.id],
     );
     const roundTrip = rows.some(r => r.trip_id !== b.trip_id);
+    const tripContacts = new Map<string, string>();
+    for (const row of rows) {
+      if (row.trip_phone) tripContacts.set(row.trip_id, row.trip_phone);
+    }
     // Đơn giữ chỗ quá hạn hiển thị là EXPIRED ngay cả khi tác vụ nền chưa chạy.
     const expired = b.status === 'HOLDING' && b.release_at !== null && b.release_at <= this.clock.now();
     return {
@@ -420,6 +443,7 @@ export class BookingsService {
       ...(b.passenger_note ? { note: b.passenger_note } : {}),
       status: expired ? 'EXPIRED' : b.status,
       tripId: b.trip_id,
+      tripContacts: [...tripContacts].map(([tripId, phone]) => ({ tripId, phone })),
       holdExpiresAt: b.hold_expires_at ? b.hold_expires_at.toISOString() : null,
       releaseAt: b.status === 'HOLDING' && b.release_at && !expired ? b.release_at.toISOString() : null,
       totalAmount: b.total_amount,

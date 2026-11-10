@@ -25,6 +25,11 @@ export const bookingService = {
       headers: { "X-Booking-Token": accessToken },
     }),
 
+  contact: (code: string, accessToken: string) =>
+    apiRequest<{ name: string; phone: string }>(`/bookings/${encodeURIComponent(code)}/contact`, {
+      headers: { "X-Booking-Token": accessToken },
+    }),
+
   payment: (code: string, accessToken: string) =>
     apiRequest<PaymentInstructions>(`/bookings/${encodeURIComponent(code)}/payment?purpose=deposit`, {
       headers: { "X-Booking-Token": accessToken },

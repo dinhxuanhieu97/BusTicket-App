@@ -101,6 +101,23 @@ describe('POST /api/v1/bookings', () => {
       .set('X-Booking-Token', res.body.accessToken)
       .expect(200);
     expect(view.body.code).toBe(res.body.booking.code);
+    expect(view.body.tripContacts).toEqual([
+      { tripId: seed.limoTrip.id, phone: '+84912000111' },
+    ]);
+    expect(view.body).not.toHaveProperty('contact');
+    const contactPath = `/api/v1/bookings/${res.body.booking.code}/contact`;
+    await request(app.getHttpServer()).get(contactPath).expect(404);
+    await request(app.getHttpServer()).get(contactPath).set('X-Booking-Token', 'nope').expect(404);
+    const contact = await request(app.getHttpServer()).get(contactPath)
+      .set('X-Booking-Token', res.body.accessToken)
+      .expect('Cache-Control', 'private, no-store')
+      .expect(200);
+    expect(contact.body).toEqual({ name: 'Trần Thị B', phone: '+84987654321' });
+    const other = await request(app.getHttpServer()).post('/api/v1/bookings')
+      .set('Idempotency-Key', 'http-contact-other').send(body([{ seatCode: 'A7' }])).expect(201);
+    await request(app.getHttpServer()).get(contactPath).set('X-Booking-Token', other.body.accessToken).expect(404);
+    await s.db.query('UPDATE bookings SET access_token_version = access_token_version + 1 WHERE code = $1', [res.body.booking.code]);
+    await request(app.getHttpServer()).get(contactPath).set('X-Booking-Token', res.body.accessToken).expect(404);
     await request(app.getHttpServer()).get(`/api/v1/bookings/${res.body.booking.code}`).expect(404);
     await request(app.getHttpServer())
       .get(`/api/v1/bookings/${res.body.booking.code}`)
