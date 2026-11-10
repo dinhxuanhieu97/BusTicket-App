@@ -166,3 +166,33 @@ describe('POST /api/v1/bookings', () => {
     expect(res.body.error.code).toBe('NOT_FOUND');
   });
 });
+
+describe('GET /api/v1/tickets/:code/verify', () => {
+  it('shows current trip and seat data with a signed QR proof without granting access to the booking', async () => {
+    const server = request(app.getHttpServer());
+    const held = await server.post('/api/v1/bookings').set('Idempotency-Key', 'http-ticket-verify')
+      .send({ ...body([{ seatCode: 'A8', occupancy: 2 }]), note: 'Private note on ticket' }).expect(201);
+    const { booking, accessToken } = held.body;
+    const verification = `/api/v1/tickets/${booking.code}/verify`;
+
+    await server.get(verification).expect(404);
+    await server.get(verification).query({ proof: accessToken }).expect(404);
+    await server.get(`/api/v1/bookings/${booking.code}/contact`)
+      .set('X-Booking-Token', booking.ticketProof).expect(404);
+    const verified = await server.get(verification).query({ proof: booking.ticketProof })
+      .expect('Content-Type', /text\/html/).expect('Cache-Control', 'private, no-store').expect(200);
+    expect(verified.text).toContain('A8 (2 người)');
+    expect(verified.text).toContain('Đang giữ chỗ');
+    expect(verified.text).toContain('Chưa thanh toán');
+    expect(verified.text).toContain('Hạn chuyển khoản');
+    for (const privateValue of ['Trần Thị B', '987654321', 'Private note on ticket', accessToken, booking.ticketProof])
+      expect(verified.text).not.toContain(privateValue);
+
+    await server.post(`/api/v1/bookings/${booking.code}/release`).set('X-Booking-Token', accessToken).expect(200);
+    const updated = await server.get(verification).query({ proof: booking.ticketProof }).expect(200);
+    expect(updated.text).toContain('Đã hủy');
+    expect(updated.text).not.toContain('Đang giữ chỗ');
+    await s.db.query('UPDATE bookings SET access_token_version = access_token_version + 1 WHERE code = $1', [booking.code]);
+    await server.get(verification).query({ proof: booking.ticketProof }).expect(404);
+  });
+});

@@ -88,6 +88,7 @@ export interface BookingItem {
 }
 
 export interface BookingView {
+  ticketProof?: string;
   note?: string;
   code: string;
   status: BookingStatus;

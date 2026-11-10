@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Spinner, useSnackbar } from "zmp-ui";
 import { copy, errorMessage } from "@/constants/copy";
 import { config } from "@/config";
+import receiptLogo from "@/assets/receipt-logo.png";
 import { EmptyState } from "@/components/booking/empty-state";
 import { ReceiptActions } from "@/components/booking/receipt-actions";
 import { StatusBadge } from "@/components/booking/status-badge";
@@ -88,48 +89,70 @@ export default function BookingDetailPage() {
           </strong>
         </div>
       )}
-      <section className="pn-card" aria-labelledby="booking-receipt-heading">
-        <h2 id="booking-receipt-heading" className="pn-section-title">
-          Phiếu đặt vé
-        </h2>
-        <div className="pn-row pn-ticket-heading">
-          <span className="pn-ticket-code">
-            {copy.booking.code} · {booking.code}
-          </span>
-          <StatusBadge status={booking.status} />
-        </div>
-        <Journey route={saved.route} fallback={saved.tripName} />
-        <div className="pn-date">
-          {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)}
-        </div>
-        <div className="pn-meta">{saved.tripName}</div>
-        <div aria-label={copy.checkout.summary}>
-          {booking.items
-            .filter((i) => !saved.inbound || i.tripId === booking.tripId)
-            .map((item) => (
-              <span key={item.seatCode} className="pn-seat">
-                {item.seatCode}
+      <section
+        className="pn-card pn-receipt"
+        aria-labelledby="booking-receipt-heading"
+      >
+        <header className="pn-receipt-header">
+          <img
+            className="pn-receipt-logo"
+            src={receiptLogo}
+            alt=""
+            width={48}
+            height={48}
+          />
+          <div>
+            <p>{config.operatorName}</p>
+            <h2 id="booking-receipt-heading">Phiếu đặt vé</h2>
+          </div>
+        </header>
+        <div className="pn-receipt-body">
+          <div className="pn-receipt-watermark" aria-hidden="true">
+            <span>{copy.booking.status[booking.status]}</span>
+            <span>{booking.code}</span>
+          </div>
+          <div className="pn-receipt-content">
+            <div className="pn-row pn-ticket-heading">
+              <span className="pn-receipt-code">
+                <small>{copy.booking.code}</small>
+                {booking.code}
               </span>
-            ))}
+              <StatusBadge status={booking.status} />
+            </div>
+            <Journey route={saved.route} fallback={saved.tripName} />
+            <div className="pn-date">
+              {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)}
+            </div>
+            <div className="pn-meta">{saved.tripName}</div>
+            <div aria-label={copy.checkout.summary}>
+              {booking.items
+                .filter((i) => !saved.inbound || i.tripId === booking.tripId)
+                .map((item) => (
+                  <span key={item.seatCode} className="pn-seat">
+                    {item.seatCode}
+                  </span>
+                ))}
+            </div>
+            {saved.inbound && (
+              <section className="mt-4 border-t border-[var(--pn-line)] pt-4">
+                <h2 className="pn-section-title">Lượt về</h2>
+                <Journey route={saved.inbound.route} fallback="" />
+                <p>
+                  {formatVnDate(saved.inbound.departAt)} ·{" "}
+                  {formatVnTime(saved.inbound.departAt)}
+                </p>
+                {booking.items
+                  .filter((i) => i.tripId === saved.inbound?.tripId)
+                  .map((i) => (
+                    <span className="pn-seat" key={i.seatCode}>
+                      {i.seatCode}
+                    </span>
+                  ))}
+              </section>
+            )}
+            <Amounts booking={booking} />
+          </div>
         </div>
-        {saved.inbound && (
-          <section className="mt-4 border-t border-[var(--pn-line)] pt-4">
-            <h2 className="pn-section-title">Lượt về</h2>
-            <Journey route={saved.inbound.route} fallback="" />
-            <p>
-              {formatVnDate(saved.inbound.departAt)} ·{" "}
-              {formatVnTime(saved.inbound.departAt)}
-            </p>
-            {booking.items
-              .filter((i) => i.tripId === saved.inbound?.tripId)
-              .map((i) => (
-                <span className="pn-seat" key={i.seatCode}>
-                  {i.seatCode}
-                </span>
-              ))}
-          </section>
-        )}
-        <Amounts booking={booking} />
         <ReceiptActions saved={saved} booking={booking} />
       </section>
       {booking.note && (
