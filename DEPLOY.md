@@ -209,7 +209,7 @@ Trong [SePay](https://my.sepay.vn) → Tài khoản ngân hàng → Webhook:
 |---|---|---|
 | `quick-checks` | typecheck, unit test, build API; typecheck, test, build Mini App | Prettier, typecheck, unit test, build |
 | sau `quick-checks` | `integration`: test với PostgreSQL 17 dùng một lần trong container CI | `e2e`: Playwright với API giả, lưu trace khi lỗi |
-| `claude-review` (chỉ PR) | Claude review và bình luận trên PR. File nhạy cảm (auth, payments, bookings, trips, migration) dùng Opus + effort cao | tương tự; file nhạy cảm là proxy, phiên đăng nhập, `app/api` |
+| `claude-review` (chỉ PR) | Claude review và bình luận trên PR. File nhạy cảm (auth, payments, bookings, trips, migration) dùng Opus + effort cao (Sonnet + effort cao khi dùng token gói Pro) | tương tự; file nhạy cảm là proxy, phiên đăng nhập, `app/api` |
 
 **@claude (`.github/workflows/claude.yml`)**: gõ `@claude` trong issue hoặc PR để hỏi hoặc giao việc. Chỉ người có quyền ghi vào repo mới kích hoạt được. Claude tạo nhánh `hieufeature_...` và mở PR, không push thẳng `main`.
 
@@ -217,7 +217,9 @@ Trong [SePay](https://my.sepay.vn) → Tài khoản ngân hàng → Webhook:
 
 **Thiết lập một lần**:
 1. Cài GitHub App Claude cho hai repo: <https://github.com/apps/claude>, hoặc chạy `/install-github-app` trong Claude Code ở terminal.
-2. Thêm secret `ANTHROPIC_API_KEY` (khóa API Console, không dùng token gói cá nhân) vào **Settings → Secrets and variables → Actions** của mỗi repo. Chưa có secret thì `claude-review` tự bỏ qua, CI vẫn chạy.
+2. Thêm thông tin xác thực Claude vào **Settings → Secrets and variables → Actions** của mỗi repo (chưa có secret nào thì `claude-review` tự bỏ qua, CI vẫn chạy):
+   - **Khuyến nghị — gói Claude Pro/Max, không tính phí thêm:** chạy `claude setup-token` trên máy, đăng nhập, rồi lưu token vào secret `CLAUDE_CODE_OAUTH_TOKEN`. Review tính vào hạn mức của gói (dùng chung với lúc bạn dùng Claude); file nhạy cảm review bằng Sonnet + effort cao thay vì Opus để tiết kiệm hạn mức. Token hết hạn thì chạy lại lệnh và cập nhật secret. Token này là bí mật: không dán vào chat, issue hay file.
+   - **Dự phòng — API key Console (tính phí theo token):** secret `ANTHROPIC_API_KEY`; chỉ dùng khi không có `CLAUDE_CODE_OAUTH_TOKEN`. Nên đặt giới hạn chi tiêu tháng trong Console.
 3. Bảo vệ nhánh `main`: bắt buộc PR, bắt buộc các check `Typecheck, unit tests, build` và `Integration tests (PostgreSQL)` (backend) hoặc `Format, typecheck, unit tests, build` và `E2E (Playwright, fake API)` (dashboard) phải qua.
 4. Bật "Wait for CI" trên Railway như trên.
 
