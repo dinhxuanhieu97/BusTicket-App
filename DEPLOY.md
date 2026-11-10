@@ -199,6 +199,30 @@ Trong [SePay](https://my.sepay.vn) → Tài khoản ngân hàng → Webhook:
 
 ---
 
+## CI/CD (GitHub Actions + Railway)
+
+Áp dụng cho cả `BusTicket-App` và `BusTicket-DashboardAdmin`.
+
+**CI (`.github/workflows/ci.yml`)**: chạy khi mở hoặc cập nhật PR, push lên `main` hoặc nhánh `hieufeature_*`.
+
+| Job | Backend | Dashboard |
+|---|---|---|
+| `quick-checks` | typecheck, unit test, build API; typecheck, test, build Mini App | Prettier, typecheck, unit test, build |
+| sau `quick-checks` | `integration`: test với PostgreSQL 17 dùng một lần trong container CI | `e2e`: Playwright với API giả, lưu trace khi lỗi |
+| `claude-review` (chỉ PR) | Claude review và bình luận trên PR. File nhạy cảm (auth, payments, bookings, trips, migration) dùng Opus + effort cao | tương tự; file nhạy cảm là proxy, phiên đăng nhập, `app/api` |
+
+**@claude (`.github/workflows/claude.yml`)**: gõ `@claude` trong issue hoặc PR để hỏi hoặc giao việc. Chỉ người có quyền ghi vào repo mới kích hoạt được. Claude tạo nhánh `hieufeature_...` và mở PR, không push thẳng `main`.
+
+**CD**: Railway tự deploy khi `main` có commit mới. Bật **Settings → Deploy → Wait for CI** ở từng service (`PhongNhungTicket`, `BusTicket-DashboardAdmin`) để Railway chỉ deploy khi workflow CI xanh.
+
+**Thiết lập một lần**:
+1. Cài GitHub App Claude cho hai repo: <https://github.com/apps/claude>, hoặc chạy `/install-github-app` trong Claude Code ở terminal.
+2. Thêm secret `ANTHROPIC_API_KEY` (khóa API Console, không dùng token gói cá nhân) vào **Settings → Secrets and variables → Actions** của mỗi repo. Chưa có secret thì `claude-review` tự bỏ qua, CI vẫn chạy.
+3. Bảo vệ nhánh `main`: bắt buộc PR, bắt buộc các check `Typecheck, unit tests, build` và `Integration tests (PostgreSQL)` (backend) hoặc `Format, typecheck, unit tests, build` và `E2E (Playwright, fake API)` (dashboard) phải qua.
+4. Bật "Wait for CI" trên Railway như trên.
+
+---
+
 ## Phương án B — VPS với Docker (khi muốn toàn quyền kiểm soát)
 
 Cần VPS Linux với quyền root (DigitalOcean $6/tháng, Vultr, v.v.).
