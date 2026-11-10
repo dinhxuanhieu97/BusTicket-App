@@ -53,7 +53,6 @@ export const copy = {
     emptyHint: "Thử chọn ngày khác hoặc gọi tổng đài nhà xe.",
     available: (n: number, unit: string) => `Còn ${n} ${unit}`,
     soldOut: "Hết chỗ",
-    fromPrice: "Từ",
   },
   seats: {
     title: "Chọn chỗ",
@@ -69,9 +68,9 @@ export const copy = {
     double: "2 người",
     infants: "Trẻ dưới 2 tuổi đi kèm",
     selectedCount: (n: number, unit: string) => `${n} ${unit} đã chọn`,
-    estimate: "Tạm tính",
-    estimateHint:
-      "Giá cuối cùng (kể cả trẻ em) do nhà xe xác nhận khi giữ chỗ.",
+    deposit: "Đặt cọc",
+    totalDeposit: "Tổng tiền cọc",
+    estimateHint: "Tiền cọc được xác nhận khi bạn giữ chỗ.",
     refreshed:
       "Một số chỗ bạn chọn vừa có người giữ, đã bỏ khỏi danh sách chọn.",
   },
@@ -85,7 +84,7 @@ export const copy = {
     submit: "Giữ chỗ",
     submitting: "Đang giữ chỗ...",
     holdNotice: (minutes: number) =>
-      `Chỗ được giữ ${minutes} phút để bạn chuyển khoản.`,
+      `Chỗ được giữ ${minutes} phút để bạn chuyển khoản đặt cọc.`,
     nameRequired: "Vui lòng nhập họ tên.",
     phoneInvalid: "Số điện thoại chưa đúng.",
     otpTitle: "Xác thực số điện thoại",
@@ -112,7 +111,7 @@ export const copy = {
       COMPLETED: "Hoàn tất",
     } as Record<string, string>,
     holdLeft: "Thời gian giữ chỗ còn lại",
-    payTitle: "Thanh toán chuyển khoản",
+    payTitle: "Chuyển khoản đặt cọc",
     payHint:
       "Quét mã QR bằng ứng dụng ngân hàng. Nội dung chuyển khoản phải đúng mã đơn.",
     bank: "Ngân hàng",
@@ -121,7 +120,9 @@ export const copy = {
     amount: "Số tiền",
     transferContent: "Nội dung",
     waiting:
-      "Đang chờ xác nhận thanh toán... Trang tự cập nhật khi nhà xe nhận được tiền.",
+      "Đang chờ xác nhận tiền cọc. Trang tự cập nhật khi nhà xe nhận được tiền.",
+    followContact:
+      "Vui lòng theo dõi điện thoại, Zalo và SMS để nhận xác nhận từ nhà xe.",
     confirmed:
       "Nhà xe đã nhận tiền. Vé điện tử sẽ được gửi khi tính năng vé hoàn tất.",
     expired:
@@ -133,9 +134,7 @@ export const copy = {
       "Không tải được mã QR. Bạn có thể chuyển khoản theo thông tin bên dưới.",
     paymentNotPayable:
       "Đơn hiện không thể thanh toán. Vui lòng tải lại trạng thái đơn.",
-    total: "Tổng tiền",
-    paid: "Đã thanh toán",
-    due: "Cần thanh toán lúc này",
+    due: "Số tiền cọc cần chuyển",
     paymentUnavailable:
       "Nhà xe chưa cấu hình tài khoản nhận tiền. Vui lòng liên hệ tổng đài.",
     notFound: "Không tìm thấy đơn trên máy này.",
@@ -191,7 +190,7 @@ export const copy = {
   profile: {
     title: "Cá nhân",
     heading: "Thông tin cá nhân",
-    hint: "Lưu thông tin để điền nhanh khi đặt vé. Bạn vẫn có thể đổi người đi ở bước đặt vé.",
+    hint: "Họ tên và số điện thoại từ lần đặt vé gần nhất được lưu để điền nhanh. Bạn có thể sửa thông tin tại đây.",
     localNotice:
       "Thông tin được lưu trên thiết bị này, chưa đồng bộ sang thiết bị khác.",
     save: "Lưu thông tin",

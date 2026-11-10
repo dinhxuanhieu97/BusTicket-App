@@ -84,6 +84,29 @@ export class OperatorsService {
     return rows[0];
   }
 
+  async profile(operatorId: string) {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    const row = (await this.db.query<{id:string;code:string;name:string;defaultDepartureTime:string}>(
+      'SELECT id,code,name,default_departure_time AS "defaultDepartureTime" FROM operators WHERE id=$1', [operatorId],
+    )).rows[0];
+    if (!row) throw notFound('nhà xe');
+    return row;
+  }
+
+  async updateProfile(operatorId: string, input: unknown) {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    const data = z.object({
+      name: z.string().trim().min(1).max(120).refine(v => !v.includes('\0')),
+      defaultDepartureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    }).strict().parse(input);
+    const result = await this.db.query<{ id: string; code: string; name: string; defaultDepartureTime: string }>(
+      'UPDATE operators SET name=$2,default_departure_time=$3 WHERE id=$1 RETURNING id,code,name,default_departure_time AS "defaultDepartureTime"',
+      [operatorId, data.name, data.defaultDepartureTime],
+    );
+    if (!result.rows[0]) throw notFound('nhà xe');
+    return result.rows[0];
+  }
+
   /** Chính sách đang áp dụng = phiên bản mới nhất. */
   async currentPolicy(operatorId: string, q: Queryable = this.db): Promise<OperatorPolicy> {
     if (!isUuid(operatorId)) throw notFound('chính sách của nhà xe');
@@ -95,11 +118,13 @@ export class OperatorsService {
       max_active_holds_per_phone: number;
       require_phone_otp: boolean;
       deposit_percent: number;
+      deposit_single: number | null;
+      deposit_double: number | null;
       payment_grace_minutes: number;
       auto_reinstate_late_payment: boolean;
     }>(
       `SELECT version, hold_minutes, max_units_per_booking, child_policy, max_active_holds_per_phone, require_phone_otp,
-              deposit_percent, payment_grace_minutes, auto_reinstate_late_payment
+              deposit_percent, deposit_single, deposit_double, payment_grace_minutes, auto_reinstate_late_payment
        FROM operator_policies
        WHERE operator_id = $1 ORDER BY version DESC LIMIT 1`,
       [operatorId],
@@ -115,6 +140,9 @@ export class OperatorsService {
       maxActiveHoldsPerPhone: r.max_active_holds_per_phone,
       requirePhoneOtp: r.require_phone_otp,
       depositPercent: r.deposit_percent,
+      fixedDeposit: r.deposit_single !== null && r.deposit_double !== null
+        ? { single: r.deposit_single, double: r.deposit_double }
+        : null,
       paymentGraceMinutes: r.payment_grace_minutes,
       autoReinstateLatePayment: r.auto_reinstate_late_payment,
     };
@@ -138,6 +166,7 @@ export class OperatorsService {
         maxActiveHoldsPerPhone: data.maxActiveHoldsPerPhone ?? current.maxActiveHoldsPerPhone,
         requirePhoneOtp: data.requirePhoneOtp ?? current.requirePhoneOtp,
         depositPercent: data.depositPercent ?? current.depositPercent,
+        fixedDeposit: data.fixedDeposit === undefined ? current.fixedDeposit : data.fixedDeposit,
         paymentGraceMinutes: data.paymentGraceMinutes ?? current.paymentGraceMinutes,
         autoReinstateLatePayment: data.autoReinstateLatePayment ?? current.autoReinstateLatePayment,
       };
@@ -157,11 +186,11 @@ export class OperatorsService {
     await c.query(
       `INSERT INTO operator_policies (operator_id, version, hold_minutes, max_units_per_booking, child_policy,
                                       max_active_holds_per_phone, require_phone_otp, deposit_percent,
-                                      payment_grace_minutes, auto_reinstate_late_payment)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                                      payment_grace_minutes, auto_reinstate_late_payment, deposit_single, deposit_double)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [operatorId, version, p.holdMinutes, p.maxUnitsPerBooking, JSON.stringify(p.childPolicy),
         p.maxActiveHoldsPerPhone, p.requirePhoneOtp, p.depositPercent,
-        p.paymentGraceMinutes, p.autoReinstateLatePayment],
+        p.paymentGraceMinutes, p.autoReinstateLatePayment, p.fixedDeposit?.single ?? null, p.fixedDeposit?.double ?? null],
     );
   }
 }

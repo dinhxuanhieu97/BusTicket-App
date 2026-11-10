@@ -1,17 +1,35 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { copy } from "@/constants/copy";
 import { useProfile } from "@/stores/profile.store";
+import { useMyBookings } from "@/stores/my-bookings.store";
+import { bookingService } from "@/services/booking/booking.api";
 import { isValidVnMobile } from "@/utils/phone";
 
 export default function ProfilePage() {
   const profile = useProfile();
+  const latestBooking = useMyBookings((s) => s.bookings[0]);
   const [name, setName] = useState(profile.name);
   const [phone, setPhone] = useState(profile.phone);
   const [touched, setTouched] = useState(false);
   const [saved, setSaved] = useState(false);
   const nameError = touched && !name.trim();
   const phoneError = touched && !isValidVnMobile(phone);
+  useEffect(() => {
+    if (!latestBooking || name || phone || profile.name || profile.phone) return;
+    let active = true;
+    void bookingService.contact(latestBooking.code, latestBooking.accessToken)
+      .then(({ name, phone }) => {
+        const current = useProfile.getState();
+        if (!active || current.name || current.phone || !current.save(name, phone)) return;
+        setName(name);
+        setPhone(phone);
+      })
+      .catch(() => {
+        // Người dùng vẫn có thể nhập tay khi đơn cũ không còn truy cập được.
+      });
+    return () => { active = false; };
+  }, [latestBooking, name, phone, profile.name, profile.phone]);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setTouched(true);

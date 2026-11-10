@@ -7,13 +7,13 @@ import { createHash } from 'node:crypto';
 import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { Clock } from '../common/clock';
-import { bookingAccessToken, bookingCode, verifyBookingAccessToken } from '../common/codes';
+import { bookingAccessToken, bookingCode, ticketProof, verifyBookingAccessToken, verifyTicketProof } from '../common/codes';
 import { DomainError, notFound } from '../common/errors';
 import { normalizeVnPhone } from '../common/phone';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { OperatorsService } from '../operators/operators.service';
 import { SEAT_CODE } from '../seat-layouts/layout-parser';
-import { amountDueNow, depositAmount, priceItems } from './pricing';
+import { amountDueNow, depositAmount, fixedUnitDeposit, priceItems } from './pricing';
 import { TokenSecret } from './token-secret';
 
 export { TokenSecret };
@@ -46,8 +46,10 @@ export type CreateHoldInput = z.input<typeof createHoldSchema>;
 
 export interface BookingView {
   code: string;
+  ticketProof: string;
   status: string;
   tripId: string;
+  tripContacts: { tripId: string; phone: string }[];
   /** Hạn thanh toán khách thấy. */
   holdExpiresAt: string | null;
   /** Lúc nhả chỗ thật (hạn thanh toán + ân hạn chờ tiền ngân hàng báo chậm). */
@@ -61,6 +63,19 @@ export interface BookingView {
   /** Còn phải trả để xác nhận vé (khi đang giữ chỗ) hoặc để trả đủ (khi đã xác nhận). */
   amountDueNow: number;
   items: { tripId?: string; seatCode: string; occupancy: number; infantCount: number; unitPrice: number; infantPrice: number; lineTotal: number }[];
+}
+
+export interface TicketVerification {
+  code: string;
+  operatorName: string;
+  status: string;
+  paymentStatus: string;
+  depositAmount: number;
+  paymentDeadline: Date | null;
+  trips: {
+    name: string; departAt: Date; origin: string; destination: string; cancelled: boolean;
+    seats: { code: string; occupancy: number }[];
+  }[];
 }
 
 export interface HoldResult {
@@ -249,6 +264,11 @@ export class BookingsService {
       pricedLegs.push({ tripId, codes, priced });
     }
     const total = pricedLegs.reduce((sum, leg) => sum + leg.priced.total, 0);
+    const fixedDeposit = policy.fixedDeposit;
+    const deposit = fixedDeposit
+      ? pricedLegs.flatMap(({ priced }) => priced.items)
+        .reduce((sum, item) => sum + fixedUnitDeposit(item.lineTotal, item.occupancy, fixedDeposit), 0)
+      : depositAmount(total, policy.depositPercent);
     const { rows: ops } = await c.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [trip.operator_id]);
     const holdExpiresAt = new Date(now.getTime() + policy.holdMinutes * 60_000);
     const releaseAt = new Date(holdExpiresAt.getTime() + policy.paymentGraceMinutes * 60_000);
@@ -262,7 +282,7 @@ export class BookingsService {
          ON CONFLICT (code) DO NOTHING
          RETURNING ${BOOKING_COLUMNS}`,
         [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, total,
-          depositAmount(total, policy.depositPercent), JSON.stringify(policy), key, requestHash, now, note || null, releaseAt],
+          deposit, JSON.stringify(policy), key, requestHash, now, note || null, releaseAt],
       );
       booking = rows[0];
     }
@@ -339,6 +359,64 @@ export class BookingsService {
     return this.view(this.db, b);
   }
 
+  /** Đối chiếu ảnh hoặc PDF bằng dữ liệu hiện tại, không lấy trường liên hệ của khách. */
+  async verifyTicket(code: string, proof: string): Promise<TicketVerification | null> {
+    const { rows } = await this.db.query<{
+      id: string; access_token_version: number; status: string; hold_expires_at: Date | null; release_at: Date | null;
+      payment_status: string; deposit_amount: number; operator_name: string;
+      trip_id: string; trip_name: string; depart_at: Date; trip_status: string;
+      origin: string; destination: string; seat_code: string; occupancy: number;
+    }>(
+      `SELECT b.id, b.access_token_version, b.status, b.hold_expires_at, b.release_at, b.payment_status, b.deposit_amount,
+              o.name AS operator_name, t.id AS trip_id, t.name AS trip_name, t.depart_at, t.status AS trip_status,
+              r.origin, r.destination, i.seat_code, i.occupancy
+       FROM bookings b
+       JOIN operators o ON o.id = b.operator_id
+       JOIN booking_items i ON i.booking_id = b.id
+       JOIN trips t ON t.id = i.trip_id AND t.operator_id = b.operator_id
+       JOIN routes r ON r.id = t.route_id AND r.operator_id = b.operator_id
+       WHERE b.code = $1
+       ORDER BY (t.id = b.trip_id) DESC, t.depart_at, t.id, i.seat_code`,
+      [code],
+    );
+    const booking = rows[0];
+    if (!booking || !verifyTicketProof(this.tokenSecret.value, booking.id, booking.access_token_version, proof)) return null;
+
+    const trips = new Map<string, TicketVerification['trips'][number]>();
+    for (const row of rows) {
+      let trip = trips.get(row.trip_id);
+      if (!trip) {
+        trip = {
+          name: row.trip_name, departAt: row.depart_at, origin: row.origin, destination: row.destination,
+          cancelled: row.trip_status === 'CANCELLED', seats: [],
+        };
+        trips.set(row.trip_id, trip);
+      }
+      trip.seats.push({ code: row.seat_code, occupancy: row.occupancy });
+    }
+    const status = this.effectiveStatus(booking);
+    return {
+      code, operatorName: booking.operator_name, status,
+      paymentStatus: booking.payment_status, depositAmount: booking.deposit_amount, trips: [...trips.values()],
+      paymentDeadline: status === 'HOLDING' ? booking.hold_expires_at : null,
+    };
+  }
+
+  /** Khôi phục liên hệ từ một đơn mà thiết bị đang giữ token. */
+  async contactByCode(code: string, accessToken: string): Promise<{ name: string; phone: string }> {
+    const { rows } = await this.db.query<{
+      id: string; access_token_version: number; contact_name: string; contact_phone: string;
+    }>(
+      'SELECT id, access_token_version, contact_name, contact_phone FROM bookings WHERE code = $1',
+      [code],
+    );
+    const booking = rows[0];
+    if (!booking || !verifyBookingAccessToken(this.tokenSecret.value, booking.id, booking.access_token_version, accessToken)) {
+      throw notFound('đơn');
+    }
+    return { name: booking.contact_name, phone: booking.contact_phone };
+  }
+
   /**
    * Khách tự bỏ giữ chỗ (đổi ý, chọn lại chỗ khác): nhả chỗ ngay thay vì chờ hết hạn.
    * Chỉ áp dụng cho đơn đang giữ và chưa trả đồng nào; gọi lại khi đơn đã hủy/hết hạn trả về trạng thái hiện tại.
@@ -399,24 +477,38 @@ export class BookingsService {
     return bookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version);
   }
 
+  private effectiveStatus(booking: Pick<BookingRow, 'status' | 'release_at'>): string {
+    return booking.status === 'HOLDING' && booking.release_at && booking.release_at <= this.clock.now()
+      ? 'EXPIRED' : booking.status;
+  }
+
   private async view(q: Queryable, b: BookingRow): Promise<BookingView> {
     const { rows } = await q.query<{
       trip_id: string; seat_code: string; occupancy: number; infant_count: number; unit_price: number; infant_price: number; line_total: number;
+      trip_phone: string | null;
     }>(
-      `SELECT trip_id, seat_code, occupancy, infant_count, unit_price, infant_price, line_total
-       FROM booking_items WHERE booking_id = $1 ORDER BY seat_code`,
+      `SELECT i.trip_id, i.seat_code, i.occupancy, i.infant_count, i.unit_price, i.infant_price, i.line_total,
+              t.contact_phone AS trip_phone
+       FROM booking_items i JOIN trips t ON t.id = i.trip_id
+       WHERE i.booking_id = $1 ORDER BY i.seat_code`,
       [b.id],
     );
     const roundTrip = rows.some(r => r.trip_id !== b.trip_id);
+    const tripContacts = new Map<string, string>();
+    for (const row of rows) {
+      if (row.trip_phone) tripContacts.set(row.trip_id, row.trip_phone);
+    }
     // Đơn giữ chỗ quá hạn hiển thị là EXPIRED ngay cả khi tác vụ nền chưa chạy.
-    const expired = b.status === 'HOLDING' && b.release_at !== null && b.release_at <= this.clock.now();
+    const status = this.effectiveStatus(b);
     return {
       code: b.code,
+      ticketProof: ticketProof(this.tokenSecret.value, b.id, b.access_token_version),
       ...(b.passenger_note ? { note: b.passenger_note } : {}),
-      status: expired ? 'EXPIRED' : b.status,
+      status,
       tripId: b.trip_id,
+      tripContacts: [...tripContacts].map(([tripId, phone]) => ({ tripId, phone })),
       holdExpiresAt: b.hold_expires_at ? b.hold_expires_at.toISOString() : null,
-      releaseAt: b.status === 'HOLDING' && b.release_at && !expired ? b.release_at.toISOString() : null,
+      releaseAt: status === 'HOLDING' && b.release_at ? b.release_at.toISOString() : null,
       totalAmount: b.total_amount,
       depositAmount: b.deposit_amount,
       paidAmount: b.paid_amount,

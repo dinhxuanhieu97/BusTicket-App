@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Spinner, useSnackbar } from "zmp-ui";
 import { copy, errorMessage } from "@/constants/copy";
+import { config } from "@/config";
+import receiptLogo from "@/assets/receipt-logo.png";
 import { EmptyState } from "@/components/booking/empty-state";
+import { ReceiptActions } from "@/components/booking/receipt-actions";
 import { StatusBadge } from "@/components/booking/status-badge";
 import { Journey } from "@/components/booking/journey";
 import { useNow } from "@/hooks/use-now";
@@ -13,6 +16,7 @@ import {
 import { useMyBookings } from "@/stores/my-bookings.store";
 import type { BookingView, PaymentInstructions } from "@/types/api.types";
 import { needsPayment } from "@/utils/booking-status";
+import { receiptPaymentLabel } from "@/utils/booking-receipt";
 import { formatCurrency } from "@/utils/format";
 import {
   formatCountdown,
@@ -35,7 +39,7 @@ export default function BookingDetailPage() {
   const holding = booking?.status === "HOLDING";
   const now = useNow(holding);
   const left = secondsLeft(booking?.holdExpiresAt ?? null, now);
-  const payable = !!booking && needsPayment(booking);
+  const payable = !!booking && left > 0 && needsPayment(booking);
   const payment = usePaymentInstructions(
     code,
     saved?.accessToken,
@@ -85,52 +89,78 @@ export default function BookingDetailPage() {
           </strong>
         </div>
       )}
-      <section className="pn-card" aria-label={copy.booking.title}>
-        <div className="pn-row pn-ticket-heading">
-          <span className="pn-ticket-code">
-            {copy.booking.code} · {booking.code}
-          </span>
-          <StatusBadge status={booking.status} />
-        </div>
-        <Journey route={saved.route} fallback={saved.tripName} />
-        <div className="pn-date">
-          {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)}
-        </div>
-        <div className="pn-meta">{saved.tripName}</div>
-        <div aria-label={copy.checkout.summary}>
-          {booking.items
-            .filter((i) => !saved.inbound || i.tripId === booking.tripId)
-            .map((item) => (
-              <span key={item.seatCode} className="pn-seat">
-                {item.seatCode}
+      <section
+        className="pn-card pn-receipt"
+        aria-labelledby="booking-receipt-heading"
+      >
+        <header className="pn-receipt-header">
+          <img
+            className="pn-receipt-logo"
+            src={receiptLogo}
+            alt=""
+            width={48}
+            height={48}
+          />
+          <div>
+            <p>{config.operatorName}</p>
+            <h2 id="booking-receipt-heading">Phiếu đặt vé</h2>
+          </div>
+        </header>
+        <div className="pn-receipt-body">
+          <div className="pn-receipt-watermark" aria-hidden="true">
+            <span>{copy.booking.status[booking.status]}</span>
+            <span>{booking.code}</span>
+          </div>
+          <div className="pn-receipt-content">
+            <div className="pn-row pn-ticket-heading">
+              <span className="pn-receipt-code">
+                <small>{copy.booking.code}</small>
+                {booking.code}
               </span>
-            ))}
+              <StatusBadge status={booking.status} />
+            </div>
+            <Journey route={saved.route} fallback={saved.tripName} />
+            <div className="pn-date">
+              {formatVnTime(saved.departAt)} · {formatVnDate(saved.departAt)}
+            </div>
+            <div className="pn-meta">{saved.tripName}</div>
+            <div aria-label={copy.checkout.summary}>
+              {booking.items
+                .filter((i) => !saved.inbound || i.tripId === booking.tripId)
+                .map((item) => (
+                  <span key={item.seatCode} className="pn-seat">
+                    {item.seatCode}
+                  </span>
+                ))}
+            </div>
+            {saved.inbound && (
+              <section className="mt-4 border-t border-[var(--pn-line)] pt-4">
+                <h2 className="pn-section-title">Lượt về</h2>
+                <Journey route={saved.inbound.route} fallback="" />
+                <p>
+                  {formatVnDate(saved.inbound.departAt)} ·{" "}
+                  {formatVnTime(saved.inbound.departAt)}
+                </p>
+                {booking.items
+                  .filter((i) => i.tripId === saved.inbound?.tripId)
+                  .map((i) => (
+                    <span className="pn-seat" key={i.seatCode}>
+                      {i.seatCode}
+                    </span>
+                  ))}
+              </section>
+            )}
+            <Amounts booking={booking} />
+          </div>
         </div>
+        <ReceiptActions saved={saved} booking={booking} />
       </section>
-      {saved.inbound && (
-        <section className="pn-card">
-          <h2 className="pn-section-title">Lượt về</h2>
-          <Journey route={saved.inbound.route} fallback="" />
-          <p>
-            {formatVnDate(saved.inbound.departAt)} ·{" "}
-            {formatVnTime(saved.inbound.departAt)}
-          </p>
-          {booking.items
-            .filter((i) => i.tripId === saved.inbound?.tripId)
-            .map((i) => (
-              <span className="pn-seat" key={i.seatCode}>
-                {i.seatCode}
-              </span>
-            ))}
-        </section>
-      )}
       {booking.note && (
         <section className="pn-card">
           <h2 className="pn-section-title">Ghi chú cho nhà xe</h2>
           <p className="whitespace-pre-wrap break-words">{booking.note}</p>
         </section>
       )}
-      <Amounts booking={booking} />
       {payable &&
         (payment.isLoading ? (
           <div className="pn-loading" role="status">
@@ -165,55 +195,75 @@ export default function BookingDetailPage() {
             </button>
           </div>
         ) : null)}
-      <p className="pn-meta" role="status">
-        {booking.status === "HOLDING"
-          ? copy.booking.waiting
-          : booking.status === "CONFIRMED" || booking.status === "COMPLETED"
-            ? copy.booking.confirmed
-            : booking.status === "CANCELLED"
-              ? copy.booking.cancelled
-              : copy.booking.expired}
-      </p>
+      <div className="pn-meta flex flex-wrap justify-between gap-x-6 gap-y-2">
+        <div className="min-w-48 flex-1">
+          <p role="status">
+            {booking.status === "HOLDING"
+              ? copy.booking.waiting
+              : booking.status === "CONFIRMED" || booking.status === "COMPLETED"
+                ? copy.booking.confirmed
+                : booking.status === "CANCELLED"
+                  ? copy.booking.cancelled
+                  : copy.booking.expired}
+          </p>
+          {(holding || booking.status === "CONFIRMED") && (
+            <p className="mt-1">{copy.booking.followContact}</p>
+          )}
+        </div>
+        <div className="ml-auto flex flex-col items-end gap-1 text-right">
+          {config.supportPhone && (
+            <ContactLink label="Hotline nhà xe" phone={config.supportPhone} />
+          )}
+          {booking.tripContacts?.map(({ tripId, phone }) => (
+            <ContactLink
+              key={tripId}
+              label={
+                saved.inbound
+                  ? tripId === booking.tripId
+                    ? "Phụ xe lượt đi"
+                    : "Phụ xe lượt về"
+                  : "Số phụ xe"
+              }
+              phone={phone}
+            />
+          ))}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function ContactLink({ label, phone }: { label: string; phone: string }) {
+  return (
+    <a className="pn-link" href={`tel:${phone.replace(/[^\d+]/g, "")}`}>
+      {label} · {phone}
+    </a>
   );
 }
 
 function Amounts({ booking }: { booking: BookingView }) {
   return (
-    <section className="pn-card">
-      <h2 className="pn-section-title">{copy.booking.amountsTitle}</h2>
-      <dl>
-        {booking.items.map((item) => (
-          <div
-            key={item.tripId + ":" + item.seatCode}
-            className="pn-amount-row"
-          >
-            <dt>
-              {booking.items.some(
-                (i) => i.tripId && i.tripId !== booking.tripId,
-              ) && (item.tripId === booking.tripId ? "Đi · " : "Về · ")}
-              {item.seatCode} · {item.occupancy} người
-              {item.infantCount > 0 ? ` · ${item.infantCount} trẻ em` : ""}
-            </dt>
-            <dd>{formatCurrency(item.lineTotal)}</dd>
-          </div>
-        ))}
-        <div className="pn-amount-row pn-amount-total">
-          <dt>{copy.booking.total}</dt>
-          <dd>{formatCurrency(booking.totalAmount)}</dd>
+    <dl aria-label={copy.booking.amountsTitle}>
+      {booking.items.map((item) => (
+        <div key={item.tripId + ":" + item.seatCode} className="pn-amount-row">
+          <dt>
+            {booking.items.some(
+              (i) => i.tripId && i.tripId !== booking.tripId,
+            ) && (item.tripId === booking.tripId ? "Đi · " : "Về · ")}
+            {item.seatCode} · {item.occupancy} người
+            {item.infantCount > 0 ? ` · ${item.infantCount} trẻ em` : ""}
+          </dt>
         </div>
-        <div className="pn-amount-row">
-          <dt>{copy.booking.paid}</dt>
-          <dd>{formatCurrency(booking.paidAmount)}</dd>
-        </div>
-        {needsPayment(booking) && (
-          <div className="pn-amount-row">
-            <dt>{copy.booking.due}</dt>
-            <dd>{formatCurrency(booking.amountDueNow)}</dd>
-          </div>
-        )}
-      </dl>
-    </section>
+      ))}
+      <div className="pn-amount-row">
+        <dt>Thanh toán</dt>
+        <dd>{receiptPaymentLabel(booking.paymentStatus)}</dd>
+      </div>
+      <div className="pn-amount-row pn-amount-total">
+        <dt>{copy.seats.totalDeposit}</dt>
+        <dd>{formatCurrency(booking.depositAmount)}</dd>
+      </div>
+    </dl>
   );
 }
 

@@ -12,7 +12,6 @@ import { useTrips } from "@/services/trip/trip.queries";
 import { useBookingDraft } from "@/stores/booking-draft.store";
 import { useTripSearch, type TripSearch } from "@/stores/trip-search.store";
 import type { TripSummary } from "@/types/api.types";
-import { formatCurrency } from "@/utils/format";
 import { formatVnDate, formatVnTime } from "@/utils/time";
 import { EmptyState } from "@/components/booking/empty-state";
 import { matchingTrips, readTripSearch } from "@/utils/trip-search";
@@ -123,15 +122,7 @@ function TripCard({ trip, onPick }: { trip: TripSummary; onPick: () => void }) {
       onClick={onPick}
       className="pn-card pn-trip"
     >
-      <span className="pn-row">
-        <span className="pn-trip-time">{formatVnTime(trip.departAt)}</span>
-        {trip.fromPrice !== null && (
-          <span className="pn-price">
-            <span className="pn-meta">{copy.search.fromPrice} </span>
-            {formatCurrency(trip.fromPrice)}
-          </span>
-        )}
-      </span>
+      <span className="pn-trip-time">{formatVnTime(trip.departAt)}</span>
       <span className="pn-trip-route">
         {trip.route.origin} → {trip.route.destination}
       </span>

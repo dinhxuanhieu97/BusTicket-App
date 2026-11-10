@@ -1,6 +1,5 @@
 import { useOpenRoutes } from "@/services/trip/trip.queries";
 import type { OpenRoute } from "@/types/api.types";
-import { formatCurrency } from "@/utils/format";
 import { BusIcon } from "@/components/common/bus-icon";
 
 export function DiscoverRoutes({
@@ -47,15 +46,7 @@ export function DiscoverRoutes({
                     <strong>
                       {route.origin} → {route.destination}
                     </strong>
-                    <small>
-                      {route.tripCount} chuyến
-                      {route.fromPrice !== null && (
-                        <>
-                          {" "}
-                          · Từ <b>{formatCurrency(route.fromPrice)}</b>
-                        </>
-                      )}
-                    </small>
+                    <small>{route.tripCount} chuyến</small>
                   </span>
                   <span className="pn-route-chevron" aria-hidden="true">
                     ›

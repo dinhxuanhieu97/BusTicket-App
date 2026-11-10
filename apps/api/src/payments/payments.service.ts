@@ -86,6 +86,12 @@ interface LockedBooking {
   paid_amount: number;
 }
 
+interface LockedTrip {
+  id: string;
+  status: string;
+  depart_at: Date;
+}
+
 export interface IngestResult {
   status: 'PROCESSED' | 'DUPLICATE' | 'IGNORED';
   paymentId?: string;
@@ -185,33 +191,36 @@ export class PaymentsService {
   // ---- Hướng dẫn thanh toán cho khách --------------------------------------------------------------
 
   /** QR + thông tin chuyển khoản cho đơn (khách xác minh bằng token truy cập đơn). Không lộ dữ liệu khác. */
-  async paymentInstructions(code: string, accessToken: string) {
+  async paymentInstructions(code: string, accessToken: string, depositOnly = false) {
     const { rows } = await this.db.query<{
-      id: string; operator_id: string; status: string; hold_expires_at: Date | null; total_amount: number;
+      id: string; status: string; hold_expires_at: Date | null; total_amount: number;
       deposit_amount: number; paid_amount: number; access_token_version: number;
+      bank_code: string | null; account_number: string | null; account_name: string | null;
     }>(
-      `SELECT id, operator_id, status, hold_expires_at, total_amount, deposit_amount, paid_amount, access_token_version
-       FROM bookings WHERE code = $1`,
+      `SELECT b.id, b.status, b.hold_expires_at, b.total_amount, b.deposit_amount, b.paid_amount, b.access_token_version,
+              a.bank_code, a.account_number, a.account_name
+       FROM bookings b LEFT JOIN operator_payment_accounts a ON a.operator_id = b.operator_id AND a.active
+       WHERE b.code = $1`,
       [code],
     );
     const b = rows[0];
     if (!b || !verifyBookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version, accessToken)) throw notFound('đơn');
     const now = this.clock.now();
     const holding = b.status === 'HOLDING' && b.hold_expires_at !== null && b.hold_expires_at > now;
-    const due = amountDueNow(b, now);
+    const due = depositOnly && !holding ? 0 : amountDueNow(b, now);
     if (due <= 0) {
       return { code, payable: false, reason: holding || b.status === 'CONFIRMED' ? 'PAID' : 'NOT_PAYABLE', amountDue: 0 };
     }
-    const account = await this.publicAccount(this.db, b.operator_id);
-    if (!account) throw new DomainError('SERVICE_UNAVAILABLE', 'Nhà xe chưa cấu hình tài khoản nhận tiền.');
+    if (!b.bank_code || !b.account_number || !b.account_name)
+      throw new DomainError('SERVICE_UNAVAILABLE', 'Nhà xe chưa cấu hình tài khoản nhận tiền.');
     return {
       code,
       payable: true,
       amountDue: due,
       transferContent: code,
       holdExpiresAt: holding ? b.hold_expires_at!.toISOString() : null,
-      bank: { code: account.bankCode, accountNumber: account.accountNumber, accountName: account.accountName },
-      qrImageUrl: sepayQrUrl(account.bankCode, account.accountNumber, due, code),
+      bank: { code: b.bank_code, accountNumber: b.account_number, accountName: b.account_name },
+      qrImageUrl: sepayQrUrl(b.bank_code, b.account_number, due, code),
     };
   }
 
@@ -305,20 +314,22 @@ export class PaymentsService {
         await this.flag(c, payment.id, found.length === 0 ? 'UNMATCHED' : 'AMBIGUOUS');
         return { status: 'PROCESSED', paymentId: payment.id };
       }
-      await c.query('UPDATE payments SET matched_booking_id = $2 WHERE id = $1', [payment.id, found[0]!.id]);
+      const bookingId = found[0]!.id;
+      const trips = await this.lockBookingTrips(c, bookingId);
+      await c.query('UPDATE payments SET matched_booking_id = $2 WHERE id = $1', [payment.id, bookingId]);
       // Kế toán có thể đã xác nhận tay chính giao dịch này lúc SePay gián đoạn → không tự cộng lần hai.
       const { rows: manual } = await c.query(
         `SELECT 1 FROM payments
          WHERE operator_id = $1 AND method = 'MANUAL_BANK' AND matched_booking_id = $2
            AND ((reference_norm <> '' AND reference_norm = $3) OR (amount = $4 AND abs(extract(epoch FROM transaction_at - $5)) * 1000 < $6))
          LIMIT 1`,
-        [account.operator_id, found[0]!.id, normRef(t.referenceCode), t.amount, paidAt, DUPLICATE_WINDOW_MS],
+        [account.operator_id, bookingId, normRef(t.referenceCode), t.amount, paidAt, DUPLICATE_WINDOW_MS],
       );
       if (manual[0]) {
         await this.flag(c, payment.id, 'POSSIBLE_DUPLICATE');
         return { status: 'PROCESSED', paymentId: payment.id };
       }
-      await this.applyToBooking(c, payment, found[0]!.id, paidAt, null, true);
+      await this.applyToBooking(c, payment, bookingId, trips, paidAt, null, true);
       return { status: 'PROCESSED', paymentId: payment.id };
     });
   }
@@ -348,6 +359,9 @@ export class PaymentsService {
           operatorId, data.bookingCode,
         ]);
         if (!bk[0]) throw notFound('đơn');
+        const trips = await this.lockBookingTrips(c, bk[0].id);
+        const concurrent = await this.findByIdempotency(c, operatorId, key);
+        if (concurrent) return this.replayManual(c, concurrent, requestHash);
         if (data.method === 'MANUAL_BANK') {
           // Mã giao dịch đã có trong sổ (SePay hoặc ghi tay) → chắc chắn trùng.
           const { rows: sameRef } = await c.query(
@@ -377,7 +391,7 @@ export class PaymentsService {
         );
         const payment = rows[0]!;
         await this.outbox(c, operatorId, 'payment.received', payment.id, `payment.received:${payment.id}`, { amount: data.amount });
-        await this.applyToBooking(c, payment, bk[0].id, now, actor.id, true);
+        await this.applyToBooking(c, payment, bk[0].id, trips, now, actor.id, true);
         await this.audit.record(
           { operatorId, actorUserId: actor.id, action: 'payment.record_manual', entity: 'payment', entityId: payment.id,
             data: { bookingCode: data.bookingCode, amount: data.amount, method: data.method, bankReference: data.bankReference ?? null } },
@@ -410,10 +424,7 @@ export class PaymentsService {
       );
       if (!bk[0]) throw notFound('đơn');
       // Thứ tự khóa giống luồng giữ chỗ: mọi chuyến của đơn (cả chiều về) theo ID → khoản thu → đơn.
-      await c.query(
-        `SELECT id FROM trips WHERE id IN (SELECT trip_id FROM booking_items WHERE booking_id = $1) ORDER BY id FOR NO KEY UPDATE`,
-        [bk[0].id],
-      );
+      const trips = await this.lockBookingTrips(c, bk[0].id);
       const { rows } = await c.query<PaymentRow>('SELECT * FROM payments WHERE id = $1 AND operator_id = $2 FOR UPDATE', [
         paymentId, operatorId,
       ]);
@@ -428,7 +439,7 @@ export class PaymentsService {
         throw new DomainError('VALIDATION_FAILED', `Chỉ còn ${available.toLocaleString('vi-VN')}đ chưa phân bổ.`, { available });
       }
       // Đúng hạn hay muộn tính theo lúc khách chuyển (vd. chuyển đúng hạn nhưng ghi sai mã, kế toán phân bổ sau).
-      const result = await this.applyToBooking(c, payment, bk[0].id, payment.transaction_at, actor.id, false, data.amount);
+      const result = await this.applyToBooking(c, payment, bk[0].id, trips, payment.transaction_at, actor.id, false, data.amount);
       if (result.allocated === 0) {
         throw new DomainError('CONFLICT', 'Không phân bổ được vào đơn này (đơn đã hết hạn, đã hủy hoặc đã trả đủ).', {
           bookingStatus: result.bookingStatus,
@@ -479,8 +490,18 @@ export class PaymentsService {
 
   // ---- Lõi phân bổ ---------------------------------------------------------------------------------
 
+  /** Khóa chuyến trước khi gắn khóa ngoại đến đơn và kiểm tra giao dịch trùng. */
+  private async lockBookingTrips(c: PoolClient, bookingId: string): Promise<LockedTrip[]> {
+    const { rows } = await c.query<LockedTrip>(
+      `SELECT id, status, depart_at FROM trips WHERE id IN (SELECT trip_id FROM booking_items WHERE booking_id = $1)
+       ORDER BY id FOR NO KEY UPDATE`,
+      [bookingId],
+    );
+    return rows;
+  }
+
   /**
-   * Phân bổ tiền chưa phân bổ của `payment` vào đơn. Khóa chuyến rồi đơn (cùng thứ tự với giữ chỗ/hết hạn).
+   * Phân bổ tiền chưa phân bổ của `payment` vào đơn sau khi bên gọi đã khóa chuyến.
    * - Đơn đang giữ chỗ và giao dịch xảy ra trước lúc nhả chỗ (hạn thanh toán + ân hạn): cộng tiền; đủ cọc → xác nhận vé.
    * - Đơn đã xác nhận: cộng phần còn thiếu.
    * - Tiền về sau khi đơn hết hạn: nếu nhà xe bật tự xác nhận lại, đủ cọc, chuyến chưa chạy/chưa hủy và mọi chỗ cũ
@@ -493,17 +514,12 @@ export class PaymentsService {
     c: PoolClient,
     payment: PaymentRow,
     bookingId: string,
+    trips: LockedTrip[],
     paidAt: Date,
     actorId: string | null,
     flagLeftover: boolean,
     maxAmount?: number,
   ): Promise<{ allocated: number; bookingStatus: string }> {
-    // Khóa mọi chuyến của đơn (cả chiều về) theo thứ tự ID — cùng thứ tự với giữ chỗ/hết hạn.
-    const { rows: trips } = await c.query<{ id: string; status: string; depart_at: Date }>(
-      `SELECT id, status, depart_at FROM trips WHERE id IN (SELECT trip_id FROM booking_items WHERE booking_id = $1)
-       ORDER BY id FOR NO KEY UPDATE`,
-      [bookingId],
-    );
     const { rows } = await c.query<LockedBooking>(
       `SELECT id, code, operator_id, trip_id, status, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount
        FROM bookings WHERE id = $1 FOR UPDATE`,
@@ -580,7 +596,7 @@ export class PaymentsService {
   private async reinstate(
     c: PoolClient,
     b: LockedBooking,
-    trips: { id: string; status: string; depart_at: Date }[],
+    trips: LockedTrip[],
     available: number,
   ): Promise<boolean> {
     const now = this.clock.now();

@@ -300,3 +300,40 @@ describe('HTTP: GET /admin/operators/:operatorId/seat-layouts/:layoutId (exact v
     await http().get(`/api/v1/admin/operators/${seed.op.id}/seat-layouts/not-a-uuid`).auth(token, { type: 'bearer' }).expect(404);
   });
 });
+
+describe('admin range pagination', () => {
+  it('pages tied departure times without duplicates and scopes the operator', async () => {
+    const departAt = new Date('2027-04-05T10:30:00Z');
+    for (let i = 0; i < 3; i++) await s.trips.createTrip(seed.op.id, tripInput({name: `Range ${i}`, departAt, salesCloseAt:departAt}), newKey());
+    const query = {from:'2027-04-05',to:'2027-04-06',limit:2};
+    const first = await s.trips.listAdminRange(seed.op.id, query);
+    expect(first.trips).toHaveLength(2);
+    expect(first.nextCursor).toBeTruthy();
+    const second = await s.trips.listAdminRange(seed.op.id, {...query, cursor:first.nextCursor});
+    expect(second.trips.length).toBeGreaterThan(0);
+    const ids = [...first.trips,...second.trips].map(t=>t.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect((await s.trips.listAdminRange(other.op.id, query)).trips).toHaveLength(0);
+    expect(first.trips[0]).toMatchObject({available:40,capacity:40});
+  });
+  it('uses an exclusive end date at the Vietnam midnight boundary', async () => {
+    await s.trips.createTrip(seed.op.id, tripInput({departAt: new Date('2027-03-01T17:00:00Z'), salesCloseAt:new Date('2027-03-01T17:00:00Z')}), newKey());
+    const before = await s.trips.listAdminRange(seed.op.id, {from:'2027-03-01',to:'2027-03-02'});
+    const after = await s.trips.listAdminRange(seed.op.id, {from:'2027-03-02',to:'2027-03-03'});
+    expect(before.trips).toHaveLength(0);
+    expect(after.trips).toHaveLength(1);
+  });
+});
+
+it('does not repeat a row with a microsecond departure cursor', async () => {
+  const departAt=new Date('2027-05-05T10:30:00Z');
+  const a=await s.trips.createTrip(seed.op.id,tripInput({name:'micro 1',departAt,salesCloseAt:departAt}),newKey());
+  const b=await s.trips.createTrip(seed.op.id,tripInput({name:'micro 2',departAt,salesCloseAt:departAt}),newKey());
+  await s.db.query("UPDATE trips SET depart_at=depart_at+interval '123456 microseconds' WHERE id=$1",[a.id]);
+  await s.db.query("UPDATE trips SET depart_at=depart_at+interval '123457 microseconds' WHERE id=$1",[b.id]);
+  const range={from:'2027-05-05',to:'2027-05-06',limit:1};
+  const first=await s.trips.listAdminRange(seed.op.id,range);
+  const second=await s.trips.listAdminRange(seed.op.id,{...range,cursor:first.nextCursor});
+  expect(first.trips[0]?.id).toBe(a.id);
+  expect(second.trips[0]?.id).toBe(b.id);
+});
