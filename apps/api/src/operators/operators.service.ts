@@ -84,6 +84,29 @@ export class OperatorsService {
     return rows[0];
   }
 
+  async profile(operatorId: string) {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    const row = (await this.db.query<{id:string;code:string;name:string;defaultDepartureTime:string}>(
+      'SELECT id,code,name,default_departure_time AS "defaultDepartureTime" FROM operators WHERE id=$1', [operatorId],
+    )).rows[0];
+    if (!row) throw notFound('nhà xe');
+    return row;
+  }
+
+  async updateProfile(operatorId: string, input: unknown) {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    const data = z.object({
+      name: z.string().trim().min(1).max(120).refine(v => !v.includes('\0')),
+      defaultDepartureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    }).strict().parse(input);
+    const result = await this.db.query<{ id: string; code: string; name: string; defaultDepartureTime: string }>(
+      'UPDATE operators SET name=$2,default_departure_time=$3 WHERE id=$1 RETURNING id,code,name,default_departure_time AS "defaultDepartureTime"',
+      [operatorId, data.name, data.defaultDepartureTime],
+    );
+    if (!result.rows[0]) throw notFound('nhà xe');
+    return result.rows[0];
+  }
+
   /** Chính sách đang áp dụng = phiên bản mới nhất. */
   async currentPolicy(operatorId: string, q: Queryable = this.db): Promise<OperatorPolicy> {
     if (!isUuid(operatorId)) throw notFound('chính sách của nhà xe');

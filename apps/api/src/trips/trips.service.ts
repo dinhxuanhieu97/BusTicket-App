@@ -1,6 +1,8 @@
+import type { PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
+import { adminTripRange } from './admin-trip-query';
 import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
@@ -108,6 +110,27 @@ export function expectedArrival(departAt: Date, stops: { dropoff?: { time: strin
 const VN_OFFSET_MS = 7 * 3600_000;
 const DAY_MS = 24 * 3600_000;
 
+/** Vehicle row must be locked before checking its allocation. */
+export async function assertVehicleAvailable(
+  q: Queryable, operatorId: string, vehicleId: string, start: Date, end: Date,
+  options: { scheduledOnly?: boolean; exclude?: string } = {},
+) {
+  // A route stop can be up to day 7. Limit the indexed scan even for legacy trips without an occupancy snapshot.
+  const conflict = await q.query(
+    `SELECT t.id FROM trips t JOIN routes r ON r.id=t.route_id
+     WHERE t.operator_id=$1 AND t.vehicle_id=$2 AND t.status<>'CANCELLED'
+       AND t.depart_at >= $3::timestamptz - interval '9 days' AND t.depart_at < $4
+       AND ($5::uuid IS NULL OR t.id<>$5) AND (NOT $6::boolean OR t.schedule_id IS NOT NULL)
+       AND COALESCE(t.occupied_until,
+         GREATEST(t.depart_at+interval '15 hours',
+           (((t.depart_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + (r.stops #>> '{dropoff,-1,day}')::int)
+              + (r.stops #>> '{dropoff,-1,time}')::time) AT TIME ZONE 'Asia/Ho_Chi_Minh' + interval '1 hour')
+       ) > $3 LIMIT 1`,
+    [operatorId,vehicleId,start,end,options.exclude??null,options.scheduledOnly??false],
+  );
+  if (conflict.rows.length) throw new DomainError('CONFLICT', 'Xe đã có lịch chạy trùng khoảng thời gian.');
+}
+
 function publicTrip(t: TripRow): Omit<TripRow, 'idempotency_key' | 'request_hash'> {
   const { idempotency_key: _k, request_hash: _h, ...rest } = t;
   return rest;
@@ -141,10 +164,10 @@ export class TripsService {
    * Tạo chuyến: chụp phiên bản sơ đồ hiện tại của xe vào `trip_seats`, bắt buộc có đủ giá
    * cho mọi (tầng × số người) bán được.
    */
-  async createTrip(operatorId: string, input: CreateTripInput, idempotencyKey?: string): Promise<CreateTripResult> {
+  async createTrip(operatorId: string, input: CreateTripInput, idempotencyKey?: string, transaction?: PoolClient, allocation?: { until?: Date; checkAllTrips?: boolean }): Promise<CreateTripResult> {
     const data = createTripSchema.parse(input);
     const key = idempotencyKey?.trim();
-    if (key !== undefined && !/^[\w-]{8,100}$/.test(key)) {
+    if (key !== undefined && !/^[\w-]{8,100}$/.test(key) && !(transaction && /^batch:[a-f0-9]{64}:[01]$/.test(key))) {
       throw new DomainError('VALIDATION_FAILED', 'Idempotency-Key phải dài 8–100 ký tự (chữ, số, "-", "_").', { field: 'Idempotency-Key' });
     }
     if (!(data.salesOpenAt < data.salesCloseAt && data.salesCloseAt <= data.departAt)) {
@@ -164,24 +187,31 @@ export class TripsService {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
 
     try {
-      return await this.db.tx(async (c) => {
+      const execute = async (c: PoolClient) => {
         if (key) {
           const existing = await this.findTripByKey(c, operatorId, key);
           if (existing) return this.replayTrip(existing, requestHash!);
         }
-        const { rows: routes } = await c.query('SELECT id FROM routes WHERE id = $1 AND operator_id = $2', [
+        const { rows: routes } = await c.query('SELECT id, stops FROM routes WHERE id = $1 AND operator_id = $2', [
           data.routeId,
           operatorId,
         ]);
         if (!routes[0]) throw notFound('tuyến');
         const { rows: vehicles } = await c.query<{ id: string; seat_layout_id: string; status: string }>(
-          // FOR SHARE: chặn đổi sơ đồ/trạng thái xe trong lúc đang chụp sơ đồ vào chuyến.
-          'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2 FOR SHARE',
+          // Serialize vehicle allocations and pin the current seat layout.
+          'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2 FOR UPDATE',
           [data.vehicleId, operatorId],
         );
         const vehicle = vehicles[0];
         if (!vehicle) throw notFound('xe');
         if (vehicle.status !== 'ACTIVE') throw new DomainError('VALIDATION_FAILED', 'Xe đang không hoạt động.');
+        const arrival = expectedArrival(data.departAt, routes[0].stops);
+        const occupiedUntil = allocation?.until ?? (arrival && new Date(arrival) > data.departAt
+          ? new Date(new Date(arrival).getTime() + 60 * 60000)
+          : new Date(data.departAt.getTime() + 15 * 3600000));
+        await assertVehicleAvailable(c, operatorId, vehicle.id, data.departAt, occupiedUntil, {
+          scheduledOnly: !allocation?.checkAllTrips,
+        });
 
         const { rows: needs } = await c.query<{ floor: string; max_occ: number }>(
           `SELECT floor, MAX(max_occupancy) AS max_occ FROM seats
@@ -207,10 +237,10 @@ export class TripsService {
 
         const { rows } = await c.query<TripRow>(
           `INSERT INTO trips (operator_id, route_id, vehicle_id, seat_layout_id, name, contact_phone,
-                              depart_at, sales_open_at, sales_close_at, status, idempotency_key, request_hash)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+                              depart_at, sales_open_at, sales_close_at, status, idempotency_key, request_hash, occupied_until)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
           [operatorId, data.routeId, vehicle.id, vehicle.seat_layout_id, data.name, contactPhone,
-            data.departAt, data.salesOpenAt, data.salesCloseAt, data.status, key ?? null, requestHash],
+            data.departAt, data.salesOpenAt, data.salesCloseAt, data.status, key ?? null, requestHash, occupiedUntil],
         );
         const trip = rows[0]!;
         await c.query(
@@ -224,15 +254,41 @@ export class TripsService {
           ]);
         }
         return { ...publicTrip(trip), replayed: false };
-      });
+      };
+      return await (transaction ? execute(transaction) : this.db.tx(execute));
     } catch (e) {
       // Hai yêu cầu cùng khóa chạy song song: ràng buộc duy nhất chặn bản thứ hai → trả chuyến đã tạo.
-      if (key && isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'trips_operator_idempotency_key') {
+      if (!transaction && key && isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'trips_operator_idempotency_key') {
         const existing = await this.findTripByKey(this.db, operatorId, key);
         if (existing) return this.replayTrip(existing, requestHash!);
       }
       throw e;
     }
+  }
+
+  async createBatch(operatorId:string,input:unknown,key:string) {
+    if(!/^[\w-]{8,80}$/.test(key)) throw new DomainError('VALIDATION_FAILED','Thiếu khóa tạo chuyến hợp lệ.');
+    const data=z.object({trips:z.array(createTripSchema).length(2)}).strict().parse(input);
+    if(data.trips[0]!.vehicleId.toLowerCase()===data.trips[1]!.vehicleId.toLowerCase() || data.trips[0]!.routeId===data.trips[1]!.routeId)
+      throw new DomainError('VALIDATION_FAILED','Hai chiều cần hai xe và hai tuyến riêng.');
+    return this.db.tx(async c=>{
+      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[operatorId+':trip-batch:'+key]);
+      const routes=(await c.query('SELECT origin,destination FROM routes WHERE operator_id=$1 AND id=ANY($2::uuid[])',[operatorId,data.trips.map(t=>t.routeId)])).rows;
+      if(routes.length!==2) throw notFound('tuyến');
+      const normalize=(v:string)=>v.trim().toLocaleLowerCase('vi');
+      if(normalize(routes[0]!.origin)!==normalize(routes[1]!.destination)||normalize(routes[0]!.destination)!==normalize(routes[1]!.origin))
+        throw new DomainError('VALIDATION_FAILED','Hai tuyến phải ngược chiều nhau.');
+      await c.query('SELECT id FROM vehicles WHERE operator_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE',[operatorId,data.trips.map(t=>t.vehicleId)]);
+      const result=[];
+      for(let i=0;i<data.trips.length;i++) {
+        const item=data.trips[i]!;
+        const itemKey=`batch:${createHash('sha256').update(key).digest('hex')}:${i}`;
+        if (item.departAt <= this.clock.now() && !await this.findTripByKey(c,operatorId,itemKey))
+          throw new DomainError('CONFLICT','Giờ khởi hành phải ở tương lai.');
+        result.push(await this.createTrip(operatorId,item,itemKey,c,{checkAllTrips:true}));
+      }
+      return {trips:result};
+    });
   }
 
   private async findTripByKey(q: Queryable, operatorId: string, key: string): Promise<TripRow | undefined> {
@@ -254,6 +310,22 @@ export class TripsService {
       [operatorId, routeId, JSON.stringify(stops)]);
     if (!result.rows.length) throw notFound('tuyến');
     return stops;
+  }
+
+  async createRoutePair(operatorId:string,input:unknown) {
+    const data=z.object({origin:z.string().trim().min(1).max(80),destination:z.string().trim().min(1).max(80),code:z.string().regex(/^[A-Z0-9-]{2,32}$/),reverseCode:z.string().regex(/^[A-Z0-9-]{2,32}$/)}).strict().parse(input);
+    if(data.origin===data.destination||data.code===data.reverseCode) throw new DomainError('VALIDATION_FAILED','Hai chiều cần địa điểm và mã khác nhau.');
+    return this.db.tx(async c=>{
+      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[operatorId+':route-pair']);
+      const routes=[];
+      for(const [code,origin,destination] of [[data.code,data.origin,data.destination],[data.reverseCode,data.destination,data.origin]]) {
+        await c.query('INSERT INTO routes(operator_id,code,origin,destination) VALUES($1,$2,$3,$4) ON CONFLICT(operator_id,code) DO NOTHING',[operatorId,code,origin,destination]);
+        const row=(await c.query('SELECT id,code,origin,destination FROM routes WHERE operator_id=$1 AND code=$2',[operatorId,code])).rows[0]!;
+        if(row.origin!==origin||row.destination!==destination) throw new DomainError('CONFLICT','Mã tuyến đã được dùng cho địa điểm khác.');
+        routes.push(row);
+      }
+      return {routes};
+    });
   }
 
   async listRoutes(operatorId: string) {
@@ -284,6 +356,31 @@ export class TripsService {
     return rows;
   }
 
+  /** Bounded, keyset-paginated admin range; aggregate seats only for this page. */
+  async listAdminRange(operatorId: string, input: unknown) {
+    const q = adminTripRange(input);
+    if (!isUuid(operatorId)) return { trips: [], nextCursor: null };
+    const { rows } = await this.db.query<{ id: string; depart_at: Date; cursor_at: string; [key: string]: unknown }>(
+      `WITH page AS MATERIALIZED (
+         SELECT * FROM trips WHERE operator_id = $1 AND depart_at >= $3 AND depart_at < $4
+           AND ($5::timestamptz IS NULL OR (depart_at, id) > ($5::timestamptz, $6::uuid))
+         ORDER BY depart_at, id LIMIT $7
+       )
+       SELECT t.id, t.name, t.status, t.depart_at,
+         to_char(t.depart_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at, t.sales_open_at, t.sales_close_at, t.contact_phone,
+         r.code AS route_code, v.code AS vehicle_code, v.name AS vehicle_name,
+         (SELECT COUNT(*)::int FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
+          WHERE ts.trip_id = t.id AND (${SEAT_STATUS_SQL}) = 'AVAILABLE') AS available,
+         (SELECT COUNT(*)::int FROM trip_seats ts WHERE ts.trip_id = t.id) AS capacity
+       FROM page t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
+       ORDER BY t.depart_at, t.id`,
+      [operatorId, this.clock.now(), q.start, q.end, q.after?.at ?? null, q.after?.id ?? null, q.limit + 1],
+    );
+    const last = rows[q.limit - 1];
+    const trips = rows.slice(0,q.limit).map(({cursor_at: _cursor, ...trip}) => trip);
+    return { trips, nextCursor: rows.length > q.limit && last ? `${last.cursor_at}|${last.id}` : null };
+  }
+
   /**
    * Chi tiết một chuyến cho quản trị (mọi trạng thái, kể cả DRAFT), chỉ trong nhà xe của người gọi.
    * Sơ đồ là phiên bản đã chụp vào chuyến (`trips.seat_layout_id` + `trip_seats`), không phải sơ đồ hiện tại của xe.
@@ -294,7 +391,7 @@ export class TripsService {
     const now = this.clock.now();
     const { rows: trips } = await this.db.query<{
       id: string; name: string; status: TripRow['status']; depart_at: Date; sales_open_at: Date; sales_close_at: Date;
-      contact_phone: string | null; created_at: Date;
+      contact_phone: string | null; created_at: Date; planned_arrive_at: Date | null;
       route_id: string; route_code: string; origin: string; destination: string; stops: z.output<typeof stopsSchema>;
       vehicle_id: string; vehicle_code: string; vehicle_name: string; vehicle_type: string; plate_number: string | null;
       vehicle_status: string; vehicle_layout_id: string;
@@ -302,7 +399,7 @@ export class TripsService {
       definition: { floors: { code: string; label: string; rows: string[] }[] };
     }>(
       `SELECT t.id, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone, t.created_at,
-              r.id AS route_id, r.code AS route_code, r.origin, r.destination, r.stops,
+              r.id AS route_id, r.code AS route_code, r.origin, r.destination, COALESCE(t.stops_snapshot,r.stops) AS stops, t.planned_arrive_at,
               v.id AS vehicle_id, v.code AS vehicle_code, v.name AS vehicle_name, v.type AS vehicle_type,
               v.plate_number, v.status AS vehicle_status, v.seat_layout_id AS vehicle_layout_id,
               sl.id AS layout_id, sl.code AS layout_code, sl.version AS layout_version, sl.name AS layout_name,
@@ -340,7 +437,7 @@ export class TripsService {
         name: t.name,
         status: t.status,
         departAt: t.depart_at.toISOString(),
-        arriveAt: expectedArrival(t.depart_at, t.stops),
+        arriveAt: t.planned_arrive_at?.toISOString() ?? expectedArrival(t.depart_at, t.stops),
         salesOpenAt: t.sales_open_at.toISOString(),
         salesCloseAt: t.sales_close_at.toISOString(),
         contactPhone: t.contact_phone,
@@ -467,7 +564,7 @@ export class TripsService {
       definition: { floors: { code: string; label: string; rows: string[] }[] }; layout_name: string; unit: string; kind: string;
       stops: z.output<typeof stopsSchema>; vehicle_name: string; vehicle_code: string;
     }>(
-      `SELECT r.stops, t.id, t.operator_id, t.name, t.depart_at, t.status, t.sales_open_at, t.sales_close_at,
+      `SELECT COALESCE(t.stops_snapshot,r.stops) AS stops, t.id, t.operator_id, t.name, t.depart_at, t.status, t.sales_open_at, t.sales_close_at,
               sl.definition, sl.name AS layout_name, sl.unit, sl.kind,
               v.name AS vehicle_name, v.code AS vehicle_code
        FROM trips t JOIN routes r ON r.id=t.route_id JOIN seat_layouts sl ON sl.id = t.seat_layout_id JOIN vehicles v ON v.id = t.vehicle_id
