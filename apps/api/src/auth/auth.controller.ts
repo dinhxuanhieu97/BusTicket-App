@@ -7,6 +7,7 @@ import { AllowScopes, AuthedRequest, AuthGuard, AuthOnly } from './auth.guard';
 import { AuthService } from './auth.service';
 
 const otpBody = z.object({ otp: z.string().min(1).max(10) }).strict();
+const disableMfaBody = z.object({ password: z.string().min(1).max(128), otp: z.string().min(1).max(10) }).strict();
 const passwordBody = z.object({ currentPassword: z.string().min(1).max(128), newPassword: z.string().min(1).max(128) }).strict();
 
 @Controller('api/v1/auth')
@@ -68,6 +69,20 @@ export class AuthController {
     const issued = await this.auth.confirmMfa(req.auth, otp);
     await this.audit.record({
       operatorId: req.auth.operatorId, actorUserId: req.auth.id, action: 'user.mfa_enable', entity: 'user', entityId: req.auth.id,
+    });
+    return issued;
+  }
+
+  /** Tắt 2FA (chỉ khi không bắt buộc). Cần phiên đầy đủ + mật khẩu + mã hiện tại. */
+  @Post('mfa/disable')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  @AuthOnly()
+  async mfaDisable(@Req() req: AuthedRequest, @Body() body: unknown) {
+    const { password, otp } = disableMfaBody.parse(body);
+    const issued = await this.auth.disableMfa(req.auth, password, otp);
+    await this.audit.record({
+      operatorId: req.auth.operatorId, actorUserId: req.auth.id, action: 'user.mfa_disable', entity: 'user', entityId: req.auth.id,
     });
     return issued;
   }

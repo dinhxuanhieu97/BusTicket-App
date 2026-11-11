@@ -27,6 +27,11 @@ export interface AuthConfigOptions {
   issuer: string;
   maxFailedLogins: number;
   lockMinutes: number;
+  /**
+   * Bắt buộc 2FA cho các vai trò trong `MFA_REQUIRED_ROLES`. Mặc định tắt: 2FA là tùy chọn (người dùng tự bật/tắt).
+   * Production bật lại qua env `AUTH_REQUIRE_MFA=true`.
+   */
+  requireMfa: boolean;
 }
 
 export class AuthConfig implements AuthConfigOptions {
@@ -38,6 +43,7 @@ export class AuthConfig implements AuthConfigOptions {
   readonly issuer: string;
   readonly maxFailedLogins: number;
   readonly lockMinutes: number;
+  readonly requireMfa: boolean;
 
   constructor(
     readonly tokenSecret: string,
@@ -52,6 +58,7 @@ export class AuthConfig implements AuthConfigOptions {
     this.issuer = opts.issuer ?? 'PNTicket';
     this.maxFailedLogins = opts.maxFailedLogins ?? 5;
     this.lockMinutes = opts.lockMinutes ?? 15;
+    this.requireMfa = opts.requireMfa ?? false;
     for (const [k, v] of Object.entries({
       accessTtlSeconds: this.accessTtlSeconds, sessionTtlSeconds: this.sessionTtlSeconds, rememberTtlSeconds: this.rememberTtlSeconds,
     })) {
@@ -186,7 +193,8 @@ export class AuthService {
 
   /**
    * Đăng nhập bằng SĐT + mật khẩu (+ OTP nếu đã bật 2FA). Sai gì cũng trả cùng một lỗi chung;
-   * sai quá số lần cho phép thì khóa tạm thời. Vai trò bắt buộc 2FA mà chưa bật → token chỉ để thiết lập 2FA.
+   * sai quá số lần cho phép thì khóa tạm thời. Khi bắt buộc 2FA (`requireMfa`) mà vai trò cần 2FA chưa bật → token chỉ
+   * để thiết lập 2FA.
    */
   async login(input: z.input<typeof loginSchema>, ip?: string): Promise<IssuedToken> {
     const data = loginSchema.parse(input);
@@ -229,7 +237,7 @@ export class AuthService {
     }
     await this.db.query('UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = $1', [user.id]);
     const remember = data.rememberMe ?? false;
-    if (scopeOf(user) === 'mfa_setup') return this.issue(user, 'mfa_setup', null, remember);
+    if (this.scopeOf(user) === 'mfa_setup') return this.issue(user, 'mfa_setup', null, remember);
     return this.db.tx(async (c) => this.startSession(c, user, remember));
   }
 
@@ -249,7 +257,7 @@ export class AuthService {
       const now = this.clock.now();
       if (!sess || sess.revoked_at || sess.expires_at <= now) return null;
       const user = await this.load(sess.user_id, c);
-      if (user.status !== 'ACTIVE' || user.token_version !== sess.token_version || scopeOf(user) !== 'full') return null;
+      if (user.status !== 'ACTIVE' || user.token_version !== sess.token_version || this.scopeOf(user) !== 'full') return null;
 
       if (sameHash(sess.refresh_hash, hash)) {
         const secret = randomBytes(32).toString('base64url');
@@ -374,6 +382,35 @@ export class AuthService {
     });
   }
 
+  /**
+   * Tắt 2FA: cần đúng mật khẩu VÀ mã Authenticator hiện tại (lộ một trong hai không đủ để tắt). Sai tính vào bộ đếm
+   * khóa đăng nhập như `login`. Thành công thì xóa bí mật, thu hồi mọi phiên cũ và cấp lại phiên hiện tại.
+   */
+  async disableMfa(user: AuthUser, password: string, otp: string): Promise<IssuedToken> {
+    const row = await this.load(user.id);
+    if (!row.mfa_enabled) throw new DomainError('CONFLICT', 'Tài khoản chưa bật xác thực 2 lớp.');
+    if (this.config.requireMfa && MFA_REQUIRED_ROLES.has(row.role))
+      throw new DomainError('FORBIDDEN', 'Vai trò này bắt buộc xác thực 2 lớp.');
+    if (!(await this.reserveAttempt(row.id))) {
+      await verifyPassword(password, await dummyHash());
+      throw invalidCredentials();
+    }
+    if (!(await verifyPassword(password, row.password_hash))) throw invalidCredentials();
+    if (!(await this.consumeTotp(row, this.box.open(row.mfa_secret_enc!), otp))) throw invalidCredentials();
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<UserRow>(
+        `UPDATE users SET mfa_enabled = false, mfa_secret_enc = NULL, mfa_pending_enc = NULL, mfa_last_step = NULL,
+                failed_login_count = 0, locked_until = NULL, token_version = token_version + 1, updated_at = $2
+         WHERE id = $1 AND mfa_enabled RETURNING *`,
+        [user.id, this.clock.now()],
+      );
+      if (!rows[0]) throw new DomainError('CONFLICT', 'Trạng thái xác thực 2 lớp vừa thay đổi, vui lòng thử lại.');
+      const cap = await this.sessionCap(c, user);
+      await this.revokeWhere(c, 'user_id = $1', [user.id], 'CREDENTIALS_CHANGED');
+      return this.startSession(c, rows[0], user.remember ?? false, cap);
+    });
+  }
+
   /** Đổi mật khẩu: thu hồi mọi phiên cũ, cấp token mới cho phiên hiện tại. */
   async changePassword(user: AuthUser, current: string, next: string): Promise<IssuedToken> {
     const nextPw = passwordSchema.parse(next);
@@ -392,6 +429,10 @@ export class AuthService {
       if (user.scope !== 'full') return this.issue(updated, user.scope, null, user.remember ?? false);
       return this.startSession(c, updated, user.remember ?? false, cap);
     });
+  }
+
+  private scopeOf(user: UserRow): TokenScope {
+    return this.config.requireMfa && MFA_REQUIRED_ROLES.has(user.role) && !user.mfa_enabled ? 'mfa_setup' : 'full';
   }
 
   private async load(userId: string, q: Queryable = this.db): Promise<UserRow> {
@@ -514,9 +555,6 @@ export class AuthService {
   }
 }
 
-function scopeOf(user: UserRow): TokenScope {
-  return MFA_REQUIRED_ROLES.has(user.role) && !user.mfa_enabled ? 'mfa_setup' : 'full';
-}
 
 function unauthenticated(): DomainError {
   return new DomainError('UNAUTHENTICATED', 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn.');

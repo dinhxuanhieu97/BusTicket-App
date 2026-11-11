@@ -39,7 +39,7 @@ beforeAll(async () => {
     imports: [
       AppModule.forRoot({
         databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET,
-        abuse: RELAXED_ABUSE, clock: s.clock, authAccessTtlSeconds: 15 * 60,
+        abuse: RELAXED_ABUSE, clock: s.clock, authAccessTtlSeconds: 15 * 60, authRequireMfa: true,
       }),
     ],
   }).compile();
