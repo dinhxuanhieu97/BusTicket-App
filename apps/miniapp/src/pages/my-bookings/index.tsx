@@ -5,7 +5,10 @@ import { copy } from "@/constants/copy";
 import { EmptyState } from "@/components/booking/empty-state";
 import { StatusBadge } from "@/components/booking/status-badge";
 import { Journey } from "@/components/booking/journey";
-import { bookingQueryOptions } from "@/services/booking/booking.queries";
+import {
+  bookingQueryOptions,
+  isBookingUnavailable,
+} from "@/services/booking/booking.queries";
 import { useMyBookings, type SavedBooking } from "@/stores/my-bookings.store";
 import type { BookingView } from "@/types/api.types";
 import { needsPayment } from "@/utils/booking-status";
@@ -18,15 +21,18 @@ export default function MyBookingsPage() {
   const queries = useQueries({
     queries: bookings.map((b) => bookingQueryOptions(b.code, b.accessToken)),
   });
-  // Keep unresolved/error rows visible: absence of a response does not mean a paid booking.
+  // Keep unresolved orders in the pending view until the server reports a status or a 404.
   const visible = bookings
-    .map((saved, index) => ({ saved, query: queries[index] }))
+    .map((saved, index) => ({
+      saved,
+      query: queries[index],
+      unavailable: isBookingUnavailable(queries[index].error),
+    }))
     .filter(
-      ({ query }) =>
+      ({ query, unavailable }) =>
         !pendingOnly ||
-        query.isError ||
-        !query.data ||
-        needsPayment(query.data),
+        (!unavailable &&
+          (query.isError || !query.data || needsPayment(query.data))),
     );
 
   return (
@@ -90,12 +96,13 @@ export default function MyBookingsPage() {
           />
         ) : (
           <>
-            {visible.map(({ saved, query }) => (
+            {visible.map(({ saved, query, unavailable }) => (
               <BookingRow
                 key={saved.code}
                 saved={saved}
-                booking={query.data}
+                booking={unavailable ? undefined : query.data}
                 failed={query.isError}
+                unavailable={unavailable}
               />
             ))}
             <p className="pn-meta">{copy.myBookings.emptyHint}</p>
@@ -110,11 +117,18 @@ function BookingRow({
   saved,
   booking,
   failed,
+  unavailable,
 }: {
   saved: SavedBooking;
   booking?: BookingView;
   failed: boolean;
+  unavailable: boolean;
 }) {
+  const statusMessage = unavailable
+    ? copy.myBookings.statusUnavailable
+    : failed
+      ? copy.myBookings.statusError
+      : copy.myBookings.statusLoading;
   return (
     <article className="pn-card">
       <div className="pn-row pn-ticket-heading">
@@ -145,7 +159,7 @@ function BookingRow({
       )}
       {(failed || !booking) && (
         <p className="pn-meta mt-3" role="status">
-          {failed ? copy.myBookings.statusError : copy.myBookings.statusLoading}
+          {statusMessage}
         </p>
       )}
       <div className="pn-row pn-ticket-foot">

@@ -1,16 +1,17 @@
 import React from "react";
 import { RouterProvider } from "react-router-dom";
 import { SnackbarProvider } from "zmp-ui";
+import { QueryClientProvider } from "@tanstack/react-query";
 import router from "./router";
-import { ReactQueryProvider } from "./lib/react-query-provider";
+import { queryClient } from "./lib/query-client";
 
 export default function MiniApp() {
   return (
     <React.StrictMode>
       <SnackbarProvider>
-        <ReactQueryProvider>
+        <QueryClientProvider client={queryClient}>
           <RouterProvider router={router} />
-        </ReactQueryProvider>
+        </QueryClientProvider>
       </SnackbarProvider>
     </React.StrictMode>
   );

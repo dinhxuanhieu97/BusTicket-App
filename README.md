@@ -1,16 +1,16 @@
 # PNTicket — Nền tảng đặt vé xe khách online cho các nhà xe
 
-🇻🇳 Tiếng Việt · 🇬🇧 [English](README.en.md)
+🇻🇳 Tiếng Việt · 🇬🇧 [English version](README.en.md)
 
 Nền tảng giúp khách đặt vé xe giường nằm/limousine online (chọn chỗ, chuyển khoản QR, nhận vé) và giúp nhà xe quản lý chuyến, kho chỗ, tiền cọc và đối soát tự động — đặc biệt trong mùa cao điểm Lễ, Tết. Hỗ trợ **nhiều nhà xe**; Phong Nhung (`PN`) là nhà xe đầu tiên.
 
 ## Trạng thái
 
-| Phần | Trạng thái |
-|---|---|
-| `apps/api` — kho chỗ, xác thực/phân quyền, chống giữ chỗ ảo, thanh toán SePay (T1–T6) | ✅ Xong, 338 test |
-| `apps/miniapp` — Zalo Mini App cho khách (T11) | 🚧 Đã có khung: tìm chuyến → chọn chỗ → giữ chỗ → QR chuyển khoản → "Vé của tôi" |
-| Vé + gửi vé (T7), danh sách khách (T8), phí nền tảng (T9), worker (T10), web quản trị (T12) | ⏳ Chưa làm |
+| Phần                                                                                        | Trạng thái                                                                       |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `apps/api` — kho chỗ, xác thực/phân quyền, chống giữ chỗ ảo, thanh toán SePay (T1–T6)       | ✅ Xong, 338 test                                                                |
+| `apps/miniapp` — Zalo Mini App cho khách (T11)                                              | 🚧 Đã có khung: tìm chuyến → chọn chỗ → giữ chỗ → QR chuyển khoản → "Vé của tôi" |
+| Vé + gửi vé (T7), danh sách khách (T8), phí nền tảng (T9), worker (T10), web quản trị (T12) | ⏳ Chưa làm                                                                      |
 
 Chi tiết và các việc mới phát hiện: [task.md](task.md). Quy ước làm việc: [CLAUDE.md](CLAUDE.md).
 
@@ -80,6 +80,8 @@ curl "http://localhost:3001/api/v1/operators/PN/trips?date=$(TZ=Asia/Ho_Chi_Minh
 ```
 
 Chạy sau proxy/load balancer thì **phải** đặt `TRUST_PROXY` (xem `CLAUDE.md`).
+
+Để giới hạn đăng nhập Dashboard theo IP khách, đặt cùng `PNTICKET_LOGIN_PROXY_KEY` (ít nhất 32 ký tự ngẫu nhiên, chỉ dùng phía máy chủ) trên API và Dashboard. Trên Dashboard, đặt `PNTICKET_TRUSTED_CLIENT_IP_HEADER` thành tên header được ingress tin cậy **ghi đè** bằng một IP đã xác minh. Ingress phải loại bỏ giá trị do client gửi và chặn đường vào Dashboard bỏ qua ingress. API tiếp tục dùng `req.ip` cho các request đăng nhập trực tiếp.
 
 ### 5. Chạy Mini App
 

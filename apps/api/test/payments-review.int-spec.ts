@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import type { AuthUser } from '../src/auth/auth.service';
 import { UsersService } from '../src/auth/users.service';
 import { signJwt } from '../src/auth/jwt';
+import { base32Decode, hotp } from '../src/auth/totp';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
 import { extractBookingCodes } from '../src/payments/sepay';
 import {
@@ -176,13 +177,46 @@ describe('payment account changes', () => {
     expect(await errorCode(s.payments.configureAccount(platform, op.id, { ...first, accountNumber: '0777000222' }))).toBe('FORBIDDEN');
   });
 
-  it('changing the account revokes the old webhook key and is audited with old and new account', async () => {
-    const op = await s.operators.create({ code: 'NR', name: 'NR' });
+  it('keeps issued QR codes payable through the old account during the transition and audits the change', async () => {
+    const { op, bedTrip } = await seedOperatorWithTrips(s, 'NR');
+    await s.operators.updatePolicy(op.id, { ...POLICY, depositPercent: 50 });
     const o = (await user(op.id, 'OWNER')).actor;
-    await s.payments.configureAccount(o, op.id, { bankCode: 'VCB', accountNumber: '0888000111', accountName: 'NR', webhookApiKey: 'nr-old-key-0123456789abcdef' });
-    await s.payments.configureAccount(o, op.id, { bankCode: 'VCB', accountNumber: '0888000222', accountName: 'NR', webhookApiKey: 'nr-new-key-0123456789abcdef' });
-    const r = await webhook(transfer('NRAAAAAA', 1000, { accountNumber: '0888000111' }), 'nr-old-key-0123456789abcdef');
-    expect(r.status).toBe(401);
+    const oldKey = 'nr-old-key-0123456789abcdef';
+    const newKeyValue = 'nr-new-key-0123456789abcdef';
+    const oldAccount = '0888000111';
+    const newAccount = '0888000222';
+    await s.payments.configureAccount(o, op.id, { bankCode: 'VCB', accountNumber: oldAccount, accountName: 'NR', webhookApiKey: oldKey, apiToken: 'nr-fixture-api-token-old' });
+    const before = await hold('A1', bedTrip.id);
+    const beforeReconcile = await hold('A3', bedTrip.id);
+    await s.payments.paymentInstructions(beforeReconcile.booking.code, beforeReconcile.accessToken, true);
+    const original = await s.payments.paymentInstructions(before.booking.code, before.accessToken, true);
+    expect(original.bank?.accountNumber).toBe(oldAccount);
+    await s.payments.configureAccount(o, op.id, { bankCode: 'VCB', accountNumber: newAccount, accountName: 'NR', webhookApiKey: newKeyValue });
+    expect(await s.payments.paymentInstructions(before.booking.code, before.accessToken, true)).toEqual(original);
+    const after = await hold('A2', bedTrip.id);
+    expect((await s.payments.paymentInstructions(after.booking.code, after.accessToken, true)).bank?.accountNumber).toBe(newAccount);
+    await webhook(transfer(after.booking.code, after.booking.depositAmount, { accountNumber: oldAccount }), oldKey).expect(200);
+    expect((await booking(after.booking.code)).paid_amount).toBe(0);
+    const incoming = transfer(before.booking.code, before.booking.depositAmount, { accountNumber: oldAccount });
+    await webhook(incoming, oldKey).expect(200);
+    expect((await webhook(incoming, oldKey).expect(200)).body.status).toBe('DUPLICATE');
+    expect((await booking(before.booking.code)).paid_amount).toBe(before.booking.depositAmount);
+    s.sepay.transfers.push({
+      accountNumber: oldAccount, direction: 'in', referenceCode: null, code: null, transactionAt: s.clock.now(),
+      providerTxnId: 'old-account-reconcile', amount: beforeReconcile.booking.depositAmount, content: beforeReconcile.booking.code,
+    });
+    expect(await s.payments.reconcile(op.id)).toMatchObject({ processed: 1, errors: 0 });
+    expect((await booking(beforeReconcile.booking.code)).paid_amount).toBe(beforeReconcile.booking.depositAmount);
+    s.clock.advanceMinutes(72 * 60 - 1);
+    const balance = await s.payments.paymentInstructions(before.booking.code, before.accessToken);
+    expect(balance.bank?.accountNumber).toBe(oldAccount);
+    const late = transfer(before.booking.code, balance.amountDue, { accountNumber: oldAccount });
+    s.clock.advanceMinutes(2);
+    expect((await s.payments.paymentInstructions(before.booking.code, before.accessToken)).bank?.accountNumber).toBe(newAccount);
+    await webhook(late, oldKey).expect(200);
+    expect((await booking(before.booking.code)).paid_amount).toBe(before.booking.totalAmount);
+    s.clock.advanceMinutes(72 * 60);
+    await webhook(incoming, oldKey).expect(401);
     const { rows } = await s.db.query<{ data: { previousAccountNumber: string; accountNumber: string } }>(
       "SELECT data FROM audit_logs WHERE operator_id = $1 AND action = 'payment_account.configure' ORDER BY id DESC LIMIT 1",
       [op.id],
@@ -190,6 +224,29 @@ describe('payment account changes', () => {
     expect(rows[0]!.data).toMatchObject({ previousAccountNumber: '0888000111', accountNumber: '0888000222' });
     const { rows: ev } = await s.db.query("SELECT 1 FROM outbox_events WHERE operator_id = $1 AND type = 'payment_account.changed'", [op.id]);
     expect(ev).toHaveLength(1);
+  });
+
+  it('requires the current password and fresh one-time MFA before saving a receiving account', async () => {
+    const op = await s.operators.create({ code: 'MF', name: 'MFA payment test' });
+    const { actor } = await user(op.id, 'OWNER');
+    const password = 'staff-password-1';
+    const initial = await http().post('/api/v1/auth/login').send({ phone: actor.phone, password }).expect(200);
+    const setup = await http().post('/api/v1/auth/mfa/setup').auth(initial.body.accessToken, { type: 'bearer' }).expect(200);
+    const otp = () => hotp(base32Decode(setup.body.secret), Math.floor(s.clock.now().getTime() / 30_000));
+    const session = await http().post('/api/v1/auth/mfa/confirm').auth(initial.body.accessToken, { type: 'bearer' })
+      .send({ otp: otp() }).expect(200);
+    s.clock.advanceMinutes(0.5);
+    const put = (fields: object) => http().put(`/api/v1/admin/operators/${op.id}/payment-account`)
+      .auth(session.body.accessToken, { type: 'bearer' }).send({
+        bankCode: 'MB', accountName: 'Synthetic', accountNumber: '0888000333',
+        webhookApiKey: 'mf-test-key-0123456789abcdef', ...fields,
+      });
+    await put({}).expect(400);
+    await put({ password }).expect(403);
+    await put({ password: 'wrong password', otp: otp() }).expect(403);
+    await put({ password, otp: otp() }).expect(200);
+    await put({ password, otp: otp() }).expect(403);
+    expect((await s.payments.getAccount(op.id))?.accountNumber).toBe('0888000333');
   });
 
   it("the platform admin's audit view does not include payment entries", async () => {

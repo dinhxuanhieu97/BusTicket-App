@@ -5,10 +5,12 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
-import { Button, Spinner, useSnackbar } from "zmp-ui";
-import { copy } from "@/constants/copy";
+import { Button, useSnackbar } from "zmp-ui";
+import { copy, errorMessage } from "@/constants/copy";
 import { Tabs } from "@/components/common/tabs";
-import { EmptyState } from "@/components/booking/empty-state";
+import { LoadingState } from "@/components/common/loading-state";
+import { Notice } from "@/components/common/notice";
+import { isRetriable } from "@/lib/query-client";
 import { SeatGrid, SeatLegend } from "@/components/booking/seat-grid";
 import { Stepper } from "@/components/booking/stepper";
 import { useSeatMap } from "@/services/trip/trip.queries";
@@ -36,13 +38,24 @@ export default function SeatMapPage() {
   const outbound = pair?.[0].id === tripId;
   const requested = useTripSearch((s) => s.search);
   const { openSnackbar } = useSnackbar();
-  const { data: map, isLoading, isError, refetch } = useSeatMap(tripId);
+  const {
+    data: map,
+    isLoading,
+    isFetching,
+    isRefetchError,
+    error,
+    refetch,
+  } = useSeatMap(tripId);
   const openTrip = useBookingDraft((s) => s.openTrip);
   const selection = useBookingDraft((s) => s.selection);
   const setSelection = useBookingDraft((s) => s.setSelection);
   const [floor, setFloor] = useState<string>("");
+  const [removedSeats, setRemovedSeats] = useState<string[]>([]);
 
-  useEffect(() => openTrip(tripId), [openTrip, tripId]);
+  useEffect(() => {
+    openTrip(tripId);
+    setRemovedSeats([]);
+  }, [openTrip, tripId]);
 
   // Mỗi lần sơ đồ tải lại: bỏ những chỗ vừa bị người khác giữ.
   useEffect(() => {
@@ -50,12 +63,8 @@ export default function SeatMapPage() {
     const current = useBookingDraft.getState().selection;
     const { selection: next, removed } = reconcileSelection(current, map.seats);
     if (next !== current) setSelection(next);
-    if (removed.length)
-      openSnackbar({
-        text: `${copy.seats.refreshed} (${removed.join(", ")})`,
-        type: "warning",
-      });
-  }, [map, setSelection, openSnackbar]);
+    if (removed.length) setRemovedSeats(removed);
+  }, [map, setSelection]);
 
   const grids = useMemo(() => (map ? buildGrids(map) : []), [map]);
   const activeFloor = grids.find((g) => g.code === floor) ?? grids[0];
@@ -67,20 +76,22 @@ export default function SeatMapPage() {
 
   if (params.has("roundTrip") && !pair?.some((t) => t.id === tripId))
     return <Navigate to="/" replace />;
-  if (isLoading) {
+  if (isLoading) return <LoadingState label="Đang tải sơ đồ chỗ…" />;
+  if (!map || (isRefetchError && !isRetriable(error))) {
     return (
-      <div className="flex justify-center py-10">
-        <Spinner />
+      <div className="pn-page">
+        <Notice
+          tone="error"
+          action={{
+            label: copy.common.retry,
+            onClick: () => void refetch(),
+            disabled: isFetching,
+          }}
+        >
+          <p className="font-semibold">{copy.seats.loadError}</p>
+          <p>{errorMessage(error)}</p>
+        </Notice>
       </div>
-    );
-  }
-  if (isError || !map) {
-    return (
-      <EmptyState
-        title={copy.common.error}
-        actionLabel={copy.common.retry}
-        onAction={() => void refetch()}
-      />
     );
   }
 
@@ -97,12 +108,15 @@ export default function SeatMapPage() {
       });
       return;
     }
-    if (result.selection !== selection) setSelection(result.selection);
+    if (result.selection !== selection) {
+      setSelection(result.selection);
+      setRemovedSeats([]);
+    }
   };
 
   return (
-    <div className="flex min-h-full flex-col">
-      <div className="flex flex-col gap-3 px-4 pb-40 pt-2">
+    <div className="pn-action-layout">
+      <div className="pn-page pn-stack">
         <div className="flex flex-col gap-1">
           <div className="text-large-sb">
             {pair && (outbound ? "Ghế lượt đi · " : "Ghế lượt về · ")}
@@ -116,9 +130,24 @@ export default function SeatMapPage() {
         </div>
 
         {!map.trip.onSale && (
-          <div className="rounded-lg bg-red100 px-3 py-2 text-xxsmall text-danger">
-            {copy.seats.notOnSale}
-          </div>
+          <Notice tone="warning">{copy.seats.notOnSale}</Notice>
+        )}
+        {isRefetchError && (
+          <Notice
+            tone="warning"
+            action={{
+              label: copy.common.retry,
+              onClick: () => void refetch(),
+              disabled: isFetching,
+            }}
+          >
+            {copy.seats.refreshError}
+          </Notice>
+        )}
+        {removedSeats.length > 0 && (
+          <Notice tone="warning">
+            {copy.seats.refreshed} ({removedSeats.join(", ")}).
+          </Notice>
         )}
 
         {requested.adults && (
@@ -154,7 +183,7 @@ export default function SeatMapPage() {
         <SeatLegend />
 
         {codes.length > 0 && (
-          <div className="flex flex-col gap-3 rounded-xl bg-white">
+          <div className="pn-card pn-fields">
             {codes.map((code) => {
               const seat = seatByCode.get(code);
               if (!seat) return null;
@@ -248,35 +277,37 @@ export default function SeatMapPage() {
           )}
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 z-40 flex flex-col gap-2 border-divider01 border-t bg-white px-4 pb-5 pt-3">
-        <div className="flex items-baseline justify-between">
-          <span className="text-xxsmall text-text-secondary">
-            {copy.seats.selectedCount(codes.length, unit)}
-          </span>
-          {estimate !== null && codes.length > 0 && (
-            <span className="text-small-sb text-primary">
-              {copy.seats.totalDeposit} {formatCurrency(estimate)}
+      <div className="pn-action-bar">
+        <div className="pn-action-inner">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <span className="text-xxsmall text-text-secondary">
+              {copy.seats.selectedCount(codes.length, unit)}
             </span>
-          )}
-        </div>
-        {codes.length > 0 && (
-          <div className="text-xxxsmall text-text-secondary">
-            {copy.seats.estimateHint}
+            {estimate !== null && codes.length > 0 && (
+              <span className="text-small-sb text-primary">
+                {copy.seats.totalDeposit} {formatCurrency(estimate)}
+              </span>
+            )}
           </div>
-        )}
-        <Button
-          fullWidth
-          disabled={codes.length === 0 || !map.trip.onSale}
-          onClick={() =>
-            navigate(
-              pair && outbound
-                ? "/trip/" + pair[1].id + "?roundTrip=1"
-                : "/checkout",
-            )
-          }
-        >
-          {pair && outbound ? "Chọn ghế lượt về" : copy.common.continue}
-        </Button>
+          {codes.length > 0 && (
+            <div className="text-xxxsmall text-text-secondary">
+              {copy.seats.estimateHint}
+            </div>
+          )}
+          <Button
+            fullWidth
+            disabled={codes.length === 0 || !map.trip.onSale}
+            onClick={() =>
+              navigate(
+                pair && outbound
+                  ? "/trip/" + pair[1].id + "?roundTrip=1"
+                  : "/checkout",
+              )
+            }
+          >
+            {pair && outbound ? "Chọn ghế lượt về" : copy.common.continue}
+          </Button>
+        </div>
       </div>
     </div>
   );

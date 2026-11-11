@@ -1,5 +1,6 @@
 import { config } from "@/config";
 import { apiRequest } from "@/lib/api-client";
+import type { BookingAttempt } from "@/utils/ids";
 import type {
   BookingView,
   CreateHoldRequest,
@@ -11,12 +12,16 @@ import type {
 } from "@/types/api.types";
 
 export const bookingService = {
-  /** Giữ chỗ. Gửi lại cùng `idempotencyKey` (mạng chập chờn) trả lại đúng đơn đã tạo, không tạo đơn mới. */
-  createHold: (request: CreateHoldRequest, idempotencyKey: string, phoneToken?: string) =>
+  /** Retry a lost response using the credentials from the original attempt. */
+  createHold: (request: CreateHoldRequest, attempt: BookingAttempt, phoneToken?: string) =>
     apiRequest<HoldResult>("/bookings", {
       method: "POST",
       body: request,
-      headers: { "Idempotency-Key": idempotencyKey, "X-Phone-Token": phoneToken },
+      headers: {
+        "Idempotency-Key": attempt.idempotencyKey,
+        "X-Booking-Retry-Token": attempt.retryToken,
+        "X-Phone-Token": phoneToken,
+      },
     }),
 
   /** Token đi trong header, không đặt trên URL (PNTicketDocs mục 11). */
@@ -27,6 +32,13 @@ export const bookingService = {
 
   contact: (code: string, accessToken: string) =>
     apiRequest<{ name: string; phone: string }>(`/bookings/${encodeURIComponent(code)}/contact`, {
+      headers: { "X-Booking-Token": accessToken },
+    }),
+
+  /** Xóa họ tên, SĐT trong đơn đã xong (409 nếu vé chưa đi hoặc còn tiền cần đối soát). */
+  eraseContact: (code: string, accessToken: string) =>
+    apiRequest<{ code: string; erasedAt: string }>(`/bookings/${encodeURIComponent(code)}/erase-contact`, {
+      method: "POST",
       headers: { "X-Booking-Token": accessToken },
     }),
 

@@ -6,6 +6,7 @@ export const PERMISSIONS = [
   'operator.create', //       tạo nhà xe mới (chỉ nền tảng)
   'operator.list', //         xem danh sách nhà xe (chỉ nền tảng)
   'layout.library.write', //  sửa thư viện mẫu sơ đồ dùng chung (chỉ nền tảng)
+  'owner.password.reset', //  đặt mật khẩu tạm cho chủ xe quên mật khẩu (chỉ nền tảng)
   'user.manage', //           tạo/sửa tài khoản nhân viên của nhà xe
   'policy.read',
   'policy.write',
@@ -15,6 +16,7 @@ export const PERMISSIONS = [
   'route.write',
   'trip.read',
   'trip.write',
+  'trip.assigned.read', //    chỉ chuyến mình được phân công + danh sách khách của chuyến đó (phụ xe)
   'audit.read',
   'payment.configure', //     tài khoản nhận tiền + khóa webhook SePay
   'payment.read', //          xem sổ thu, khoản cần kiểm tra
@@ -31,7 +33,7 @@ const SETUP: Permission[] = [
 /** Thao tác tiền: chỉ người của nhà xe (quản trị nền tảng không động vào tiền của nhà xe). */
 const MONEY: Permission[] = ['payment.read', 'payment.record', 'payment.manage'];
 /** Quyền chỉ của nền tảng — không thuộc phạm vi một nhà xe. */
-const PLATFORM_ONLY: ReadonlySet<Permission> = new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write']);
+const PLATFORM_ONLY: ReadonlySet<Permission> = new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write', 'owner.password.reset']);
 /**
  * Chủ xe có toàn quyền trong nhà xe của mình: mọi quyền trừ quyền chỉ của nền tảng.
  * Quyền mới thêm vào PERMISSIONS tự động thuộc về chủ xe (không phải nhớ cập nhật tay).
@@ -39,14 +41,14 @@ const PLATFORM_ONLY: ReadonlySet<Permission> = new Set<Permission>(['operator.cr
 export const ALL_OPERATOR_PERMISSIONS: readonly Permission[] = PERMISSIONS.filter((p) => !PLATFORM_ONLY.has(p));
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
-  PLATFORM_ADMIN: new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write', ...SETUP]),
+  PLATFORM_ADMIN: new Set<Permission>(['operator.create', 'operator.list', 'layout.library.write', 'owner.password.reset', ...SETUP]),
   OWNER: new Set<Permission>(ALL_OPERATOR_PERMISSIONS),
   DISPATCHER: new Set<Permission>(['policy.read', 'fleet.read', 'fleet.write', 'route.read', 'route.write', 'trip.read', 'trip.write']),
   // Bán vé tại quầy được ghi nhận tiền mặt khách trả cho đơn; không phân bổ tay/xử lý ngoại lệ.
   SELLER: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'payment.read', 'payment.record']),
   ACCOUNTANT: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'audit.read', ...MONEY]),
-  // Phụ xe chỉ xem chuyến được giao — làm ở T8 (danh sách khách theo chuyến).
-  ASSISTANT: new Set<Permission>(),
+  // Phụ xe chỉ xem chuyến được giao và danh sách khách của các chuyến đó (lọc theo phân công ở máy chủ).
+  ASSISTANT: new Set<Permission>(['trip.assigned.read']),
 };
 
 /** Vai trò bắt buộc bật 2FA (chủ xe, kế toán, quản trị nền tảng). */

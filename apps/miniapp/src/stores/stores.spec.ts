@@ -1,30 +1,52 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useBookingDraft } from "./booking-draft.store";
 import { MAX_SAVED_BOOKINGS, upsertBooking, type SavedBooking } from "./my-bookings.store";
 
 const initial = useBookingDraft.getState();
 
 beforeEach(() => useBookingDraft.setState(initial, true));
+afterEach(() => vi.unstubAllGlobals());
 
-describe("booking draft idempotency key", () => {
-  it("keeps the same key across retries of the same request", () => {
+describe("booking draft retry credentials", () => {
+  it("keeps both credentials across retries of the same request", () => {
     const s = useBookingDraft.getState();
     s.openTrip("t1");
     s.setSelection({ A1: { occupancy: 1, infantCount: 0 } });
-    const k1 = useBookingDraft.getState().ensureIdempotencyKey();
-    const k2 = useBookingDraft.getState().ensureIdempotencyKey();
-    expect(k1).toBe(k2);
+    const attempt = useBookingDraft.getState().ensureHoldAttempt();
+    expect(attempt.idempotencyKey).toMatch(/^[0-9a-f]{32}$/);
+    expect(attempt.retryToken).toMatch(/^[0-9a-f]{64}$/);
+    expect(useBookingDraft.getState().ensureHoldAttempt()).toEqual(attempt);
   });
 
-  it("uses a new key once the seats or contact change (server would answer IDEMPOTENCY_CONFLICT)", () => {
+  it("replaces both credentials after a seat or passenger change", () => {
     const s = useBookingDraft.getState();
     s.openTrip("t1");
-    const k1 = s.ensureIdempotencyKey();
+    const first = s.ensureHoldAttempt();
     useBookingDraft.getState().setSelection({ A2: { occupancy: 1, infantCount: 0 } });
-    const k2 = useBookingDraft.getState().ensureIdempotencyKey();
+    const second = s.ensureHoldAttempt();
     useBookingDraft.getState().setContact({ contactName: "An" });
-    const k3 = useBookingDraft.getState().ensureIdempotencyKey();
-    expect(new Set([k1, k2, k3]).size).toBe(3);
+    const third = s.ensureHoldAttempt();
+    expect(new Set([first.idempotencyKey, second.idempotencyKey, third.idempotencyKey]).size).toBe(3);
+    expect(new Set([first.retryToken, second.retryToken, third.retryToken]).size).toBe(3);
+  });
+
+  it("keeps the credentials after formatting changes and renewed OTP", () => {
+    const s = useBookingDraft.getState();
+    s.setContact({ contactName: "An", contactPhone: "0912345678" });
+    s.setNote("Đón tại bến");
+    const attempt = s.ensureHoldAttempt();
+    s.setPhoneToken(null);
+    s.setPhoneToken({ phone: "0912345678", token: "replacement", expiresAt: "2099-01-01T00:00:00Z" });
+    s.setContact({ contactName: " An ", contactPhone: "+84 912 345 678" });
+    s.setNote("Đón tại bến  ");
+    expect(useBookingDraft.getState().phoneToken?.token).toBe("replacement");
+    expect(s.ensureHoldAttempt()).toEqual(attempt);
+  });
+
+  it("does not create booking credentials without Web Crypto", () => {
+    vi.stubGlobal("crypto", undefined);
+    expect(() => useBookingDraft.getState().ensureHoldAttempt()).toThrow("Web Crypto is unavailable");
+    expect(useBookingDraft.getState().holdAttempt).toBeNull();
   });
 
   it("drops the selection when switching to another trip but not when reopening the same one", () => {

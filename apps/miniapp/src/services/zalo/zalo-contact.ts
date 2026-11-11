@@ -10,8 +10,12 @@ export interface ZaloContact {
   expiresAt: string;
 }
 
-/** Khách từ chối hoặc đóng hộp thoại xin quyền của Zalo. */
-export class ZaloPermissionDenied extends Error {}
+/** Khách từ chối hoặc đóng hộp thoại xin quyền số điện thoại của Zalo; `name` là tên Zalo nếu khách vẫn cho phép chia sẻ tên. */
+export class ZaloPermissionDenied extends Error {
+  constructor(readonly zaloName: string = "") {
+    super("ZALO_PERMISSION_DENIED");
+  }
+}
 
 async function zaloName(): Promise<string> {
   try {
@@ -33,9 +37,9 @@ export async function fetchZaloContact(): Promise<ZaloContact> {
   try {
     ({ token } = await getPhoneNumber());
   } catch {
-    throw new ZaloPermissionDenied();
+    throw new ZaloPermissionDenied(name);
   }
-  if (!token) throw new ZaloPermissionDenied();
+  if (!token) throw new ZaloPermissionDenied(name);
   const accessToken = await getAccessToken();
   const result = await bookingService.zaloPhone(accessToken, token);
   return { name, ...result };

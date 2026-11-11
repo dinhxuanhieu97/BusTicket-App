@@ -10,7 +10,7 @@ import { CapturingSmsSender } from '../src/abuse/sms-sender';
 import { AppModule } from '../src/app.module';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
 import {
-  AUTH_SECRET, buildServices, errorCode, newKey, resetDatabase, seedOperatorWithTrips, Services, T0, TEST_DB_URL, TOKEN_SECRET,
+  AUTH_SECRET, buildServices, errorCode, newKey, newRetryToken, resetDatabase, seedOperatorWithTrips, Services, T0, TEST_DB_URL, TOKEN_SECRET,
 } from './helpers';
 
 const LIMITS: Partial<AbuseConfig> = {
@@ -150,9 +150,10 @@ describe('active holds per phone', () => {
   it('an idempotent replay is not blocked by the cap', async () => {
     const phone = freshPhone();
     const key = newKey();
-    await s.bookings.createHold(holdBody('A8', phone), key);
+    const attempt = { retryToken: newRetryToken() };
+    await s.bookings.createHold(holdBody('A8', phone), key, attempt);
     await s.bookings.createHold(holdBody('A10', phone), newKey());
-    const replay = await s.bookings.createHold(holdBody('A8', phone), key);
+    const replay = await s.bookings.createHold(holdBody('A8', phone), key, attempt);
     expect(replay.replayed).toBe(true);
   });
 });

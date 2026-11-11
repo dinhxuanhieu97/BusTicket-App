@@ -1,17 +1,59 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AuditService } from '../audit/audit.service';
 import { AuthedRequest, AuthGuard, Perm } from '../auth/auth.guard';
+import { AuthService, passwordSchema } from '../auth/auth.service';
 import { UsersService } from '../auth/users.service';
+import { Clock } from '../common/clock';
 import { DomainError } from '../common/errors';
-import { PaymentsService } from '../payments/payments.service';
-import { OperatorsService } from '../operators/operators.service';
+import { configureAccountSchema, PaymentsService } from '../payments/payments.service';
+import { LOGO_MAX_BYTES, OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
 import { TripSchedulesService } from '../trips/trip-schedules.service';
+import { TripAssistantsService } from '../trips/trip-assistants.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
 
 const tripStatusBody = z.object({ status: z.enum(['OPEN', 'CLOSED']) }).strict();
+const ownerPasswordBody = z
+  .object({
+    password: passwordSchema,
+    adminPassword: z.string().min(1).max(128),
+    otp: z.string().regex(/^\d{6}$/).optional(),
+  })
+  .strict();
+const paymentAccountBody = configureAccountSchema.extend({
+  password: z.string().min(1).max(128),
+  otp: z.string().regex(/^\d{6}$/).optional(),
+});
+
+/** Đọc thân request thô, dừng và báo lỗi khi vượt `max` byte (body parser JSON không xử lý image/*). */
+function readLimited(req: NodeJS.ReadableStream, max: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const fail = () => {
+      if (done) return;
+      done = true;
+      req.removeAllListeners('data');
+      req.resume();
+      reject(new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' }));
+    };
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > max) return fail();
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (!done) {
+        done = true;
+        resolve(Buffer.concat(chunks));
+      }
+    });
+    req.on('error', fail);
+  });
+}
 
 /**
  * API quản trị. Mọi route đều qua AuthGuard (đăng nhập + quyền + giới hạn theo `:operatorId`).
@@ -29,6 +71,9 @@ export class AdminController {
     private readonly audit: AuditService,
     private readonly payments: PaymentsService,
     private readonly schedules: TripSchedulesService,
+    private readonly auth: AuthService,
+    private readonly assistants: TripAssistantsService,
+    private readonly clock: Clock,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
@@ -74,6 +119,31 @@ export class AdminController {
     return result;
   }
 
+  /**
+   * Tải logo: thân request là chính tệp ảnh (Content-Type image/png|jpeg|webp), không qua JSON để không vướng
+   * giới hạn 100 KB của body parser. Đọc tối đa LOGO_MAX_BYTES rồi dừng.
+   */
+  @Put('operators/:operatorId/logo')
+  @Perm('policy.write')
+  async uploadLogo(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
+    const type = String(req.headers['content-type'] ?? '');
+    if (!/^image\/(png|jpeg|webp)\b/i.test(type)) {
+      throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
+    }
+    const data = await readLimited(req, LOGO_MAX_BYTES);
+    const mime = await this.operators.setLogo(op, data, type, this.clock.now());
+    await this.log(req, op, 'operator.logo.update', 'operator', op, { mime, bytes: data.length });
+    return this.operators.profile(op);
+  }
+
+  @Delete('operators/:operatorId/logo')
+  @Perm('policy.write')
+  async deleteLogo(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
+    await this.operators.removeLogo(op);
+    await this.log(req, op, 'operator.logo.delete', 'operator', op);
+    return this.operators.profile(op);
+  }
+
   // ---- Nền tảng ------------------------------------------------------------
 
   @Get('operators')
@@ -88,6 +158,28 @@ export class AdminController {
     const op = await this.operators.create(body as never);
     await this.log(req, op.id, 'operator.create', 'operator', op.id, { code: op.code, name: op.name });
     return op;
+  }
+
+  @Get('operators/:operatorId/owners')
+  @Perm('owner.password.reset')
+  async listOwners(@Param('operatorId') operatorId: string) {
+    await this.operators.getById(operatorId);
+    return { owners: await this.users.listOwners(operatorId) };
+  }
+
+  /** Đặt mật khẩu tạm cho chủ xe — cần mật khẩu (và mã 2FA nếu có) của chính quản trị nền tảng. Nhật ký ghi trong transaction. */
+  @Post('operators/:operatorId/owners/:userId/temporary-password')
+  @Perm('owner.password.reset')
+  @HttpCode(200)
+  async setOwnerTemporaryPassword(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Param('userId') userId: string,
+    @Body() body: unknown,
+  ) {
+    const { password, adminPassword, otp } = ownerPasswordBody.parse(body);
+    await this.auth.verifyStepUp(req.auth, adminPassword, otp, 'Nhập mã Authenticator của bạn để đặt mật khẩu tạm.');
+    return { owner: await this.users.setOwnerTemporaryPassword(req.auth, operatorId, userId, password) };
   }
 
   @Post('seat-layouts/library')
@@ -110,7 +202,7 @@ export class AdminController {
   @Post('operators/:operatorId/users')
   @Perm('user.manage')
   async createUser(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    const user = await this.users.createStaff(operatorId, body as never);
+    const user = await this.users.createStaff(operatorId, body as never, req.auth);
     await this.log(req, operatorId, 'user.create', 'user', user.id, { role: user.role, fullName: user.fullName });
     return user;
   }
@@ -127,6 +219,17 @@ export class AdminController {
     const changed = Object.keys((body ?? {}) as object);
     await this.log(req, operatorId, 'user.update', 'user', user.id, { changed, role: user.role });
     return user;
+  }
+
+  @Delete('operators/:operatorId/users/:userId')
+  @Perm('user.manage')
+  async archiveUser(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Param('userId') userId: string,
+  ) {
+    await this.users.archive(req.auth, operatorId, userId);
+    return { ok: true };
   }
 
   // ---- Chính sách ----------------------------------------------------------
@@ -253,6 +356,47 @@ export class AdminController {
     return result;
   }
 
+  /** Phụ xe đang hoạt động của nhà xe, để chọn khi phân công. */
+  @Get('operators/:operatorId/assistants')
+  @Perm('trip.write')
+  async assistantCandidates(@Param('operatorId') op: string) {
+    return { assistants: await this.assistants.candidates(op) };
+  }
+
+  @Get('operators/:operatorId/trips/:tripId/assistants')
+  @Perm('trip.read')
+  async tripAssistants(@Param('operatorId') op: string, @Param('tripId') tripId: string) {
+    return { assistants: await this.assistants.listForTrip(op, tripId) };
+  }
+
+  /** Đặt lại danh sách phụ xe của chuyến (thay thế toàn bộ). */
+  @Put('operators/:operatorId/trips/:tripId/assistants')
+  @Perm('trip.write')
+  async setTripAssistants(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Body() body: unknown,
+  ) {
+    const r = await this.assistants.setForTrip(op, tripId, body, req.auth.id);
+    for (const userId of r.added) await this.log(req, op, 'trip.assistant.assign', 'trip', tripId, { userId });
+    for (const userId of r.removed) await this.log(req, op, 'trip.assistant.unassign', 'trip', tripId, { userId });
+    return { assistants: r.assistants };
+  }
+
+  /** Chuyến được giao cho phụ xe đang đăng nhập; lọc theo người dùng của phiên. */
+  @Get('operators/:operatorId/my-trips')
+  @Perm('trip.assigned.read')
+  async myTrips(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
+    return { trips: await this.assistants.assignedTrips(op, req.auth.id) };
+  }
+
+  @Get('operators/:operatorId/my-trips/:tripId/passengers')
+  @Perm('trip.assigned.read')
+  myTripPassengers(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('tripId') tripId: string) {
+    return this.assistants.passengers(op, req.auth.id, tripId);
+  }
+
   @Get('operators/:operatorId/trips/:tripId')
   @Perm('trip.read')
   tripDetail(@Param('operatorId') operatorId: string, @Param('tripId') tripId: string) {
@@ -300,7 +444,9 @@ export class AdminController {
   @Put('operators/:operatorId/payment-account')
   @Perm('payment.configure')
   async configurePaymentAccount(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    return { account: await this.payments.configureAccount(req.auth, operatorId, body as never) };
+    const { password, otp, ...account } = paymentAccountBody.parse(body);
+    await this.auth.verifyPaymentCredentials(req.auth, password, otp);
+    return { account: await this.payments.configureAccount(req.auth, operatorId, account) };
   }
 
   @Get('operators/:operatorId/payments')

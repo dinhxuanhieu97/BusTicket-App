@@ -59,7 +59,7 @@ beforeAll(async () => {
   s = buildServices();
   await new UsersService(s.db, s.clock).createPlatformAdmin({ fullName: 'Quản trị', ...ADMIN });
   const moduleRef = await Test.createTestingModule({
-    imports: [AppModule.forRoot({ databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET, abuse: RELAXED_ABUSE, clock: s.clock })],
+    imports: [AppModule.forRoot({ databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET, abuse: RELAXED_ABUSE, clock: s.clock, authRequireMfa: true })],
   }).compile();
   app = moduleRef.createNestApplication({ logger: false });
   app.useGlobalFilters(new HttpErrorFilter());

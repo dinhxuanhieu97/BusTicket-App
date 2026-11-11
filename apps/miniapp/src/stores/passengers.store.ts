@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { safeStorage } from "./my-bookings.store";
 import { isValidVnMobile } from "@/utils/phone";
-import { newIdempotencyKey } from "@/utils/ids";
+import { newLocalId } from "@/utils/ids";
 
 export interface Passenger {
   id: string;
@@ -21,7 +21,7 @@ export const usePassengers = create<{
         if (!name.trim() || !isValidVnMobile(phone)) return false;
         if (id && !get().passengers.some((p) => p.id === id)) return false;
         const person = {
-          id: id ?? newIdempotencyKey(),
+          id: id ?? newLocalId(),
           name: name.trim(),
           phone: phone.trim(),
         };

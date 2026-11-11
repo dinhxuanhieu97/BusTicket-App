@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { bookingService } from "@/services/booking/booking.api";
 import { apiRequest, toApiError } from "./api-client";
 import { APIError } from "./api-error";
 import { isRetriable } from "./query-client";
@@ -42,6 +43,33 @@ describe("apiRequest", () => {
   it("reports a network failure as NETWORK_ERROR", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
     await expect(apiRequest("/x")).rejects.toMatchObject({ status: 0, code: "NETWORK_ERROR" });
+  });
+
+  it("reports a connection dropped during the response body as a network failure", async () => {
+    const stream = new ReadableStream({
+      start(controller) { controller.error(new TypeError("Connection dropped")); },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(stream, { status: 201 })));
+    await expect(apiRequest("/bookings", { method: "POST" })).rejects.toMatchObject({ code: "NETWORK_ERROR" });
+  });
+
+  it("sends the same replay credentials and payload after a dropped response", async () => {
+    const result = { booking: { code: "PNTEST12" }, accessToken: "saved-token", replayed: true };
+    const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>()
+      .mockRejectedValueOnce(new TypeError("Connection dropped"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 201 }));
+    vi.stubGlobal("fetch", fetchFn);
+    const request = { tripId: "t1", contactName: "An", contactPhone: "0912345678", items: [{ seatCode: "A1", occupancy: 1, infantCount: 0 }] };
+    const attempt = { idempotencyKey: "a".repeat(32), retryToken: "b".repeat(64) };
+
+    await expect(bookingService.createHold(request, attempt, "otp-token")).rejects.toMatchObject({ code: "NETWORK_ERROR" });
+    await expect(bookingService.createHold(request, attempt)).resolves.toEqual(result);
+    const [[originalUrl, original], [retryUrl, retry]] = fetchFn.mock.calls;
+    expect(retryUrl).toBe(originalUrl);
+    expect(retry.body).toBe(original.body);
+    expect(original.headers).toMatchObject({ "Idempotency-Key": attempt.idempotencyKey, "X-Booking-Retry-Token": attempt.retryToken });
+    expect(retry.headers).toMatchObject({ "Idempotency-Key": attempt.idempotencyKey, "X-Booking-Retry-Token": attempt.retryToken });
+    expect(retry.headers).not.toHaveProperty("X-Phone-Token");
   });
 
   it("handles a non-JSON error page", async () => {

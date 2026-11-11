@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { DomainError, notFound } from './common/errors';
 import { BookingsService } from './bookings/bookings.service';
 import { renderTicketVerification } from './bookings/ticket-verification-page';
+import { OperatorsService } from './operators/operators.service';
 import { PaymentsService } from './payments/payments.service';
 import { TripsService } from './trips/trips.service';
 
@@ -25,7 +26,33 @@ export class PublicController {
     private readonly phones: PhoneVerificationService,
     private readonly payments: PaymentsService,
     private readonly zaloPhone: ZaloPhoneService,
+    private readonly operators: OperatorsService,
   ) {}
+
+  /** Tên và phiên bản logo của nhà xe (dashboard hiển thị ở trang đăng nhập). Dữ liệu vốn công khai. */
+  @Get('operators/:operatorCode/brand')
+  @Header('Cache-Control', 'public, max-age=60')
+  brand(@Param('operatorCode') code: string) {
+    if (!/^[A-Z]{2,4}$/.test(code)) throw notFound('nhà xe');
+    return this.operators.brand(code);
+  }
+
+  @Get('operators/:operatorCode/logo')
+  async logo(@Param('operatorCode') code: string, @Res() res: Response) {
+    if (!/^[A-Z]{2,4}$/.test(code)) throw notFound('nhà xe');
+    const logo = await this.operators.logo(code);
+    res
+      .status(200)
+      .set({
+        'Content-Type': logo.mime,
+        'Content-Length': String(logo.data.length),
+        'Cache-Control': 'public, max-age=300',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+      })
+      .end(logo.data);
+  }
 
   @Get('operators/:operatorCode/trips')
   async searchTrips(@Param('operatorCode') operatorCode: string, @Query('date') date?: string, @Query('route') route?: string) {
@@ -52,11 +79,12 @@ export class PublicController {
     @Req() req: Request,
     @Headers('idempotency-key') idempotencyKey?: string,
     @Headers('x-phone-token') phoneToken?: string,
+    @Headers('x-booking-retry-token') retryToken?: string,
   ) {
     if (!idempotencyKey) {
       throw new DomainError('VALIDATION_FAILED', 'Thiếu header Idempotency-Key.', { field: 'Idempotency-Key' });
     }
-    return this.bookings.createHold(body as never, idempotencyKey, { ip: req.ip, phoneToken });
+    return this.bookings.createHold(body as never, idempotencyKey, { ip: req.ip, phoneToken, retryToken });
   }
 
   /** Bước 1 xác thực SĐT (khi nhà xe bật chế độ cao điểm): gửi mã OTP qua SMS. */
@@ -136,6 +164,15 @@ export class PublicController {
       : null;
     if (!ticket) response.status(404);
     return renderTicketVerification(ticket);
+  }
+
+  /** Khách xóa họ tên, số điện thoại trong đơn đã xong (nút "Xóa thông tin đã lưu" ở Mini App). */
+  @Post('bookings/:code/erase-contact')
+  @HttpCode(200)
+  @Header('Cache-Control', 'private, no-store')
+  eraseBookingContact(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+    if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
+    return this.bookings.eraseContactByCode(code, token);
   }
 
   /** Khách bỏ giữ chỗ để chọn lại: nhả chỗ ngay. Gọi lại nhiều lần an toàn (trả trạng thái hiện tại). */

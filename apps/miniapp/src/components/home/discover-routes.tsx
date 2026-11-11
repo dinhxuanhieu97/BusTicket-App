@@ -1,6 +1,8 @@
 import { useOpenRoutes } from "@/services/trip/trip.queries";
 import type { OpenRoute } from "@/types/api.types";
 import { BusIcon } from "@/components/common/bus-icon";
+import { Notice } from "@/components/common/notice";
+import { copy } from "@/constants/copy";
 
 export function DiscoverRoutes({
   onChoose,
@@ -18,16 +20,16 @@ export function DiscoverRoutes({
         {routes.isLoading ? (
           <p role="status">Đang tải tuyến xe…</p>
         ) : routes.isError ? (
-          <p role="status">
-            Chưa tải được tuyến xe.{" "}
-            <button
-              type="button"
-              className="pn-link"
-              onClick={() => void routes.refetch()}
-            >
-              Thử lại
-            </button>
-          </p>
+          <Notice
+            tone="error"
+            action={{
+              label: copy.common.retry,
+              onClick: () => void routes.refetch(),
+              disabled: routes.isFetching,
+            }}
+          >
+            Chưa tải được tuyến xe.
+          </Notice>
         ) : !routes.data?.length ? (
           <p className="pn-meta">Hiện chưa có tuyến còn chỗ mở bán.</p>
         ) : (

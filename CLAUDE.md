@@ -36,6 +36,8 @@ Integration test dùng `DATABASE_URL_TEST` (mặc định `postgres://pnticket:p
 - Không commit `.env*`, `.next/`, `test-results/`, `node_modules/` hay file chứa mật khẩu/token.
 
 ## Quy trình mỗi task
+Các task dashboard và API phục vụ dashboard được theo dõi thêm tại [task.md workspace](../task.md). Cập nhật từng mục khi hoàn tất và ghi mọi việc mới phát hiện, kể cả ngoài phạm vi; không chỉ báo trong chat. Task chỉ sửa tài liệu kiểm tra nội dung/liên kết, không yêu cầu chạy test nghiệp vụ hoặc rà soát service không thay đổi.
+
 1. Lấy task tiếp theo trong `task.md`, đánh dấu đang làm.
 2. Viết test trước hoặc cùng lúc với code (theo skill `fullstack-dev-skills:test-master`): happy path **và** lỗi/biên; integration test với PostgreSQL thật cho logic khóa chỗ/tiền; không test chi tiết nội bộ.
 3. Task chỉ **xong** khi `pnpm --filter api typecheck` và **toàn bộ** `pnpm --filter api test` pass. Không skip/xóa test để có màu xanh.

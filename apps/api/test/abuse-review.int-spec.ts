@@ -114,9 +114,15 @@ describe('idempotent retries', () => {
   it('a retry with the same Idempotency-Key gets its booking back even when the IP limit is used up', async () => {
     const key = newKey();
     const input = { tripId: seed.bedTrip.id, contactName: 'A', contactPhone: freshPhone(), items: [{ seatCode: 'D9' }] };
-    const first = await s.bookings.createHold(input, key, { ip: '5.5.5.5' });
+    const attempt = { ip: '5.5.5.5', retryToken: 'ab'.repeat(32) };
+    const first = await s.bookings.createHold(input, key, attempt);
+    const invalidAttempt = { ...attempt, retryToken: 'ba'.repeat(32) };
+    for (let i = 0; i < 2; i++) {
+      expect(await errorCode(s.bookings.createHold(input, key, invalidAttempt))).toBe('IDEMPOTENCY_CONFLICT');
+    }
+    expect(await errorCode(s.bookings.createHold(input, key, invalidAttempt))).toBe('TOO_MANY_ATTEMPTS');
     for (let i = 0; i < 5; i++) {
-      const again = await s.bookings.createHold(input, key, { ip: '5.5.5.5' });
+      const again = await s.bookings.createHold(input, key, attempt);
       expect(again).toMatchObject({ replayed: true, booking: { code: first.booking.code } });
     }
   });

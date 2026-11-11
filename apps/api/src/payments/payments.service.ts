@@ -55,6 +55,7 @@ type ReviewReason = 'UNMATCHED' | 'AMBIGUOUS' | 'LATE' | 'OVERPAID' | 'BOOKING_C
 
 /** Khoảng thời gian coi hai ghi nhận cùng đơn, cùng số tiền là "có thể trùng". */
 const DUPLICATE_WINDOW_MS = 3 * 24 * 3600_000;
+const ACCOUNT_TRANSITION_MS = 72 * 3600_000;
 
 const normRef = (ref: string | null | undefined) => (ref ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
@@ -131,9 +132,10 @@ export class PaymentsService {
         if (prev[0] && actor.role !== 'OWNER') {
           throw new DomainError('FORBIDDEN', 'Chỉ chủ xe được đổi tài khoản nhận tiền đã thiết lập.');
         }
+        const now = this.clock.now();
         await c.query(
-          'UPDATE operator_payment_accounts SET active = false, updated_at = $2 WHERE operator_id = $1 AND active',
-          [operatorId, this.clock.now()],
+          'UPDATE operator_payment_accounts SET active = false, updated_at = $2, receive_until = $3 WHERE operator_id = $1 AND active',
+          [operatorId, now, new Date(now.getTime() + ACCOUNT_TRANSITION_MS)],
         );
         const { rows } = await c.query<{ id: string }>(
           `INSERT INTO operator_payment_accounts
@@ -142,13 +144,14 @@ export class PaymentsService {
            ON CONFLICT (provider, account_number) DO UPDATE SET
              bank_code = EXCLUDED.bank_code, account_name = EXCLUDED.account_name,
              webhook_key_hash = EXCLUDED.webhook_key_hash, api_token_enc = EXCLUDED.api_token_enc,
-             active = true, updated_at = now()
+             active = true, receive_until = NULL, updated_at = now()
            WHERE operator_payment_accounts.operator_id = EXCLUDED.operator_id
+             AND operator_payment_accounts.bank_code = EXCLUDED.bank_code
            RETURNING id`,
           [operatorId, data.bankCode.toUpperCase(), data.accountNumber, data.accountName,
             hashWebhookKey(data.webhookApiKey), data.apiToken ? this.box.seal(data.apiToken) : null],
         );
-        if (!rows[0]) throw new DomainError('CONFLICT', 'Số tài khoản này đã được nhà xe khác dùng.');
+        if (!rows[0]) throw new DomainError('CONFLICT', 'Số tài khoản đã được đăng ký với nhà xe hoặc ngân hàng khác.');
         await this.audit.record(
           { operatorId, actorUserId: actor.id, action: 'payment_account.configure', entity: 'payment_account', entityId: rows[0].id,
             data: {
@@ -192,52 +195,49 @@ export class PaymentsService {
 
   /** QR + thông tin chuyển khoản cho đơn (khách xác minh bằng token truy cập đơn). Không lộ dữ liệu khác. */
   async paymentInstructions(code: string, accessToken: string, depositOnly = false) {
-    const { rows } = await this.db.query<{
-      id: string; status: string; hold_expires_at: Date | null; total_amount: number;
-      deposit_amount: number; paid_amount: number; access_token_version: number;
-      bank_code: string | null; account_number: string | null; account_name: string | null;
-    }>(
-      `SELECT b.id, b.status, b.hold_expires_at, b.total_amount, b.deposit_amount, b.paid_amount, b.access_token_version,
-              a.bank_code, a.account_number, a.account_name
-       FROM bookings b LEFT JOIN operator_payment_accounts a ON a.operator_id = b.operator_id AND a.active
-       WHERE b.code = $1`,
-      [code],
+    const { rows: [initial] } = await this.db.query<{ id: string; operator_id: string; access_token_version: number }>(
+      'SELECT id, operator_id, access_token_version FROM bookings WHERE code = $1', [code],
     );
-    const b = rows[0];
-    if (!b || !verifyBookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version, accessToken)) throw notFound('đơn');
-    const now = this.clock.now();
-    const holding = b.status === 'HOLDING' && b.hold_expires_at !== null && b.hold_expires_at > now;
-    const due = depositOnly && !holding ? 0 : amountDueNow(b, now);
-    if (due <= 0) {
-      return { code, payable: false, reason: holding || b.status === 'CONFIRMED' ? 'PAID' : 'NOT_PAYABLE', amountDue: 0 };
-    }
-    if (!b.bank_code || !b.account_number || !b.account_name)
-      throw new DomainError('SERVICE_UNAVAILABLE', 'Nhà xe chưa cấu hình tài khoản nhận tiền.');
-    return {
-      code,
-      payable: true,
-      amountDue: due,
-      transferContent: code,
-      holdExpiresAt: holding ? b.hold_expires_at!.toISOString() : null,
-      bank: { code: b.bank_code, accountNumber: b.account_number, accountName: b.account_name },
-      qrImageUrl: sepayQrUrl(b.bank_code, b.account_number, due, code),
-    };
+    if (!initial || !verifyBookingAccessToken(this.tokenSecret.value, initial.id, initial.access_token_version, accessToken)) throw notFound('đơn');
+    return this.db.tx(async (c) => {
+      // Serialize first QR issuance with changes to the operator's receiving account.
+      await c.query('SELECT id FROM operators WHERE id = $1 FOR SHARE', [initial.operator_id]);
+      const { rows: [b] } = await c.query<LockedBooking & { access_token_version: number; payment_account_id: string | null }>(
+        `SELECT id, status, hold_expires_at, total_amount, deposit_amount, paid_amount, access_token_version, payment_account_id
+         FROM bookings WHERE id = $1 FOR UPDATE`, [initial.id],
+      );
+      if (!b || !verifyBookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version, accessToken)) throw notFound('đơn');
+      const now = this.clock.now();
+      const holding = b.status === 'HOLDING' && b.hold_expires_at !== null && b.hold_expires_at > now;
+      const due = depositOnly && !holding ? 0 : amountDueNow(b, now);
+      if (due <= 0) return { code, payable: false, reason: holding || b.status === 'CONFIRMED' ? 'PAID' : 'NOT_PAYABLE', amountDue: 0 };
+      const { rows: [account] } = await c.query<{ id: string; bank_code: string; account_number: string; account_name: string }>(
+        `SELECT id, bank_code, account_number, account_name FROM operator_payment_accounts
+         WHERE operator_id = $1 AND (active OR (id = $2 AND receive_until > $3))
+         ORDER BY (id = $2) DESC NULLS LAST LIMIT 1`, [initial.operator_id, b.payment_account_id, now],
+      );
+      if (!account) throw new DomainError('SERVICE_UNAVAILABLE', 'Tài khoản nhận tiền chưa sẵn sàng. Vui lòng liên hệ nhà xe.');
+      if (b.payment_account_id !== account.id) {
+        if (b.payment_account_id) {
+          await c.query(`INSERT INTO booking_previous_payment_accounts (booking_id, account_id)
+            VALUES ($1, $2) ON CONFLICT DO NOTHING`, [b.id, b.payment_account_id]);
+        }
+        await c.query('UPDATE bookings SET payment_account_id = $2 WHERE id = $1', [b.id, account.id]);
+      }
+      return {
+        code, payable: true, amountDue: due, transferContent: code,
+        holdExpiresAt: holding ? b.hold_expires_at!.toISOString() : null,
+        bank: { code: account.bank_code, accountNumber: account.account_number, accountName: account.account_name },
+        qrImageUrl: sepayQrUrl(account.bank_code, account.account_number, due, code),
+      };
+    });
   }
 
   // ---- Nhận tiền từ SePay ----------------------------------------------------------------------------
 
   /** Webhook SePay: xác thực API Key của đúng tài khoản nhận tiền, rồi ghi nhận. */
   async handleSepayWebhook(authorization: string | undefined, body: unknown): Promise<IngestResult> {
-    const transfer = parseSepayWebhook(body);
-    const { rows } = await this.db.query<{ webhook_key_hash: string }>(
-      `SELECT webhook_key_hash FROM operator_payment_accounts WHERE provider = 'SEPAY' AND account_number = $1 AND active`,
-      [transfer.accountNumber],
-    );
-    // Không phân biệt "sai khóa" với "tài khoản không có" trong phản hồi.
-    if (!rows[0] || !verifyApiKeyHeader(authorization, rows[0].webhook_key_hash)) {
-      throw new DomainError('UNAUTHENTICATED', 'Webhook không hợp lệ.');
-    }
-    return this.ingest(transfer, 'WEBHOOK', body);
+    return this.ingest(parseSepayWebhook(body), 'WEBHOOK', body, authorization);
   }
 
   /**
@@ -246,42 +246,65 @@ export class PaymentsService {
    */
   async reconcile(operatorId: string, lookbackHours = 72): Promise<{ fetched: number; processed: number; duplicates: number; errors: number }> {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
-    const { rows } = await this.db.query<{ account_number: string; api_token_enc: string | null }>(
-      `SELECT account_number, api_token_enc FROM operator_payment_accounts WHERE operator_id = $1 AND active`,
-      [operatorId],
+    const now = this.clock.now();
+    const { rows } = await this.db.query<{ account_number: string; api_token_enc: string }>(
+      `SELECT account_number, api_token_enc FROM operator_payment_accounts
+       WHERE operator_id = $1 AND (active OR receive_until + interval '72 hours' > $2) AND api_token_enc IS NOT NULL`,
+      [operatorId, now],
     );
-    const acc = rows[0];
-    if (!acc?.api_token_enc) throw new DomainError('VALIDATION_FAILED', 'Chưa cấu hình token API SePay để đối soát.');
-    const since = new Date(this.clock.now().getTime() - lookbackHours * 3600_000);
-    const list = await this.sepay.listIncoming(this.box.open(acc.api_token_enc), acc.account_number, since);
+    if (!rows.length) throw new DomainError('VALIDATION_FAILED', 'Chưa cấu hình token API SePay để đối soát.');
+    const since = new Date(now.getTime() - lookbackHours * 3600_000);
+    let fetched = 0;
     let processed = 0;
     let duplicates = 0;
     let errors = 0;
-    for (const t of list) {
-      if (t.accountNumber !== acc.account_number) continue;
-      // Một giao dịch lỗi không được chặn các giao dịch phía sau; lần đối soát sau sẽ thử lại.
+    let accountsFetched = 0;
+    let firstFetchError: unknown;
+    for (const acc of rows) {
+      let list: BankTransfer[];
       try {
-        const r = await this.ingest(t, 'RECONCILE', t);
-        if (r.status === 'PROCESSED') processed++;
-        if (r.status === 'DUPLICATE') duplicates++;
-      } catch {
+        list = await this.sepay.listIncoming(this.box.open(acc.api_token_enc), acc.account_number, since);
+      } catch (error) {
+        firstFetchError ??= error;
         errors++;
+        continue;
+      }
+      accountsFetched++;
+      fetched += list.length;
+      for (const t of list) {
+        if (t.accountNumber !== acc.account_number) continue;
+        try {
+          const r = await this.ingest(t, 'RECONCILE', t);
+          if (r.status === 'PROCESSED') processed++;
+          if (r.status === 'DUPLICATE') duplicates++;
+        } catch {
+          errors++;
+        }
       }
     }
-    return { fetched: list.length, processed, duplicates, errors };
+    if (!accountsFetched) throw firstFetchError;
+    return { fetched, processed, duplicates, errors };
   }
 
   /** Ghi sự kiện + khoản thu + phân bổ trong một transaction. Gửi lặp → DUPLICATE, không cộng tiền lần hai. */
-  private async ingest(t: BankTransfer, source: 'WEBHOOK' | 'RECONCILE', payload: unknown): Promise<IngestResult> {
+  private async ingest(t: BankTransfer, source: 'WEBHOOK' | 'RECONCILE', payload: unknown, authorization?: string): Promise<IngestResult> {
     const now = this.clock.now();
     return this.db.tx(async (c) => {
-      const { rows: acc } = await c.query<{ operator_id: string; code: string }>(
-        `SELECT a.operator_id, o.code FROM operator_payment_accounts a JOIN operators o ON o.id = a.operator_id
-         WHERE a.provider = 'SEPAY' AND a.account_number = $1 AND a.active`,
-        [t.accountNumber],
+      const { rows: [destination] } = await c.query<{ operator_id: string }>(
+        `SELECT operator_id FROM operator_payment_accounts WHERE provider = 'SEPAY' AND account_number = $1`, [t.accountNumber],
+      );
+      if (!destination) throw new DomainError('UNAUTHENTICATED', 'Webhook không hợp lệ.');
+      await c.query('SELECT id FROM operators WHERE id = $1 FOR SHARE', [destination.operator_id]);
+      const { rows: acc } = await c.query<{ id: string; operator_id: string; code: string; active: boolean; webhook_key_hash: string }>(
+        `SELECT a.id, a.operator_id, o.code, a.active, a.webhook_key_hash FROM operator_payment_accounts a JOIN operators o ON o.id = a.operator_id
+         WHERE a.provider = 'SEPAY' AND a.account_number = $1
+           AND (a.active OR (a.receive_until + interval '72 hours' > $2 AND a.receive_until >= $3))`,
+        [t.accountNumber, now, t.transactionAt],
       );
       const account = acc[0];
-      if (!account) throw new DomainError('UNAUTHENTICATED', 'Webhook không hợp lệ.');
+      if (!account || (source === 'WEBHOOK' && !verifyApiKeyHeader(authorization, account.webhook_key_hash))) {
+        throw new DomainError('UNAUTHENTICATED', 'Webhook không hợp lệ.');
+      }
       const ev = await c.query(
         `INSERT INTO provider_events (provider, account_number, provider_txn_id, payload, source, received_at)
          VALUES ('SEPAY', $1, $2, $3, $4, $5) ON CONFLICT DO NOTHING RETURNING id`,
@@ -307,8 +330,11 @@ export class PaymentsService {
         return { status: 'PROCESSED', paymentId: payment.id };
       }
       const { rows: found } = await c.query<{ id: string }>(
-        'SELECT id FROM bookings WHERE operator_id = $1 AND code = ANY($2::text[])',
-        [account.operator_id, codes],
+        `SELECT id FROM bookings WHERE operator_id = $1 AND code = ANY($2::text[])
+           AND (payment_account_id = $3 OR (payment_account_id IS NULL AND $4) OR EXISTS (
+             SELECT 1 FROM booking_previous_payment_accounts WHERE booking_id = bookings.id AND account_id = $3
+           ))`,
+        [account.operator_id, codes, account.id, account.active],
       );
       if (found.length !== 1) {
         await this.flag(c, payment.id, found.length === 0 ? 'UNMATCHED' : 'AMBIGUOUS');
@@ -316,6 +342,17 @@ export class PaymentsService {
       }
       const bookingId = found[0]!.id;
       const trips = await this.lockBookingTrips(c, bookingId);
+      const bound = await c.query(
+        `UPDATE bookings SET payment_account_id = COALESCE(payment_account_id, $2) WHERE id = $1
+           AND (payment_account_id = $2 OR (payment_account_id IS NULL AND $3) OR EXISTS (
+             SELECT 1 FROM booking_previous_payment_accounts WHERE booking_id = bookings.id AND account_id = $2
+           ))`,
+        [bookingId, account.id, account.active],
+      );
+      if (!bound.rowCount) {
+        await this.flag(c, payment.id, 'UNMATCHED');
+        return { status: 'PROCESSED', paymentId: payment.id };
+      }
       await c.query('UPDATE payments SET matched_booking_id = $2 WHERE id = $1', [payment.id, bookingId]);
       // Kế toán có thể đã xác nhận tay chính giao dịch này lúc SePay gián đoạn → không tự cộng lần hai.
       const { rows: manual } = await c.query(

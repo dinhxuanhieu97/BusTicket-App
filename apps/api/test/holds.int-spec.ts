@@ -1,4 +1,4 @@
-import { LIMO_FARES, buildServices, errorCode, newKey, resetDatabase, seedOperatorWithTrips, Services, T0 } from './helpers';
+import { LIMO_FARES, buildServices, errorCode, newKey, newRetryToken, resetDatabase, seedOperatorWithTrips, Services, T0 } from './helpers';
 
 let s: Services;
 let seed: Awaited<ReturnType<typeof seedOperatorWithTrips>>;
@@ -225,9 +225,10 @@ describe('createHold — hold expiry', () => {
 describe('createHold — idempotency', () => {
   it('returns the same booking and token when the same request is retried', async () => {
     const key = newKey();
+    const attempt = { retryToken: newRetryToken() };
     const input = { tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B1' }] };
-    const a = await s.bookings.createHold(input, key);
-    const b = await s.bookings.createHold({ ...input, contactPhone: '+84 912 345 678' }, key);
+    const a = await s.bookings.createHold(input, key, attempt);
+    const b = await s.bookings.createHold({ ...input, contactPhone: '+84 912 345 678' }, key, attempt);
     expect(b.replayed).toBe(true);
     expect(b.booking.code).toBe(a.booking.code);
     expect(b.accessToken).toBe(a.accessToken);
@@ -235,26 +236,29 @@ describe('createHold — idempotency', () => {
 
   it('returns one booking when the same key is sent concurrently', async () => {
     const key = newKey();
+    const attempt = { retryToken: newRetryToken() };
     const input = { tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B2' }] };
-    const results = await Promise.all(Array.from({ length: 5 }, () => s.bookings.createHold(input, key)));
+    const results = await Promise.all(Array.from({ length: 5 }, () => s.bookings.createHold(input, key, attempt)));
     expect(new Set(results.map((r) => r.booking.code)).size).toBe(1);
     expect(results.filter((r) => !r.replayed)).toHaveLength(1);
   });
 
   it('rejects the same key with a different request', async () => {
     const key = newKey();
-    await s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B3' }] }, key);
+    const attempt = { retryToken: newRetryToken() };
+    await s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B3' }] }, key, attempt);
     expect(
-      await errorCode(s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B4' }] }, key)),
+      await errorCode(s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B4' }] }, key, attempt)),
     ).toBe('IDEMPOTENCY_CONFLICT');
     expect(await seatStatus(seed.bedTrip.id, 'B4')).toBe('AVAILABLE');
   });
 
   it('rejects the same key reused on another trip of the same operator', async () => {
     const key = newKey();
-    await s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B5' }] }, key);
+    const attempt = { retryToken: newRetryToken() };
+    await s.bookings.createHold({ tripId: seed.bedTrip.id, ...contact, items: [{ seatCode: 'B5' }] }, key, attempt);
     expect(
-      await errorCode(s.bookings.createHold({ tripId: seed.limoTrip.id, ...contact, items: [{ seatCode: 'B5' }] }, key)),
+      await errorCode(s.bookings.createHold({ tripId: seed.limoTrip.id, ...contact, items: [{ seatCode: 'B5' }] }, key, attempt)),
     ).toBe('IDEMPOTENCY_CONFLICT');
   });
 
@@ -319,10 +323,11 @@ it('holds both directions under one code or neither when a return seat is taken'
   const request = { ...contact, tripId: other.limoTrip.id, items: [{seatCode: 'A2'}],
     returnLeg: {tripId: inbound.id, items: [{seatCode: 'A2'}]} };
   const key = newKey();
-  const result = await s.bookings.createHold(request, key);
+  const attempt = { retryToken: newRetryToken() };
+  const result = await s.bookings.createHold(request, key, attempt);
   expect(result.booking.totalAmount).toBe(900000);
   expect(new Set(result.booking.items.map(i => i.tripId))).toEqual(new Set([request.tripId, inbound.id]));
-  expect((await s.bookings.createHold(request, key)).booking.code).toBe(result.booking.code);
+  expect((await s.bookings.createHold(request, key, attempt)).booking.code).toBe(result.booking.code);
   expect(await errorCode(s.bookings.createHold({...request, items: [{seatCode:'A3'}]},newKey()))).toBe('SEAT_UNAVAILABLE');
   expect(await seatStatus(request.tripId, 'A3')).toBe('AVAILABLE');
   s.clock.set(new Date(T0.getTime()+13*60_000));
