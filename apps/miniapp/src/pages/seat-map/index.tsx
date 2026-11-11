@@ -17,13 +17,13 @@ import { useBookingDraft } from "@/stores/booking-draft.store";
 import { buildGrids, type SeatCell } from "@/utils/seat-layout";
 import {
   MAX_INFANTS_PER_UNIT,
-  estimateTotal,
+  estimateDeposit,
   reconcileSelection,
   selectedCodes,
   setInfants,
   setOccupancy,
   toggleSeat,
-  unitPrice,
+  unitDeposit,
 } from "@/utils/seat-selection";
 import { formatCurrency } from "@/utils/format";
 import { formatVnDate, formatVnTime } from "@/utils/time";
@@ -86,7 +86,7 @@ export default function SeatMapPage() {
 
   const unit = map.layout.unit;
   const codes = selectedCodes(selection);
-  const estimate = estimateTotal(selection, map.seats, map.fares);
+  const estimate = estimateDeposit({ selection, map });
 
   const onSeatPress = (seat: SeatCell) => {
     const result = toggleSeat(selection, seat, map.booking.maxUnitsPerBooking);
@@ -115,35 +115,6 @@ export default function SeatMapPage() {
           </div>
         </div>
 
-        {map.stops &&
-          map.stops.pickup.length + map.stops.dropoff.length > 0 && (
-            <details className="pn-card">
-              <summary className="pn-link">Xem điểm đón, điểm trả</summary>
-              <p className="pn-meta my-3">
-                Giờ đón, trả là giờ dự kiến và có thể thay đổi theo thực tế.
-              </p>
-              {(["pickup", "dropoff"] as const).map((kind) => (
-                <div key={kind}>
-                  <strong>{kind === "pickup" ? "Điểm đón" : "Điểm trả"}</strong>
-                  {map.stops![kind].map((stop, i) => (
-                    <p key={i}>
-                      {stop.time}{" "}
-                      {stop.day > 0 &&
-                        "(" +
-                          formatVnDate(
-                            new Date(
-                              Date.parse(map.trip.departAt) +
-                                86400000 * stop.day,
-                            ).toISOString(),
-                          ) +
-                          ")"}{" "}
-                      · {stop.name}
-                    </p>
-                  ))}
-                </div>
-              ))}
-            </details>
-          )}
         {!map.trip.onSale && (
           <div className="rounded-lg bg-red100 px-3 py-2 text-xxsmall text-danger">
             {copy.seats.notOnSale}
@@ -185,11 +156,10 @@ export default function SeatMapPage() {
         {codes.length > 0 && (
           <div className="flex flex-col gap-3 rounded-xl bg-white">
             {codes.map((code) => {
-              const seat = seatByCode.get(code)!;
+              const seat = seatByCode.get(code);
+              if (!seat) return null;
               const unitSel = selection[code];
-              const price = seat
-                ? unitPrice(map.fares, seat.floor, unitSel.occupancy)
-                : null;
+              const deposit = unitDeposit(map, code, unitSel);
               return (
                 <div
                   key={code}
@@ -199,9 +169,11 @@ export default function SeatMapPage() {
                     <span className="text-normal-sb capitalize">
                       {unit} {code}
                     </span>
-                    <span className="text-small">
-                      {price === null ? "—" : formatCurrency(price)}
-                    </span>
+                    {deposit !== null && (
+                      <span className="text-small">
+                        {copy.seats.deposit} {formatCurrency(deposit)}
+                      </span>
+                    )}
                   </div>
                   {seat.maxOccupancy > 1 && (
                     <div className="flex items-center justify-between text-xxsmall text-text-secondary">
@@ -243,6 +215,37 @@ export default function SeatMapPage() {
             })}
           </div>
         )}
+
+        {map.stops &&
+          map.stops.pickup.length + map.stops.dropoff.length > 0 && (
+            <details className="pn-card">
+              <summary className="pn-link">Xem điểm đón, điểm trả</summary>
+              <p className="pn-meta my-3">
+                Giờ đón và trả khách là dự kiến, có thể thay đổi do thời tiết,
+                tình hình giao thông hoặc sự cố trên đường.
+              </p>
+              {(["pickup", "dropoff"] as const).map((kind) => (
+                <div key={kind}>
+                  <strong>{kind === "pickup" ? "Điểm đón" : "Điểm trả"}</strong>
+                  {map.stops![kind].map((stop, i) => (
+                    <p key={i}>
+                      {stop.time}{" "}
+                      {stop.day > 0 &&
+                        "(" +
+                          formatVnDate(
+                            new Date(
+                              Date.parse(map.trip.departAt) +
+                                86400000 * stop.day,
+                            ).toISOString(),
+                          ) +
+                          ")"}{" "}
+                      · {stop.name}
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </details>
+          )}
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 z-40 flex flex-col gap-2 border-divider01 border-t bg-white px-4 pb-5 pt-3">
@@ -250,11 +253,11 @@ export default function SeatMapPage() {
           <span className="text-xxsmall text-text-secondary">
             {copy.seats.selectedCount(codes.length, unit)}
           </span>
-          <span className="text-large-sb text-primary">
-            {estimate === null || codes.length === 0
-              ? "—"
-              : formatCurrency(estimate)}
-          </span>
+          {estimate !== null && codes.length > 0 && (
+            <span className="text-small-sb text-primary">
+              {copy.seats.totalDeposit} {formatCurrency(estimate)}
+            </span>
+          )}
         </div>
         {codes.length > 0 && (
           <div className="text-xxxsmall text-text-secondary">

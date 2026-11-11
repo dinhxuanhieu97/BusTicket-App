@@ -20,10 +20,10 @@ import {
 import { formatCurrency } from "@/utils/format";
 import { isValidVnMobile } from "@/utils/phone";
 import {
-  estimateTotal,
+  estimateDeposit,
   selectedCodes,
   toHoldItems,
-  unitPrice,
+  unitDeposit,
 } from "@/utils/seat-selection";
 import { formatVnDate, formatVnTime } from "@/utils/time";
 
@@ -86,19 +86,10 @@ export default function CheckoutPage() {
 
   const tripId = firstId;
   const codes = selectedCodes(selection);
-  const firstTotal = estimateTotal(selection, map.seats, map.fares);
-  const secondTotal =
-    inbound && returnMap.data
-      ? estimateTotal(
-          returnSelection,
-          returnMap.data.seats,
-          returnMap.data.fares,
-        )
-      : 0;
-  const estimate =
-    firstTotal === null || secondTotal === null
-      ? null
-      : firstTotal + secondTotal;
+  const secondLeg = inbound && returnMap.data
+    ? { selection: returnSelection, map: returnMap.data }
+    : undefined;
+  const estimate = estimateDeposit({ selection, map }, secondLeg);
   const nameError =
     touched && !draft.contactName.trim()
       ? copy.checkout.nameRequired
@@ -172,7 +163,8 @@ export default function CheckoutPage() {
         phoneToken: tokenValid ? draft.phoneToken!.token : undefined,
       },
       {
-        onSuccess: (result) => {
+        onSuccess: (result, { request }) => {
+          useProfile.getState().save(request.contactName, request.contactPhone);
           saveBooking({
             code: result.booking.code,
             accessToken: result.accessToken,
@@ -234,11 +226,8 @@ export default function CheckoutPage() {
           </div>
           <div className="mt-2 text-small-m">{copy.checkout.summary}</div>
           {codes.map((code) => {
-            const seat = map.seats.find((s) => s.code === code);
             const unitSel = selection[code];
-            const price = seat
-              ? unitPrice(map.fares, seat.floor, unitSel.occupancy)
-              : null;
+            const deposit = unitDeposit(map, code, unitSel);
             return (
               <div key={code} className="flex justify-between text-xxsmall">
                 <span className="capitalize">
@@ -248,7 +237,9 @@ export default function CheckoutPage() {
                     ? ` · ${unitSel.infantCount} trẻ em`
                     : ""}
                 </span>
-                <span>{price === null ? "—" : formatCurrency(price)}</span>
+                {deposit !== null && (
+                  <span>{copy.seats.deposit} {formatCurrency(deposit)}</span>
+                )}
               </div>
             );
           })}
@@ -262,17 +253,16 @@ export default function CheckoutPage() {
                 {formatVnTime(inbound.departAt)}
               </p>
               <p>
-                Chỗ {selectedCodes(returnSelection).join(", ")} ·{" "}
-                {secondTotal === null ? "—" : formatCurrency(secondTotal)}
+                Chỗ {selectedCodes(returnSelection).join(", ")}
               </p>
             </div>
           )}
-          <div className="mt-1 flex justify-between border-divider01 border-t pt-2 text-small-m">
-            <span>{copy.seats.estimate}</span>
-            <span className="text-primary">
-              {estimate === null ? "—" : formatCurrency(estimate)}
-            </span>
-          </div>
+          {estimate !== null && (
+            <div className="mt-1 flex justify-between border-divider01 border-t pt-2 text-small-m">
+              <span>{copy.seats.totalDeposit}</span>
+              <span className="text-primary">{formatCurrency(estimate)}</span>
+            </div>
+          )}
           <div className="text-xxxsmall text-text-secondary">
             {copy.seats.estimateHint}
           </div>
@@ -341,7 +331,7 @@ export default function CheckoutPage() {
               maxLength={500}
               rows={3}
               value={draft.note}
-              placeholder="Ví dụ: Đăng ký hỗ trợ vé khám bệnh"
+              placeholder="Ví dụ: Đăng ký hỗ trợ vé khám bệnh hiểm nghèo hoặc điểm đón trên lộ trình nhà xe"
               onChange={(event) => draft.setNote(event.target.value)}
             />
           </label>

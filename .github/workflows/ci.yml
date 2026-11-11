@@ -1,0 +1,137 @@
+# CI cho API (NestJS + PostgreSQL) và Zalo Mini App.
+# Thứ tự: quick-checks → (integration tests ∥ Claude review). Railway chỉ deploy `main` khi các check này xanh
+# (bật "Wait for CI" ở service Railway — xem DEPLOY.md).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "hieufeature_**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  quick-checks:
+    name: Typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4 # phiên bản pnpm lấy từ "packageManager" trong package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: API typecheck
+        run: pnpm --filter api typecheck
+      - name: API unit tests
+        run: pnpm --filter api test:unit
+      - name: API build
+        run: pnpm --filter api build
+      - name: Mini App typecheck
+        run: pnpm --filter miniapp typecheck
+      - name: Mini App tests
+        run: pnpm --filter miniapp test
+      - name: Mini App build
+        run: pnpm --filter miniapp build
+
+  integration:
+    name: Integration tests (PostgreSQL)
+    needs: quick-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pnticket
+          POSTGRES_PASSWORD: pnticket
+          POSTGRES_DB: pnticket_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pnticket"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # DB dùng một lần trong container CI; test xóa sạch schema nên tuyệt đối không trỏ vào DB thật.
+      DATABASE_URL_TEST: postgres://pnticket:pnticket@localhost:5432/pnticket_test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api test:int
+
+  claude-review:
+    name: Claude code review
+    needs: quick-checks
+    # Chỉ PR không phải nháp, từ chính repo (PR từ fork không có secret).
+    if: >-
+      github.event_name == 'pull_request' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check for Claude credentials
+        id: key
+        env:
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Ưu tiên token gói Claude Pro/Max (không tính phí thêm, dùng chung hạn mức gói); API key là dự phòng.
+          if [ -n "$OAUTH" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; echo "plan=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$KEY" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::Chưa có CLAUDE_CODE_OAUTH_TOKEN hoặc ANTHROPIC_API_KEY — bỏ qua Claude review."; fi
+      - name: Detect sensitive paths
+        id: paths
+        if: steps.key.outputs.ok == 'true'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          PLAN: ${{ steps.key.outputs.plan }}
+        run: |
+          # Tiền, khóa chỗ, xác thực và migration: review kỹ hơn bằng model mạnh hơn.
+          if git diff --name-only "$BASE"...HEAD | grep -Eq '^apps/api/src/(auth|payments|bookings|trips|abuse)/|^apps/api/src/db/migrations/'; then
+            # Gói Pro: Sonnet + effort cao để không tiêu hết hạn mức; API key: Opus.
+            if [ "$PLAN" = "true" ]; then echo "args=--model claude-sonnet-5-5 --effort high" >> "$GITHUB_OUTPUT"
+            else echo "args=--model claude-opus-5-5 --effort high" >> "$GITHUB_OUTPUT"; fi
+          else
+            echo "args=--model claude-sonnet-5-5" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: anthropics/claude-code-action@v1
+        if: steps.key.outputs.ok == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Chỉ dùng API key (tính phí theo token) khi chưa có token gói Claude Pro/Max.
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          plugin_marketplaces: https://github.com/anthropics/claude-code.git
+          plugins: code-review@claude-code-plugins
+          prompt: |
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
+            Follow CLAUDE.md (business invariants: seat locking, integer VND money, operator_id from the server,
+            no customer names/phones in public APIs). Write review comments in Vietnamese.
+          claude_args: >-
+            ${{ steps.paths.outputs.args }} --max-turns 40
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"

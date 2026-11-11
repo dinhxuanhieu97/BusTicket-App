@@ -8,6 +8,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
+import { TripSchedulesService } from '../trips/trip-schedules.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
 
 const tripStatusBody = z.object({ status: z.enum(['OPEN', 'CLOSED']) }).strict();
@@ -27,12 +28,50 @@ export class AdminController {
     private readonly users: UsersService,
     private readonly audit: AuditService,
     private readonly payments: PaymentsService,
+    private readonly schedules: TripSchedulesService,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
     return this.audit.record({
       operatorId, actorUserId: req.auth.id, action, entity, entityId: entityId ?? null, data: data as Record<string, unknown>,
     });
+  }
+
+  @Get('operators/:operatorId/trip-schedules')
+  @Perm('trip.read')
+  async listSchedules(@Param('operatorId') op:string) { return {schedules:await this.schedules.list(op)}; }
+  @Post('operators/:operatorId/trip-schedules')
+  @Perm('trip.write')
+  createSchedule(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown,@Headers('idempotency-key') key?:string) {
+    return this.schedules.create(op,body,req.auth.id,key);
+  }
+  @Get('operators/:operatorId/trip-schedules/:id/preview')
+  @Perm('trip.read')
+  async previewSchedule(@Param('operatorId') op:string,@Param('id') id:string) { return {occurrences:await this.schedules.preview(op,id)}; }
+  @Patch('operators/:operatorId/trip-schedules/:id')
+  @Perm('trip.write')
+  enableSchedule(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Param('id') id:string,@Body() body:unknown) {
+    const {enabled}=z.object({enabled:z.boolean()}).strict().parse(body);
+    return this.schedules.setEnabled(op,id,enabled,req.auth.id);
+  }
+  @Post('operators/:operatorId/trip-schedules/:id/generate')
+  @Perm('trip.write')
+  generateSchedule(@Param('operatorId') op:string,@Param('id') id:string) { return this.schedules.generate(op,id); }
+  @Put('operators/:operatorId/trip-schedules/:id/exception')
+  @Perm('trip.write')
+  exceptionSchedule(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Param('id') id:string,@Body() body:unknown) {
+    return this.schedules.saveException(op,id,body,req.auth.id);
+  }
+
+  @Get('operators/:operatorId/profile')
+  @Perm('policy.read')
+  profile(@Param('operatorId') op:string) { return this.operators.profile(op); }
+  @Put('operators/:operatorId/profile')
+  @Perm('policy.write')
+  async updateProfile(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown) {
+    const result=await this.operators.updateProfile(op,body);
+    await this.log(req,op,'operator.profile','operator',op,{name:result.name,defaultDepartureTime:result.defaultDepartureTime});
+    return result;
   }
 
   // ---- Nền tảng ------------------------------------------------------------
@@ -180,6 +219,14 @@ export class AdminController {
     return stops;
   }
 
+  @Post('operators/:operatorId/route-pairs')
+  @Perm('route.write')
+  async routePair(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown) {
+    const result=await this.trips.createRoutePair(op,body);
+    await this.log(req,op,'route.pair.create','route',undefined,{count:result.routes.length});
+    return result;
+  }
+
   @Post('operators/:operatorId/routes')
   @Perm('route.write')
   async createRoute(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
@@ -190,10 +237,20 @@ export class AdminController {
 
   @Get('operators/:operatorId/trips')
   @Perm('trip.read')
-  async listTrips(@Param('operatorId') operatorId: string, @Query('date') date?: string) {
-    if (!date) throw new DomainError('VALIDATION_FAILED', 'Thiếu ngày (date=YYYY-MM-DD).', { field: 'date' });
+  async listTrips(@Param('operatorId') operatorId: string, @Query() query: Record<string, string>) {
     await this.operators.getById(operatorId);
-    return { trips: await this.trips.listForAdmin(operatorId, date) };
+    if (Object.keys(query).length === 1 && query.date) {
+      return { trips: await this.trips.listForAdmin(operatorId, query.date) };
+    }
+    return this.trips.listAdminRange(operatorId, query);
+  }
+
+  @Post('operators/:operatorId/trips/batch')
+  @Perm('trip.write')
+  async batchTrips(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown,@Headers('idempotency-key') key?:string) {
+    const result=await this.trips.createBatch(op,body,key??'');
+    for(const trip of result.trips) if(!trip.replayed) await this.log(req,op,'trip.create','trip',trip.id,{name:trip.name});
+    return result;
   }
 
   @Get('operators/:operatorId/trips/:tripId')

@@ -26,7 +26,20 @@ export function bookingAccessToken(secret: string, bookingId: string, version: n
 }
 
 export function verifyBookingAccessToken(secret: string, bookingId: string, version: number, token: string): boolean {
-  const expected = Buffer.from(bookingAccessToken(secret, bookingId, version));
+  return matchesToken(bookingAccessToken(secret, bookingId, version), token);
+}
+
+/** Chữ ký để đối chiếu vé. Dùng miền riêng để mã QR không cấp quyền truy cập đơn. */
+export function ticketProof(secret: string, bookingId: string, version: number): string {
+  return createHmac('sha256', secret).update(`ticket-proof:v1:${bookingId}:${version}`).digest('base64url');
+}
+
+export function verifyTicketProof(secret: string, bookingId: string, version: number, proof: string): boolean {
+  return matchesToken(ticketProof(secret, bookingId, version), proof);
+}
+
+function matchesToken(expectedToken: string, token: string): boolean {
+  const expected = Buffer.from(expectedToken);
   const given = Buffer.from(token);
   return expected.length === given.length && timingSafeEqual(expected, given);
 }

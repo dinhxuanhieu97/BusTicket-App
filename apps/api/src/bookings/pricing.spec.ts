@@ -1,6 +1,6 @@
 import { DomainError } from '../common/errors';
 import { DEFAULT_POLICY } from '../operators/policy';
-import { Fare, MAX_BOOKING_TOTAL, priceItems, SeatInfo } from './pricing';
+import { Fare, fixedUnitDeposit, MAX_BOOKING_TOTAL, priceItems, SeatInfo } from './pricing';
 
 const seats: SeatInfo[] = [
   { seatCode: 'A1', floor: '1', maxOccupancy: 2 },
@@ -115,6 +115,15 @@ describe('depositAmount', () => {
     [0, 50, 0],
   ])('total %i at %i%% → %i', (total, pct, expected) => {
     expect(depositAmount(total, pct)).toBe(expected);
+  });
+});
+
+describe('fixedUnitDeposit', () => {
+  const fixed = { single: 300_000, double: 450_000 };
+  it('caps the deposit at the total for that room', () => {
+    expect(fixedUnitDeposit(250_000, 1, fixed)).toBe(250_000);
+    expect(fixedUnitDeposit(350_000, 1, fixed)).toBe(300_000);
+    expect(fixedUnitDeposit(900_000, 2, fixed)).toBe(450_000);
   });
 });
 

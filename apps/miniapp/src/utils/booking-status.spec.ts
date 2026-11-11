@@ -5,7 +5,7 @@ import { needsPayment } from "./booking-status";
 describe("payment eligibility", () => {
   it.each<[BookingStatus, number, boolean]>([
     ["HOLDING", 100000, true],
-    ["CONFIRMED", 100000, true],
+    ["CONFIRMED", 100000, false],
     ["CONFIRMED", 0, false],
     ["HOLDING", 0, false],
     ["EXPIRED", 100000, false],

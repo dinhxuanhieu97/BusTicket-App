@@ -34,6 +34,7 @@ async function bootstrap(): Promise<void> {
       authTokenSecret: requiredEnv('AUTH_TOKEN_SECRET'),
       zaloSecretKeys: parseZaloSecretKeys(process.env.ZALO_APP_SECRET_KEYS),
       // Dọn đơn giữ chỗ quá hạn mỗi phút (đặt 0 để tắt).
+      scheduleIntervalMs: Number(process.env.TRIP_SCHEDULE_INTERVAL_MS ?? 60000),
       holdSweepIntervalMs: Number(process.env.HOLD_SWEEP_INTERVAL_MS ?? 60_000),
       // Access token quản trị ngắn hạn (mặc định 15 phút); dashboard tự đổi refresh token lấy token mới.
       authAccessTtlSeconds: Number(process.env.AUTH_ACCESS_TTL_SECONDS ?? 900),

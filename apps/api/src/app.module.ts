@@ -22,6 +22,8 @@ import { OperatorsService } from './operators/operators.service';
 import { PublicController } from './public.controller';
 import { SeatLayoutsService } from './seat-layouts/seat-layouts.service';
 import { TripsService } from './trips/trips.service';
+import { TripSchedulesService } from './trips/trip-schedules.service';
+import { ScheduleRunner, ScheduleRunnerConfig } from './trips/schedule-runner';
 import { VehiclesService } from './vehicles/vehicles.service';
 
 export interface AppOptions {
@@ -39,6 +41,7 @@ export interface AppOptions {
   holdSweepIntervalMs?: number;
   /** Hạn access token quản trị (giây). Bỏ trống = 12 giờ (test); production đặt qua env `AUTH_ACCESS_TTL_SECONDS`. */
   authAccessTtlSeconds?: number;
+  scheduleIntervalMs?: number;
 }
 
 @Module({})
@@ -69,6 +72,9 @@ export class AppModule {
         OperatorsService,
         VehiclesService,
         TripsService,
+        TripSchedulesService,
+        ScheduleRunner,
+        { provide: ScheduleRunnerConfig, useValue: new ScheduleRunnerConfig(opts.scheduleIntervalMs ?? 0) },
         BookingsService,
         { provide: HoldSweepConfig, useValue: new HoldSweepConfig(opts.holdSweepIntervalMs ?? 0) },
         HoldSweeper,

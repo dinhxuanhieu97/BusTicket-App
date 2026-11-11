@@ -54,6 +54,9 @@ export interface SeatMap {
     requiresPhoneOtp: boolean;
     maxUnitsPerBooking: number;
     holdMinutes: number;
+    depositPercent?: number;
+    fixedDeposit?: { single: number; double: number } | null;
+    childPolicy?: { price: number };
   };
   vehicle: { name: string; code: string };
   layout: {
@@ -85,10 +88,12 @@ export interface BookingItem {
 }
 
 export interface BookingView {
+  ticketProof?: string;
   note?: string;
   code: string;
   status: BookingStatus;
   tripId: string;
+  tripContacts?: { tripId: string; phone: string }[];
   holdExpiresAt: string | null;
   totalAmount: number;
   depositAmount: number;

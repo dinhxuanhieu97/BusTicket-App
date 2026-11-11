@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
-import type { Request } from 'express';
+import { Body, Controller, Get, Header, Headers, HttpCode, Param, Post, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { PhoneVerificationService } from './abuse/phone-verification.service';
 import { ZaloPhoneService } from './abuse/zalo-phone.service';
 import { z } from 'zod';
 import { DomainError, notFound } from './common/errors';
 import { BookingsService } from './bookings/bookings.service';
+import { renderTicketVerification } from './bookings/ticket-verification-page';
 import { PaymentsService } from './payments/payments.service';
 import { TripsService } from './trips/trips.service';
 
@@ -84,9 +85,13 @@ export class PublicController {
 
   /** Thông tin chuyển khoản + ảnh QR cho đơn (số tiền cần trả lúc này, nội dung = mã đơn). */
   @Get('bookings/:code/payment')
-  paymentInstructions(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+  paymentInstructions(
+    @Param('code') code: string,
+    @Query('purpose') purpose?: string,
+    @Headers('x-booking-token') token?: string,
+  ) {
     if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
-    return this.payments.paymentInstructions(code, token);
+    return this.payments.paymentInstructions(code, token, purpose === 'deposit');
   }
 
   /**
@@ -105,6 +110,32 @@ export class PublicController {
   getBooking(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
     if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
     return this.bookings.getByCode(code, token);
+  }
+
+  @Get('bookings/:code/contact')
+  @Header('Cache-Control', 'private, no-store')
+  getBookingContact(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
+    if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
+    return this.bookings.contactByCode(code, token);
+  }
+
+  @Get('tickets/:code/verify')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'private, no-store')
+  @Header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'")
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('X-Robots-Tag', 'noindex, nofollow')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async verifyTicket(
+    @Param('code') code: string,
+    @Query('proof') proof: unknown,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const ticket = /^[A-Z0-9]{4,12}$/.test(code) && typeof proof === 'string' && /^[A-Za-z0-9_-]{43}$/.test(proof)
+      ? await this.bookings.verifyTicket(code, proof)
+      : null;
+    if (!ticket) response.status(404);
+    return renderTicketVerification(ticket);
   }
 
   /** Khách bỏ giữ chỗ để chọn lại: nhả chỗ ngay. Gọi lại nhiều lần an toàn (trả trạng thái hiện tại). */

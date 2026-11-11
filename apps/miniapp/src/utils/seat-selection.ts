@@ -103,6 +103,46 @@ export function estimateTotal(
   return total;
 }
 
+/** Dự tính cọc từng chỗ theo chính sách của nhà xe. */
+export function unitDeposit(map: SeatMap, seatCode: string, unit: SelectedUnit): number | null {
+  const fixed = map.booking.fixedDeposit;
+  const seat = map.seats.find((s) => s.code === seatCode);
+  if (!fixed || !seat) return null;
+  const price = unitPrice(map.fares, seat.floor, unit.occupancy);
+  if (price === null) return null;
+  const lineTotal = price + (map.booking.childPolicy?.price ?? 0) * unit.infantCount;
+  return Math.min(lineTotal, unit.occupancy === 1 ? fixed.single : fixed.double);
+}
+
+/** Tính cọc cho cả đơn, gồm hai lượt khi đặt khứ hồi. */
+export function estimateDeposit(
+  first: { selection: Selection; map: SeatMap },
+  second?: { selection: Selection; map: SeatMap },
+): number | null {
+  const legs = second ? [first, second] : [first];
+  if (first.map.booking.fixedDeposit) {
+    let sum = 0;
+    for (const { selection, map } of legs) {
+      for (const [code, unit] of Object.entries(selection)) {
+        const deposit = unitDeposit(map, code, unit);
+        if (deposit === null) return null;
+        sum += deposit;
+      }
+    }
+    return sum;
+  }
+
+  const percent = first.map.booking.depositPercent;
+  if (percent === undefined) return null;
+  let total = 0;
+  for (const { selection, map } of legs) {
+    const legTotal = estimateTotal(selection, map.seats, map.fares, map.booking.childPolicy);
+    if (legTotal === null) return null;
+    total += legTotal;
+  }
+  return Math.min(total, Math.ceil(total * percent / 100 / 1000) * 1000);
+}
+
 const codeOrder = (a: string, b: string) => a.localeCompare(b, "en", { numeric: true });
 
 /** Dòng gửi lên `POST /bookings`, sắp xếp ổn định để cùng một lựa chọn luôn ra cùng một yêu cầu. */

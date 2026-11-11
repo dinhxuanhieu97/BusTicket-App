@@ -1,9 +1,6 @@
 import type { BookingView } from "@/types/api.types";
 
-/** Confirmed bookings can still have a balance; expired/cancelled orders cannot be paid. */
+/** Mini App chỉ nhận tiền cọc trong lúc giữ chỗ. */
 export function needsPayment(booking: BookingView): boolean {
-  return (
-    (booking.status === "HOLDING" || booking.status === "CONFIRMED") &&
-    booking.amountDueNow > 0
-  );
+  return booking.status === "HOLDING" && booking.amountDueNow > 0;
 }

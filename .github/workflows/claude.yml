@@ -1,0 +1,44 @@
+# Gọi @claude trong issue/PR để hỏi hoặc giao việc. Chỉ người có quyền ghi vào repo mới kích hoạt được
+# (claude-code-action tự kiểm tra). Claude làm việc trên nhánh riêng và mở PR — không push thẳng vào main.
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    if: >-
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+      actions: read # đọc kết quả CI khi được hỏi về lỗi build
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Chỉ dùng API key (tính phí theo token) khi chưa có token gói Claude Pro/Max.
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN == '' && secrets.ANTHROPIC_API_KEY || '' }}
+          branch_prefix: hieufeature_ # quy ước nhánh của dự án (mặc định của action là claude/)
+          additional_permissions: |
+            actions: read
+          claude_args: >-
+            --model claude-sonnet-5-5 --max-turns 40
+            --append-system-prompt "Follow CLAUDE.md. Branch names must use hieufeature_<kebab-name>; never claude/... Reply in Vietnamese."
