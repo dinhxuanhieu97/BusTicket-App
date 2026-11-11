@@ -19,7 +19,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [ ] **T9. Đếm vé tính phí nền tảng** (`billable_tickets`, bảng kê theo kỳ).
 - [ ] **T10. Worker**: hết hạn giữ chỗ định kỳ, đối soát định kỳ, nhắc giờ.
 - [~] **T11. Zalo Mini App** (giao diện khách) dựa trên bản mẫu `prototype/so-do-cho.html`. 04/11/2026: đã có khung `apps/miniapp` (dựng từ template ZaUI Bistro) nối API công khai: tìm chuyến → sơ đồ chỗ → giữ chỗ (OTP cao điểm) → QR chuyển khoản → tự cập nhật khi tiền về → "Vé của tôi" lưu trên máy. 49 test (vitest), typecheck, build pass; đã chạy thử với API + PostgreSQL thật. Chưa rà soát subagent. Còn chờ API: đăng nhập Zalo/`/me/tickets`, vé (T7), điểm đón/trả.
-- [ ] **T12. Web quản trị** (Next.js).
+- [~] **T12. Web quản trị** (Next.js). Dashboard đã hoàn tất đăng nhập/2FA, đọc dữ liệu thật và đợt 2A quản lý chuyến; còn API/giao diện giá vé và sơ đồ chỗ. Checklist, bằng chứng kiểm tra và phát hiện tiếp tục ở [task.md workspace](../task.md).
 
 ## Phát hiện mới
 

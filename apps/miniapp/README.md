@@ -9,12 +9,13 @@ Khung dựng lại từ template ZaUI Bistro (React 18, ZMP UI/SDK, React Router
 |---|---|---|
 | Chọn ngày, danh sách chuyến (lọc theo tuyến) | `/` | `GET /operators/:code/trips?date=` |
 | Sơ đồ chỗ theo tầng, chọn chỗ, phòng đơn/đôi, trẻ em | `/trip/:tripId` | `GET /trips/:id/seats` (tự tải lại mỗi 5 giây) |
-| Thông tin liên hệ, OTP khi cao điểm, giữ chỗ | `/checkout` | `POST /bookings` (`Idempotency-Key`), `POST /phone-verifications[/verify]` |
+| Thông tin liên hệ, OTP khi cao điểm, giữ chỗ | `/checkout` | `POST /bookings` (`Idempotency-Key`, `X-Booking-Retry-Token`), `POST /phone-verifications[/verify]` |
 | Đơn: đếm ngược giữ chỗ, QR chuyển khoản, tự cập nhật khi tiền về | `/booking/:code` | `GET /bookings/:code`, `GET /bookings/:code/payment` (`X-Booking-Token`) |
 | Vé của tôi (đơn đặt trên máy này) | `/my-bookings` | `GET /bookings/:code` |
 
 Quy tắc giữ đúng phía máy chủ:
-- `Idempotency-Key` sinh một lần cho mỗi lần giữ chỗ, **giữ nguyên khi gửi lại**; đổi chỗ/thông tin thì sinh khóa mới.
+- Mini App tạo `Idempotency-Key` và `X-Booking-Retry-Token` bằng Web Crypto cho mỗi lần giữ chỗ. Khi thử lại cùng đơn đang soạn, gửi lại cả hai header, kể cả sau khi xác thực OTP lại. Nếu đổi nội dung đặt vé, app tạo cặp mới.
+- Khi phát hành, chạy migration 013 và cập nhật API trước để CORS chấp nhận header mới. Client cũ vẫn tạo được đơn. Để lấy lại phản hồi của một đơn chưa có mã thử lại, API yêu cầu token xác minh đúng số điện thoại và nhà xe.
 - Token đơn đi trong header, không đặt trên URL. Tạm lưu `mã đơn + accessToken` trong localStorage vì chưa có đăng nhập Zalo.
 - Giá trên Mini App chỉ là **tạm tính**; số tiền chính thức là `totalAmount`/`amountDueNow` máy chủ trả.
 - Chỉ trạng thái đơn từ máy chủ mới cho biết đã nhận tiền.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Spinner, useSnackbar } from "zmp-ui";
+import { useSnackbar } from "zmp-ui";
 import { copy, errorMessage } from "@/constants/copy";
 import { config } from "@/config";
 import receiptLogo from "@/assets/receipt-logo.png";
@@ -8,8 +8,12 @@ import { EmptyState } from "@/components/booking/empty-state";
 import { ReceiptActions } from "@/components/booking/receipt-actions";
 import { StatusBadge } from "@/components/booking/status-badge";
 import { Journey } from "@/components/booking/journey";
+import { LoadingState } from "@/components/common/loading-state";
+import { Notice } from "@/components/common/notice";
+import { isRetriable } from "@/lib/query-client";
 import { useNow } from "@/hooks/use-now";
 import {
+  isBookingUnavailable,
   useBooking,
   usePaymentInstructions,
 } from "@/services/booking/booking.queries";
@@ -32,14 +36,17 @@ export default function BookingDetailPage() {
   const {
     data: booking,
     isLoading,
-    isError,
+    isFetching,
+    isRefetchError,
     error,
     refetch,
   } = useBooking(code, saved?.accessToken);
+  const unavailable = isBookingUnavailable(error);
   const holding = booking?.status === "HOLDING";
   const now = useNow(holding);
   const left = secondsLeft(booking?.holdExpiresAt ?? null, now);
-  const payable = !!booking && left > 0 && needsPayment(booking);
+  const payable =
+    !!booking && !isRefetchError && left > 0 && needsPayment(booking);
   const payment = usePaymentInstructions(
     code,
     saved?.accessToken,
@@ -48,8 +55,8 @@ export default function BookingDetailPage() {
   );
 
   useEffect(() => {
-    if (holding && left === 0) void refetch();
-  }, [holding, left, refetch]);
+    if (holding && left === 0 && !unavailable) void refetch();
+  }, [holding, left, refetch, unavailable]);
 
   if (!saved)
     return (
@@ -61,33 +68,83 @@ export default function BookingDetailPage() {
         />
       </div>
     );
-  if (isLoading)
-    return (
-      <div className="pn-loading" role="status">
-        <Spinner />
-        {copy.common.loading}
-      </div>
-    );
-  if (isError || !booking)
+  if (isLoading) return <LoadingState label="Đang tải đơn đặt vé…" />;
+  if (unavailable)
     return (
       <div className="pn-page">
-        <EmptyState
-          title={errorMessage(error)}
-          actionLabel={copy.common.retry}
-          onAction={() => void refetch()}
-        />
+        <Notice
+          tone="warning"
+          action={{
+            label: copy.myBookings.title,
+            onClick: () => navigate("/my-bookings"),
+          }}
+        >
+          <p className="font-semibold">{copy.booking.unavailable}</p>
+          <p>
+            {copy.booking.code} · {code}
+          </p>
+          <p>{copy.booking.unavailableHint}</p>
+        </Notice>
+      </div>
+    );
+  if (!booking || (isRefetchError && !isRetriable(error)))
+    return (
+      <div className="pn-page">
+        <Notice
+          tone="error"
+          action={{
+            label: copy.common.retry,
+            onClick: () => void refetch(),
+            disabled: isFetching,
+          }}
+        >
+          <p className="font-semibold">Chưa tải được đơn đặt vé.</p>
+          <p>{errorMessage(error)}</p>
+        </Notice>
       </div>
     );
 
+  const confirmed =
+    booking.status === "CONFIRMED" || booking.status === "COMPLETED";
+  const retryStatus = {
+    label: "Kiểm tra lại",
+    onClick: () => void refetch(),
+    disabled: isFetching,
+  };
   return (
-    <div className="pn-page">
-      {holding && (
-        <div className="pn-notice pn-row">
-          <span>{copy.booking.holdLeft}</span>
-          <strong role="timer" aria-label={copy.booking.holdLeft}>
-            {formatCountdown(left)}
-          </strong>
-        </div>
+    <div className="pn-page pn-stack">
+      {isRefetchError ? (
+        <Notice tone="warning" action={retryStatus}>
+          {copy.booking.refreshError}
+        </Notice>
+      ) : holding ? (
+        <Notice tone="warning" action={left === 0 ? retryStatus : undefined}>
+          {left > 0 ? (
+            <>
+              <div className="pn-row font-semibold">
+                <span>{copy.booking.holdLeft}</span>
+                <strong
+                  role="timer"
+                  aria-live="off"
+                  aria-label={copy.booking.holdLeft}
+                >
+                  {formatCountdown(left)}
+                </strong>
+              </div>
+              <p className="mt-1">{copy.booking.waiting}</p>
+            </>
+          ) : (
+            copy.booking.deadlinePassed
+          )}
+        </Notice>
+      ) : (
+        <Notice tone={confirmed ? "success" : "warning"}>
+          {confirmed
+            ? copy.booking.confirmed
+            : booking.status === "CANCELLED"
+              ? copy.booking.cancelled
+              : copy.booking.expired}
+        </Notice>
       )}
       <section
         className="pn-card pn-receipt"
@@ -163,51 +220,42 @@ export default function BookingDetailPage() {
       )}
       {payable &&
         (payment.isLoading ? (
-          <div className="pn-loading" role="status">
-            <Spinner />
-            {copy.common.loading}
-          </div>
+          <LoadingState label="Đang tải thông tin chuyển khoản…" />
         ) : payment.isError ? (
-          <div className="pn-error" role="alert">
+          <Notice
+            tone="error"
+            action={{
+              label: copy.common.retry,
+              onClick: () => void payment.refetch(),
+              disabled: payment.isFetching,
+            }}
+          >
+            <p className="font-semibold">
+              Chưa tải được thông tin chuyển khoản.
+            </p>
             <p>{errorMessage(payment.error)}</p>
-            <button
-              className="pn-link"
-              type="button"
-              onClick={() => void payment.refetch()}
-            >
-              {copy.common.retry}
-            </button>
-          </div>
+          </Notice>
         ) : payment.data?.payable ? (
           <PaymentBox key={payment.data.qrImageUrl} payment={payment.data} />
         ) : payment.data ? (
-          <div className="pn-notice">
-            <p>{copy.booking.paymentNotPayable}</p>
-            <button
-              className="pn-link"
-              type="button"
-              onClick={() => {
+          <Notice
+            tone="warning"
+            action={{
+              ...retryStatus,
+              disabled: isFetching || payment.isFetching,
+              onClick: () => {
                 void refetch();
                 void payment.refetch();
-              }}
-            >
-              {copy.common.retry}
-            </button>
-          </div>
+              },
+            }}
+          >
+            {copy.booking.paymentNotPayable}
+          </Notice>
         ) : null)}
       <div className="pn-meta flex flex-wrap justify-between gap-x-6 gap-y-2">
         <div className="min-w-48 flex-1">
-          <p role="status">
-            {booking.status === "HOLDING"
-              ? copy.booking.waiting
-              : booking.status === "CONFIRMED" || booking.status === "COMPLETED"
-                ? copy.booking.confirmed
-                : booking.status === "CANCELLED"
-                  ? copy.booking.cancelled
-                  : copy.booking.expired}
-          </p>
           {(holding || booking.status === "CONFIRMED") && (
-            <p className="mt-1">{copy.booking.followContact}</p>
+            <p>{copy.booking.followContact}</p>
           )}
         </div>
         <div className="ml-auto flex flex-col items-end gap-1 text-right">
@@ -298,9 +346,7 @@ function PaymentBox({
         </strong>
       </div>
       {qrFailed ? (
-        <p className="pn-error" role="alert">
-          {copy.booking.qrError}
-        </p>
+        <Notice tone="warning">{copy.booking.qrError}</Notice>
       ) : (
         <img
           src={payment.qrImageUrl}
@@ -310,7 +356,9 @@ function PaymentBox({
           onError={() => setQrFailed(true)}
         />
       )}
-      <p className="pn-meta mb-4 text-center">{copy.booking.payHint}</p>
+      {!qrFailed && (
+        <p className="pn-meta mb-4 text-center">{copy.booking.payHint}</p>
+      )}
       <dl>
         {rows.map(([label, value, copyable]) => (
           <div className="pn-bank-row" key={label}>

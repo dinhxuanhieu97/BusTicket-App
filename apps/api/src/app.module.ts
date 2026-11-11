@@ -23,6 +23,7 @@ import { PublicController } from './public.controller';
 import { SeatLayoutsService } from './seat-layouts/seat-layouts.service';
 import { TripsService } from './trips/trips.service';
 import { TripSchedulesService } from './trips/trip-schedules.service';
+import { TripAssistantsService } from './trips/trip-assistants.service';
 import { ScheduleRunner, ScheduleRunnerConfig } from './trips/schedule-runner';
 import { VehiclesService } from './vehicles/vehicles.service';
 
@@ -41,6 +42,8 @@ export interface AppOptions {
   holdSweepIntervalMs?: number;
   /** Hạn access token quản trị (giây). Bỏ trống = 12 giờ (test); production đặt qua env `AUTH_ACCESS_TTL_SECONDS`. */
   authAccessTtlSeconds?: number;
+  /** Bắt buộc 2FA cho OWNER/ACCOUNTANT/PLATFORM_ADMIN. Bỏ trống = tùy chọn; production đặt qua env `AUTH_REQUIRE_MFA`. */
+  authRequireMfa?: boolean;
   scheduleIntervalMs?: number;
 }
 
@@ -54,7 +57,7 @@ export class AppModule {
         { provide: DbConfig, useValue: new DbConfig(opts.databaseUrl) },
         { provide: Clock, useValue: opts.clock ?? new SystemClock() },
         { provide: TokenSecret, useValue: new TokenSecret(opts.bookingTokenSecret) },
-        { provide: AuthConfig, useValue: new AuthConfig(opts.authTokenSecret, { accessTtlSeconds: opts.authAccessTtlSeconds }) },
+        { provide: AuthConfig, useValue: new AuthConfig(opts.authTokenSecret, { accessTtlSeconds: opts.authAccessTtlSeconds, requireMfa: opts.authRequireMfa }) },
         { provide: SecretBox, useValue: new SecretBox(opts.authTokenSecret) },
         { provide: AbuseConfig, useValue: new AbuseConfig(opts.abuse) },
         { provide: SmsSender, useValue: opts.smsSender ?? new NotConfiguredSmsSender() },
@@ -73,6 +76,7 @@ export class AppModule {
         VehiclesService,
         TripsService,
         TripSchedulesService,
+        TripAssistantsService,
         ScheduleRunner,
         { provide: ScheduleRunnerConfig, useValue: new ScheduleRunnerConfig(opts.scheduleIntervalMs ?? 0) },
         BookingsService,

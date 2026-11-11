@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useProfile } from "./profile.store";
 
-beforeEach(() => useProfile.setState({ name: "", phone: "" }));
+beforeEach(() =>
+  useProfile.setState({ name: "", phone: "", zaloShared: false }),
+);
 describe("local profile", () => {
   it("saves trimmed valid contact information", () => {
     expect(useProfile.getState().save("  Nguyễn An  ", " 0912345678 ")).toBe(
@@ -20,5 +22,10 @@ describe("local profile", () => {
       name: "An",
       phone: "0912345678",
     });
+  });
+  it("remembers that the customer already shared their Zalo phone", () => {
+    expect(useProfile.getState().zaloShared).toBe(false);
+    useProfile.getState().markZaloShared();
+    expect(useProfile.getState().zaloShared).toBe(true);
   });
 });

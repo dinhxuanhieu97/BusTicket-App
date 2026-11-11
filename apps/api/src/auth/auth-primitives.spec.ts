@@ -128,15 +128,15 @@ describe('role permissions', () => {
 
   it('the owner has every operator permission (only platform-only ones are excluded)', () => {
     expect(permissionsOf('OWNER')).toEqual([...ALL_OPERATOR_PERMISSIONS]);
-    expect(PERMISSIONS.filter((p) => !can('OWNER', p))).toEqual(['operator.create', 'operator.list', 'layout.library.write']);
+    expect(PERMISSIONS.filter((p) => !can('OWNER', p))).toEqual(['operator.create', 'operator.list', 'layout.library.write', 'owner.password.reset']);
     for (const role of ROLES) {
       if (role === 'PLATFORM_ADMIN') continue;
       for (const p of permissionsOf(role)) expect(can('OWNER', p)).toBe(true);
     }
   });
 
-  it('assistants have no admin permissions yet', () => {
-    expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual([]);
+  it('assistants only read the trips they are assigned to', () => {
+    expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read']);
   });
 
   it('requires 2FA for owners, accountants and platform admins', () => {

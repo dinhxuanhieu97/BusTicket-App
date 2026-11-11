@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { AbuseConfig } from '../abuse/abuse-config';
 import { clientKey } from '../abuse/client-ip';
 import { RateLimiter } from '../abuse/rate-limiter';
@@ -27,6 +27,7 @@ export interface AuthConfigOptions {
   issuer: string;
   maxFailedLogins: number;
   lockMinutes: number;
+  requireMfa: boolean;
 }
 
 export class AuthConfig implements AuthConfigOptions {
@@ -38,6 +39,7 @@ export class AuthConfig implements AuthConfigOptions {
   readonly issuer: string;
   readonly maxFailedLogins: number;
   readonly lockMinutes: number;
+  readonly requireMfa: boolean;
 
   constructor(
     readonly tokenSecret: string,
@@ -52,6 +54,7 @@ export class AuthConfig implements AuthConfigOptions {
     this.issuer = opts.issuer ?? 'PNTicket';
     this.maxFailedLogins = opts.maxFailedLogins ?? 5;
     this.lockMinutes = opts.lockMinutes ?? 15;
+    this.requireMfa = opts.requireMfa ?? false;
     for (const [k, v] of Object.entries({
       accessTtlSeconds: this.accessTtlSeconds, sessionTtlSeconds: this.sessionTtlSeconds, rememberTtlSeconds: this.rememberTtlSeconds,
     })) {
@@ -69,6 +72,8 @@ export interface AuthUser {
   phone: string;
   mfaEnabled: boolean;
   scope: TokenScope;
+  /** OWNER vừa đặt mật khẩu tạm: chỉ được dùng các route @AuthOnly (đổi mật khẩu, /me) cho tới khi đổi. */
+  mustChangePassword?: boolean;
   /** Phiên đăng nhập của token (null với token thiết lập 2FA). */
   sessionId?: string | null;
   /** Người dùng chọn "Ghi nhớ đăng nhập" lúc đăng nhập. */
@@ -102,6 +107,7 @@ export interface UserRow {
   mfa_pending_enc: string | null;
   mfa_enabled: boolean;
   mfa_last_step: string | null; // bigint → chuỗi
+  must_change_password: boolean;
 }
 
 export interface IssuedToken {
@@ -116,6 +122,8 @@ export interface IssuedToken {
   /** Hạn tuyệt đối của phiên. */
   sessionExpiresAt: string | null;
   remember: boolean;
+  /** Phải đổi mật khẩu tạm trước khi dùng dashboard. */
+  mustChangePassword: boolean;
   user: PublicUser;
 }
 
@@ -158,6 +166,14 @@ function parseRefreshToken(token: string): { sid: string; secret: string } | nul
 }
 
 export const passwordSchema = z.string().min(PASSWORD_RULE.min, `Mật khẩu tối thiểu ${PASSWORD_RULE.min} ký tự`).max(PASSWORD_RULE.max);
+
+export const resetPasswordSchema = z
+  .object({
+    phone: z.string().min(1).max(32),
+    otp: z.string().regex(/^\d{6}$/, 'Mã xác thực gồm 6 chữ số.'),
+    newPassword: passwordSchema,
+  })
+  .strict();
 
 const invalidCredentials = () =>
   new DomainError(
@@ -229,7 +245,7 @@ export class AuthService {
     }
     await this.db.query('UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = $1', [user.id]);
     const remember = data.rememberMe ?? false;
-    if (scopeOf(user) === 'mfa_setup') return this.issue(user, 'mfa_setup', null, remember);
+    if (this.scopeOf(user) === 'mfa_setup') return this.issue(user, 'mfa_setup', null, remember);
     return this.db.tx(async (c) => this.startSession(c, user, remember));
   }
 
@@ -249,10 +265,12 @@ export class AuthService {
       const now = this.clock.now();
       if (!sess || sess.revoked_at || sess.expires_at <= now) return null;
       const user = await this.load(sess.user_id, c);
-      if (user.status !== 'ACTIVE' || user.token_version !== sess.token_version || scopeOf(user) !== 'full') return null;
+      if (user.status !== 'ACTIVE' || user.token_version !== sess.token_version || this.scopeOf(user) !== 'full') return null;
 
+      // Derive the same successor for retries without storing a plaintext token.
+      const secret = createHmac('sha256', this.config.tokenSecret)
+        .update(`refresh-successor:v1:${sess.id}:${parsed.secret}`).digest('base64url');
       if (sameHash(sess.refresh_hash, hash)) {
-        const secret = randomBytes(32).toString('base64url');
         if (sess.prev_refresh_hash) {
           await c.query(
             `INSERT INTO auth_session_retired_tokens (session_id, refresh_hash, retired_at) VALUES ($1, $2, $3)
@@ -270,22 +288,11 @@ export class AuthService {
         const graceEnd = (sess.rotated_at?.getTime() ?? 0) + this.config.refreshGraceSeconds * 1000;
         if (now.getTime() <= graceEnd) {
           await c.query('UPDATE auth_sessions SET last_used_at = $2 WHERE id = $1', [sess.id, now]);
-          return this.issue(user, 'full', { ...sess, secret: null });
+          // Sessions rotated by the previous implementation may have a random successor.
+          return this.issue(user, 'full', { ...sess, secret: sameHash(sess.refresh_hash, sha256(secret)) ? secret : null });
         }
-        // Quá ân hạn: coi như phản hồi lần refresh trước bị mất (request bị hủy giữa chừng) — cấp nhánh mới và
-        // loại token kế tiếp chưa ai dùng. Nếu thực ra có kẻ gian giữ token kế tiếp, lần hắn dùng nó sẽ khớp bảng
-        // token đã loại → thu hồi cả phiên. Phát hiện đánh cắp vẫn còn mà người dùng thật không bị đá ra oan.
-        const secret = randomBytes(32).toString('base64url');
-        await c.query(
-          `INSERT INTO auth_session_retired_tokens (session_id, refresh_hash, retired_at) VALUES ($1, $2, $3)
-           ON CONFLICT DO NOTHING`,
-          [sess.id, sess.refresh_hash, now],
-        );
-        await c.query(
-          'UPDATE auth_sessions SET refresh_hash = $2, rotated_at = $3, last_used_at = $3 WHERE id = $1',
-          [sess.id, sha256(secret), now],
-        );
-        return this.issue(user, 'full', { ...sess, secret });
+        await this.revokeWhere(c, 'id = $1', [sess.id], 'REUSE');
+        return null;
       }
       // Token cũ hơn nữa của chính phiên này (đã bị thay ít nhất hai lần) cũng là dùng lại.
       const { rowCount } = await c.query(
@@ -337,7 +344,8 @@ export class AuthService {
       fullName: u.full_name,
       phone: u.phone,
       mfaEnabled: u.mfa_enabled,
-      scope: claims.scope,
+      scope: this.scopeOf(u) === 'mfa_setup' ? 'mfa_setup' : claims.scope,
+      mustChangePassword: u.must_change_password,
       sessionId: claims.sid ?? null,
       remember: claims.rem ?? false,
     };
@@ -374,15 +382,52 @@ export class AuthService {
     });
   }
 
+  /** Disable 2FA after verifying the password and a fresh authenticator code. */
+  async disableMfa(user: AuthUser, password: string, otp: string): Promise<IssuedToken> {
+    const row = await this.load(user.id);
+    if (row.status !== 'ACTIVE') throw unauthenticated();
+    if (!row.mfa_enabled) throw new DomainError('CONFLICT', 'Tài khoản chưa bật xác thực 2 lớp.');
+    if (this.config.requireMfa && MFA_REQUIRED_ROLES.has(row.role)) {
+      throw new DomainError('FORBIDDEN', 'Vai trò này bắt buộc xác thực 2 lớp.');
+    }
+    if (!(await this.reserveAttempt(row.id))) {
+      await verifyPassword(password, await dummyHash());
+      throw invalidCredentials();
+    }
+    if (!(await verifyPassword(password, row.password_hash))) throw invalidCredentials();
+    const lastStep = row.mfa_last_step === null ? null : Number(row.mfa_last_step);
+    const step = verifyTotp(this.box.open(row.mfa_secret_enc!), otp, this.nowSeconds(), lastStep);
+    if (step === null) throw invalidCredentials();
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<UserRow>(
+        `UPDATE users SET mfa_enabled = false, mfa_secret_enc = NULL, mfa_pending_enc = NULL, mfa_last_step = NULL,
+                failed_login_count = 0, locked_until = NULL, token_version = token_version + 1, updated_at = $2
+         WHERE id = $1 AND status = 'ACTIVE' AND mfa_enabled AND token_version = $3
+           AND (mfa_last_step IS NULL OR mfa_last_step < $4) RETURNING *`,
+        [user.id, this.clock.now(), row.token_version, step],
+      );
+      if (!rows[0]) throw new DomainError('CONFLICT', 'Trạng thái xác thực 2 lớp vừa thay đổi, vui lòng thử lại.');
+      const cap = await this.sessionCap(c, user);
+      await this.revokeWhere(c, 'user_id = $1', [user.id], 'CREDENTIALS_CHANGED');
+      return this.startSession(c, rows[0], user.remember ?? false, cap);
+    });
+  }
+
+  private scopeOf(user: UserRow): TokenScope {
+    return this.config.requireMfa && MFA_REQUIRED_ROLES.has(user.role) && !user.mfa_enabled ? 'mfa_setup' : 'full';
+  }
+
   /** Đổi mật khẩu: thu hồi mọi phiên cũ, cấp token mới cho phiên hiện tại. */
   async changePassword(user: AuthUser, current: string, next: string): Promise<IssuedToken> {
     const nextPw = passwordSchema.parse(next);
+    if (nextPw === current) throw new DomainError('VALIDATION_FAILED', 'Mật khẩu mới phải khác mật khẩu hiện tại.');
     const row = await this.load(user.id);
     if (!(await verifyPassword(current, row.password_hash))) throw invalidCredentials();
     const newHash = await hashPassword(nextPw);
     return this.db.tx(async (c) => {
       const { rows } = await c.query<UserRow>(
-        `UPDATE users SET password_hash = $2, token_version = token_version + 1, updated_at = $3 WHERE id = $1 RETURNING *`,
+        `UPDATE users SET password_hash = $2, token_version = token_version + 1, must_change_password = false, updated_at = $3
+         WHERE id = $1 RETURNING *`,
         [user.id, newHash, this.clock.now()],
       );
       const updated = rows[0]!;
@@ -392,6 +437,41 @@ export class AuthService {
       if (user.scope !== 'full') return this.issue(updated, user.scope, null, user.remember ?? false);
       return this.startSession(c, updated, user.remember ?? false, cap);
     });
+  }
+
+  /**
+   * Quên mật khẩu, tự đặt lại bằng mã Authenticator (chỉ tài khoản đã bật 2FA). Không có hệ thống gửi SMS/email nên
+   * đây là cách tự khôi phục duy nhất; tài khoản chưa bật 2FA phải nhờ OWNER (nhân viên) hoặc quản trị nền tảng.
+   * Mọi trường hợp sai (SĐT lạ, chưa bật 2FA, sai mã, đang khóa) trả cùng một lỗi; tính chung bộ đếm khóa với đăng nhập.
+   * Thành công: đổi mật khẩu, thu hồi mọi phiên; người dùng đăng nhập lại bằng mật khẩu mới.
+   */
+  async resetPasswordWithMfa(input: unknown, ip?: string): Promise<{ userId: string; operatorId: string | null }> {
+    const data = resetPasswordSchema.parse(input);
+    const source = clientKey(ip);
+    if (source) {
+      await this.limiter.consume(`pwreset-ip:${source}`, this.abuse.loginsPerIpPer15Min, 900, 'Thử quá nhiều lần. Vui lòng thử lại sau.');
+    }
+    const newHash = await hashPassword(data.newPassword);
+    let phone: string;
+    try {
+      phone = normalizeVnPhone(data.phone);
+    } catch {
+      throw invalidCredentials();
+    }
+    const { rows } = await this.db.query<UserRow>('SELECT * FROM users WHERE phone = $1', [phone]);
+    const user = rows[0];
+    if (!user || !(await this.reserveAttempt(user.id))) throw invalidCredentials();
+    if (user.status !== 'ACTIVE' || !user.mfa_enabled || !user.mfa_secret_enc) throw invalidCredentials();
+    if (!(await this.consumeTotp(user, this.box.open(user.mfa_secret_enc), data.otp))) throw invalidCredentials();
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE users SET password_hash = $2, token_version = token_version + 1, must_change_password = false,
+           failed_login_count = 0, locked_until = NULL, updated_at = $3 WHERE id = $1`,
+        [user.id, newHash, this.clock.now()],
+      );
+      await this.revokeWhere(c, 'user_id = $1', [user.id], 'CREDENTIALS_CHANGED');
+    });
+    return { userId: user.id, operatorId: user.operator_id };
   }
 
   private async load(userId: string, q: Queryable = this.db): Promise<UserRow> {
@@ -444,6 +524,31 @@ export class AuthService {
       [user.id, step],
     );
     return res.rowCount === 1;
+  }
+
+  async verifyPaymentCredentials(actor: AuthUser, password: string, otp?: string): Promise<void> {
+    if (!['OWNER', 'PLATFORM_ADMIN'].includes(actor.role)) {
+      throw new DomainError('FORBIDDEN', 'Mật khẩu hoặc mã xác thực không đúng, hoặc tài khoản đang tạm khóa.');
+    }
+    await this.verifyStepUp(actor, password, otp, 'Nhập mã Authenticator mới để lưu tài khoản nhận tiền.');
+  }
+
+  /**
+   * Xác nhận lại danh tính trước thao tác nhạy cảm: mật khẩu của chính người thao tác, cộng mã
+   * Authenticator nếu đã bật 2FA. Dùng chung bộ đếm khóa với đăng nhập.
+   */
+  async verifyStepUp(actor: AuthUser, password: string, otp: string | undefined, otpPrompt: string): Promise<void> {
+    const denied = () => new DomainError('FORBIDDEN', 'Mật khẩu hoặc mã xác thực không đúng, hoặc tài khoản đang tạm khóa.');
+    if (actor.scope !== 'full') throw denied();
+    const user = await this.load(actor.id);
+    if (user.status !== 'ACTIVE' || !(await this.reserveAttempt(user.id))) throw denied();
+    if (!(await verifyPassword(password, user.password_hash))) throw denied();
+    if (user.mfa_enabled && !otp) {
+      await this.refundAttempt(user.id);
+      throw new DomainError('FORBIDDEN', otpPrompt);
+    }
+    if (user.mfa_enabled && !(await this.consumeTotp(user, this.box.open(user.mfa_secret_enc!), otp!))) throw denied();
+    await this.refundAttempt(user.id);
   }
 
   /**
@@ -509,13 +614,10 @@ export class AuthService {
       refreshToken: session?.secret ? `${session.id}.${session.secret}` : null,
       sessionExpiresAt: session ? session.expires_at.toISOString() : null,
       remember: session ? session.remember : remember,
+      mustChangePassword: user.must_change_password,
       user: toPublicUser(user),
     };
   }
-}
-
-function scopeOf(user: UserRow): TokenScope {
-  return MFA_REQUIRED_ROLES.has(user.role) && !user.mfa_enabled ? 'mfa_setup' : 'full';
 }
 
 function unauthenticated(): DomainError {

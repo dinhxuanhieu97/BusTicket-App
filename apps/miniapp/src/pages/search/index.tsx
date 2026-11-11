@@ -10,6 +10,7 @@ import { RouteSelect } from "@/components/booking/route-select";
 import { useTripSearch } from "@/stores/trip-search.store";
 import { tripResultsUrl, validRoundTrip } from "@/utils/trip-search";
 import { SearchIcon } from "@/components/common/vectors";
+import { Notice } from "@/components/common/notice";
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -206,9 +207,9 @@ export default function SearchPage() {
             <p className="pn-meta mb-4">{copy.search.roundTripHint}</p>
           )}
           {formError && (
-            <p className="pn-error" role="alert">
-              {copy.search.roundTripRequired}
-            </p>
+            <div className="mb-4">
+              <Notice tone="error">{copy.search.roundTripRequired}</Notice>
+            </div>
           )}
           <button
             className="pn-button pn-button-primary"

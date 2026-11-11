@@ -1,4 +1,5 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
+import { APIError } from "@/lib/api-error";
 import type { BookingView } from "@/types/api.types";
 import { bookingService } from "./booking.api";
 
@@ -9,6 +10,10 @@ export const bookingKeys = {
 
 /** Đang chờ tiền về: hỏi lại trạng thái đơn mỗi 5 giây cho đến khi đơn không còn ở trạng thái giữ chỗ. */
 export const BOOKING_POLL_MS = 5_000;
+
+export function isBookingUnavailable(error: unknown): boolean {
+  return error instanceof APIError && error.status === 404;
+}
 
 export function bookingPollInterval(
   booking: BookingView | undefined,
@@ -24,8 +29,10 @@ export function bookingQueryOptions(
     queryKey: bookingKeys.detail(code),
     queryFn: () => bookingService.get(code, accessToken!),
     enabled: !!code && !!accessToken,
-    refetchInterval: (q) => bookingPollInterval(q.state.data),
-    meta: { silent: true },
+    refetchInterval: (q) =>
+      isBookingUnavailable(q.state.error)
+        ? false
+        : bookingPollInterval(q.state.data),
   });
 }
 

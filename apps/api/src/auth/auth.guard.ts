@@ -49,6 +49,9 @@ export class AuthGuard implements CanActivate {
     if (!scopes.includes(user.scope)) {
       throw new DomainError('MFA_SETUP_REQUIRED', 'Vui lòng bật xác thực 2 lớp trước khi sử dụng.');
     }
+    if (user.mustChangePassword && !authOnly) {
+      throw new DomainError('PASSWORD_CHANGE_REQUIRED', 'Vui lòng đổi mật khẩu tạm trước khi tiếp tục.');
+    }
     if (perm) {
       if (!can(user.role, perm)) throw new DomainError('FORBIDDEN', 'Bạn không có quyền thực hiện thao tác này.');
       const operatorId = req.params?.operatorId;

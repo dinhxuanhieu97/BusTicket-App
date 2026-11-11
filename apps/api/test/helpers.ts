@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
 import { ZodError } from 'zod';
 import { AbuseConfig } from '../src/abuse/abuse-config';
@@ -147,3 +148,4 @@ export async function errorCode(p: Promise<unknown>): Promise<string> {
 
 let keySeq = 0;
 export const newKey = () => `test-key-${Date.now()}-${++keySeq}`;
+export const newRetryToken = () => randomBytes(32).toString('hex');

@@ -1,5 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { Icon, Modal } from "zmp-ui";
+import { Notice } from "@/components/common/notice";
+import { clearSavedInfo, type ClearResult } from "@/stores/clear-saved-info";
 import { copy } from "@/constants/copy";
 import { useProfile } from "@/stores/profile.store";
 import { useMyBookings } from "@/stores/my-bookings.store";
@@ -13,10 +16,23 @@ export default function ProfilePage() {
   const [phone, setPhone] = useState(profile.phone);
   const [touched, setTouched] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [eraseInBookings, setEraseInBookings] = useState(false);
+  const [removeBookings, setRemoveBookings] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [cleared, setCleared] = useState<ClearResult | null>(null);
   const nameError = touched && !name.trim();
   const phoneError = touched && !isValidVnMobile(phone);
   useEffect(() => {
-    if (!latestBooking || name || phone || profile.name || profile.phone) return;
+    if (
+      !latestBooking ||
+      !profile.bookingPrefill ||
+      name ||
+      phone ||
+      profile.name ||
+      profile.phone
+    )
+      return;
     let active = true;
     void bookingService.contact(latestBooking.code, latestBooking.accessToken)
       .then(({ name, phone }) => {
@@ -29,7 +45,24 @@ export default function ProfilePage() {
         // Người dùng vẫn có thể nhập tay khi đơn cũ không còn truy cập được.
       });
     return () => { active = false; };
-  }, [latestBooking, name, phone, profile.name, profile.phone]);
+  }, [latestBooking, name, phone, profile.name, profile.phone, profile.bookingPrefill]);
+  const clearText = copy.profile.clear;
+  const clearAll = async () => {
+    if (clearing) return;
+    setClearing(true);
+    try {
+      setCleared(await clearSavedInfo({ eraseInBookings, removeBookings }));
+    } finally {
+      setClearing(false);
+    }
+    setName("");
+    setPhone("");
+    setTouched(false);
+    setSaved(false);
+    setConfirmClear(false);
+    setEraseInBookings(false);
+    setRemoveBookings(false);
+  };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setTouched(true);
@@ -102,7 +135,7 @@ export default function ProfilePage() {
             </p>
           )}
         </label>
-        <button className="pn-button pn-button-primary" type="submit">
+        <button className="pn-button pn-button-primary pn-button-form" type="submit">
           {copy.profile.save}
         </button>
         {saved && (
@@ -112,6 +145,84 @@ export default function ProfilePage() {
         )}
       </form>
       <p className="pn-meta">{copy.profile.localNotice}</p>
+      <section className="pn-card pn-profile-clear" aria-labelledby="profile-clear-heading">
+        <h3 id="profile-clear-heading">{clearText.heading}</h3>
+        <p className="pn-meta">{clearText.intro}</p>
+        <button
+          type="button"
+          className="pn-button pn-button-danger"
+          onClick={() => {
+            setCleared(null);
+            setConfirmClear(true);
+          }}
+        >
+          <Icon icon="zi-delete" aria-hidden="true" />
+          {clearText.open}
+        </button>
+        {cleared && <ClearOutcome result={cleared} />}
+      </section>
+      <Modal
+        visible={confirmClear}
+        title={clearText.title}
+        onClose={() => !clearing && setConfirmClear(false)}
+        actions={[
+          { text: clearText.cancel, close: true, disabled: clearing },
+          {
+            // Nút trong modal chia đôi bề ngang nên đổi chữ lúc đang xóa không làm xô hàng nút.
+            text: clearing ? clearText.clearing : clearText.confirm,
+            danger: true,
+            disabled: clearing,
+            onClick: () => void clearAll(),
+          },
+        ]}
+      >
+        <p className="pn-meta">{clearText.body}</p>
+        <label className="pn-check">
+          <input
+            type="checkbox"
+            checked={eraseInBookings}
+            disabled={clearing}
+            onChange={(e) => setEraseInBookings(e.target.checked)}
+          />
+          <span>
+            {clearText.eraseInBookings}
+            <small className="pn-meta">{clearText.eraseInBookingsHint}</small>
+          </span>
+        </label>
+        <label className="pn-check">
+          <input
+            type="checkbox"
+            checked={removeBookings}
+            disabled={clearing}
+            onChange={(e) => setRemoveBookings(e.target.checked)}
+          />
+          <span>
+            {clearText.removeBookings}
+            <small className="pn-meta">{clearText.removeBookingsHint}</small>
+          </span>
+        </label>
+      </Modal>
     </div>
+  );
+}
+
+function ClearOutcome({ result }: { result: ClearResult }) {
+  const navigate = useNavigate();
+  const text = copy.profile.clear;
+  return (
+    <>
+      <Notice tone="success">
+        {result.erased > 0 ? text.doneWithBookings(result.erased) : text.done}
+      </Notice>
+      {result.kept.length > 0 && (
+        <Notice
+          tone="warning"
+          action={{ label: text.contact, onClick: () => navigate("/support") }}
+        >
+          {text.kept(result.kept.length)}
+        </Notice>
+      )}
+      {result.failed > 0 && <Notice tone="error">{text.failed(result.failed)}</Notice>}
+    </>
   );
 }

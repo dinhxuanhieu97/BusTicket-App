@@ -38,6 +38,7 @@ async function bootstrap(): Promise<void> {
       holdSweepIntervalMs: Number(process.env.HOLD_SWEEP_INTERVAL_MS ?? 60_000),
       // Access token quản trị ngắn hạn (mặc định 15 phút); dashboard tự đổi refresh token lấy token mới.
       authAccessTtlSeconds: Number(process.env.AUTH_ACCESS_TTL_SECONDS ?? 900),
+      authRequireMfa: process.env.AUTH_REQUIRE_MFA === 'true',
     }),
   );
   app.useGlobalFilters(new HttpErrorFilter());
@@ -49,7 +50,7 @@ async function bootstrap(): Promise<void> {
     app.enableCors({
       origin: corsOrigins,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Booking-Token', 'X-Phone-Token', 'Idempotency-Key'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Booking-Token', 'X-Phone-Token', 'Idempotency-Key', 'X-Booking-Retry-Token'],
       credentials: true,
     });
   }

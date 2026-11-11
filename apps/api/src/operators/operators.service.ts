@@ -28,6 +28,16 @@ const DEFAULT_VEHICLES = [
   { suffix: '02', name: 'Xe 02', type: 'SLEEPER', layout: 'BED40' },
 ] as const;
 
+export const LOGO_MAX_BYTES = 200 * 1024;
+
+/** Nhận diện ảnh theo chữ ký đầu tệp. */
+export function sniffImage(b: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | null {
+  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
 @Injectable()
 export class OperatorsService {
   constructor(
@@ -86,11 +96,59 @@ export class OperatorsService {
 
   async profile(operatorId: string) {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
-    const row = (await this.db.query<{id:string;code:string;name:string;defaultDepartureTime:string}>(
-      'SELECT id,code,name,default_departure_time AS "defaultDepartureTime" FROM operators WHERE id=$1', [operatorId],
+    const row = (await this.db.query<{id:string;code:string;name:string;defaultDepartureTime:string;logo_updated_at:Date|null}>(
+      'SELECT id,code,name,default_departure_time AS "defaultDepartureTime",logo_updated_at FROM operators WHERE id=$1', [operatorId],
     )).rows[0];
     if (!row) throw notFound('nhà xe');
-    return row;
+    const { logo_updated_at, ...rest } = row;
+    return { ...rest, logoVersion: logo_updated_at ? String(logo_updated_at.getTime()) : null };
+  }
+
+  /** Đặt logo (PNG/JPEG/WebP ≤ 200 KB). Kiểm tra chữ ký tệp thật, không tin Content-Type; không nhận SVG. */
+  async setLogo(operatorId: string, data: Buffer, declaredMime: string, now: Date): Promise<string> {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    if (data.length === 0 || data.length > LOGO_MAX_BYTES) {
+      throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
+    }
+    const mime = sniffImage(data);
+    if (!mime || mime !== declaredMime.split(';')[0]!.trim().toLowerCase()) {
+      throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
+    }
+    const { rowCount } = await this.db.query(
+      'UPDATE operators SET logo_data = $2, logo_mime = $3, logo_updated_at = $4 WHERE id = $1',
+      [operatorId, data, mime, now],
+    );
+    if (!rowCount) throw notFound('nhà xe');
+    return mime;
+  }
+
+  async removeLogo(operatorId: string): Promise<void> {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    const { rowCount } = await this.db.query(
+      'UPDATE operators SET logo_data = NULL, logo_mime = NULL, logo_updated_at = NULL WHERE id = $1',
+      [operatorId],
+    );
+    if (!rowCount) throw notFound('nhà xe');
+  }
+
+  /** Thông tin thương hiệu công khai (tên, phiên bản logo) theo mã nhà xe. */
+  async brand(code: string): Promise<{ code: string; name: string; logoVersion: string | null }> {
+    const { rows } = await this.db.query<{ code: string; name: string; logo_updated_at: Date | null }>(
+      'SELECT code, name, logo_updated_at FROM operators WHERE code = $1',
+      [code],
+    );
+    if (!rows[0]) throw notFound('nhà xe');
+    const r = rows[0];
+    return { code: r.code, name: r.name, logoVersion: r.logo_updated_at ? String(r.logo_updated_at.getTime()) : null };
+  }
+
+  async logo(code: string): Promise<{ data: Buffer; mime: string }> {
+    const { rows } = await this.db.query<{ logo_data: Buffer | null; logo_mime: string | null }>(
+      'SELECT logo_data, logo_mime FROM operators WHERE code = $1',
+      [code],
+    );
+    if (!rows[0]?.logo_data || !rows[0].logo_mime) throw notFound('logo');
+    return { data: rows[0].logo_data, mime: rows[0].logo_mime };
   }
 
   async updateProfile(operatorId: string, input: unknown) {
@@ -104,7 +162,7 @@ export class OperatorsService {
       [operatorId, data.name, data.defaultDepartureTime],
     );
     if (!result.rows[0]) throw notFound('nhà xe');
-    return result.rows[0];
+    return this.profile(operatorId);
   }
 
   /** Chính sách đang áp dụng = phiên bản mới nhất. */

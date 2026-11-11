@@ -26,8 +26,15 @@ export class HttpErrorFilter implements ExceptionFilter {
       return [e.httpStatus, { error: { code: e.code, message: e.message, details: e.details } }];
     }
     if (e instanceof ZodError) {
-      const details = e.issues.map((i) => ({ path: i.path.join('.'), message: i.message }));
+      const details = e.issues.slice(0, 20).map((i) => ({
+        path: i.path.join('.').slice(0, 200),
+        message: i.code === 'unrecognized_keys' ? 'Dữ liệu chứa trường không được hỗ trợ.' : i.message.slice(0, 300),
+      }));
       return [400, { error: { code: 'VALIDATION_FAILED', message: 'Dữ liệu gửi lên không hợp lệ.', details } }];
+    }
+    if (typeof e === 'object' && e !== null && 'type' in e && e.type === 'entity.too.large'
+      && 'status' in e && e.status === 413) {
+      return [413, { error: { code: 'HTTP_413', message: 'Dữ liệu gửi lên vượt quá dung lượng cho phép.' } }];
     }
     if (e instanceof HttpException) {
       const status = e.getStatus();

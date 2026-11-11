@@ -29,6 +29,19 @@
   --pn-radius: 16px;
   --pn-control-radius: 12px;
   --pn-content-width: 680px;
+  --pn-page-inset: 16px;
+  --pn-card-inset: 16px;
+  --pn-section-gap: 16px;
+  --pn-grid-gap: 12px;
+  --pn-field-gap: 8px;
   --pn-font: "Roboto", sans-serif;
   --zaui-light-color-primary: var(--pn-primary);
+}
+
+@media (min-width: 768px) {
+  :root {
+    --pn-page-inset: 24px;
+    --pn-card-inset: 20px;
+    --pn-section-gap: 24px;
+  }
 }

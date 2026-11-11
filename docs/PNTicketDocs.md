@@ -326,7 +326,7 @@ Các endpoint là bản phác thảo để thiết kế chi tiết; chưa phải
 | --- | --- |
 | GET /api/v1/trips | Tìm chuyến đang bán |
 | GET /api/v1/trips/:id/seats | Xem trạng thái chỗ, không trả dữ liệu hành khách |
-| POST /api/v1/bookings | Tạo đơn và giữ chỗ nguyên tử, nhận Idempotency-Key |
+| POST /api/v1/bookings | Tạo đơn và giữ chỗ nguyên tử. Gửi `Idempotency-Key` và `X-Booking-Retry-Token` để có thể khôi phục phản hồi khi mất mạng. |
 | GET /api/v1/bookings/:id | Xem đơn sau xác minh quyền/token |
 | POST /api/v1/bookings/:id/payment-requests | Tạo/lấy yêu cầu thanh toán, chống tạo lặp |
 | POST /api/v1/ticket-lookups/challenges | Bắt đầu xác minh tra cứu, giới hạn tần suất |

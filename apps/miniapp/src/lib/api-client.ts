@@ -22,6 +22,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
 
   let res: Response;
+  let text: string;
   try {
     res = await fetch(`${config.apiBaseUrl}/api/v1${path}`, {
       method: options.method ?? "GET",
@@ -29,12 +30,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: options.signal,
     });
+    text = await res.text();
   } catch (e) {
     if ((e as Error)?.name === "AbortError") throw e;
     throw new APIError(0, "Không kết nối được máy chủ, vui lòng kiểm tra mạng.", "NETWORK_ERROR");
   }
 
-  const text = await res.text();
   let body: unknown = null;
   if (text) {
     try {

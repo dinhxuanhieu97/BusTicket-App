@@ -6,14 +6,15 @@ import {
   useSearchParams,
   Link,
 } from "react-router-dom";
-import { Spinner } from "zmp-ui";
-import { copy } from "@/constants/copy";
+import { copy, errorMessage } from "@/constants/copy";
 import { useTrips } from "@/services/trip/trip.queries";
 import { useBookingDraft } from "@/stores/booking-draft.store";
 import { useTripSearch, type TripSearch } from "@/stores/trip-search.store";
 import type { TripSummary } from "@/types/api.types";
 import { formatVnDate, formatVnTime } from "@/utils/time";
 import { EmptyState } from "@/components/booking/empty-state";
+import { LoadingState } from "@/components/common/loading-state";
+import { Notice } from "@/components/common/notice";
 import { matchingTrips, readTripSearch } from "@/utils/trip-search";
 
 export default function TripResultsPage() {
@@ -74,17 +75,19 @@ function Leg({
         {formatVnDate(date + "T00:00:00+07:00")}
       </p>
       {results.isLoading || results.isPlaceholderData ? (
-        <div className="pn-loading" role="status">
-          <Spinner />
-          {copy.common.loading}
-        </div>
+        <LoadingState label="Đang tải chuyến xe…" />
       ) : results.isError ? (
-        <EmptyState
-          title={copy.common.error}
-          hint={copy.common.networkError}
-          actionLabel={copy.common.retry}
-          onAction={() => void results.refetch()}
-        />
+        <Notice
+          tone="error"
+          action={{
+            label: copy.common.retry,
+            onClick: () => void results.refetch(),
+            disabled: results.isFetching,
+          }}
+        >
+          <p className="font-semibold">Chưa tải được chuyến xe.</p>
+          <p>{errorMessage(results.error)}</p>
+        </Notice>
       ) : !trips.length ? (
         <EmptyState title={copy.search.empty} hint={copy.search.emptyHint} />
       ) : (

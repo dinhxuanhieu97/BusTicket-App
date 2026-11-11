@@ -3,7 +3,7 @@ import { AbuseConfig } from '../abuse/abuse-config';
 import { PhoneVerificationService } from '../abuse/phone-verification.service';
 import { clientKey } from '../abuse/client-ip';
 import { RateLimiter } from '../abuse/rate-limiter';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { Clock } from '../common/clock';
@@ -18,6 +18,7 @@ import { TokenSecret } from './token-secret';
 
 export { TokenSecret };
 
+const MAX_HOLD_ITEMS = 20;
 const holdItems = z
       .array(
         z
@@ -29,7 +30,7 @@ const holdItems = z
           .strict(),
       )
       .min(1)
-      .max(20);
+      .max(MAX_HOLD_ITEMS);
 type Leg = { tripId: string; items: z.output<typeof holdItems> };
 
 export const createHoldSchema = z
@@ -81,7 +82,7 @@ export interface TicketVerification {
 export interface HoldResult {
   booking: BookingView;
   accessToken: string;
-  /** true khi trả lại đơn đã tạo trước đó với cùng Idempotency-Key. */
+  /** True when an authorized retry returns the original hold. */
   replayed: boolean;
 }
 
@@ -101,6 +102,12 @@ interface BookingRow {
   access_token_version: number;
 }
 
+interface BookingReplayRow extends BookingRow {
+  operator_id: string;
+  contact_phone: string;
+  retry_token_hash: Buffer | null;
+}
+
 const BOOKING_COLUMNS =
   'id, code, status, trip_id, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note';
 
@@ -112,6 +119,8 @@ export interface HoldContext {
   ip?: string;
   /** Token "đã xác thực SĐT" (header `X-Phone-Token`), bắt buộc khi nhà xe bật `requirePhoneOtp`. */
   phoneToken?: string;
+  /** Separate secret for recovering a hold if its first response is lost. */
+  retryToken?: string;
 }
 
 @Injectable()
@@ -131,10 +140,22 @@ export class BookingsService {
    * (AC-01, AC-02). Khóa các chuyến theo thứ tự ID trước khi kiểm tra tồn chỗ.
    */
   async createHold(input: CreateHoldInput, idempotencyKey: string, ctx: HoldContext = {}): Promise<HoldResult> {
+    for (const [field, items] of [['items', input?.items], ['returnLeg.items', input?.returnLeg?.items]] as const) {
+      if (Array.isArray(items) && items.length > MAX_HOLD_ITEMS) {
+        throw new DomainError('VALIDATION_FAILED', `Mỗi lượt chỉ được gửi tối đa ${MAX_HOLD_ITEMS} chỗ.`, { field });
+      }
+    }
     const data = createHoldSchema.parse(input);
     const key = idempotencyKey.trim();
     if (!/^[\w-]{8,100}$/.test(key)) {
       throw new DomainError('VALIDATION_FAILED', 'Idempotency-Key phải dài 8–100 ký tự (chữ, số, "-", "_").');
+    }
+    let retryTokenHash: Buffer | null = null;
+    if (ctx.retryToken !== undefined) {
+      if (!/^[0-9a-f]{64}$/.test(ctx.retryToken)) {
+        throw new DomainError('VALIDATION_FAILED', 'Mã thử lại không hợp lệ.', { field: 'X-Booking-Retry-Token' });
+      }
+      retryTokenHash = createHash('sha256').update(ctx.retryToken).digest();
     }
     const phone = normalizeVnPhone(data.contactPhone);
     const legs = [{ tripId: data.tripId, items: data.items }, ...(data.returnLeg ? [data.returnLeg] : [])];
@@ -150,26 +171,37 @@ export class BookingsService {
 
     const { rows: tripOps } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [data.tripId]);
     const operatorId = tripOps[0]?.operator_id;
-    // Gửi lại đúng yêu cầu cũ (mạng chập chờn) → trả đơn đã giữ, không tính vào giới hạn tần suất.
-    if (operatorId) {
-      const existing = await this.findByKey(this.db, operatorId, key);
-      if (existing) return this.replay(existing, requestHash);
-    }
-    // Giới hạn tần suất (ngoài transaction, để bộ đếm không bị ROLLBACK khi yêu cầu thất bại).
     const busy = 'Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.';
     const source = clientKey(ctx.ip);
+    // Authorized retries recover the original hold even if the normal creation quota is exhausted.
+    if (operatorId) {
+      const existing = await this.findByKey(this.db, operatorId, key);
+      if (existing) {
+        try {
+          return await this.replay(this.db, existing, requestHash, retryTokenHash, ctx.phoneToken);
+        } catch (e) {
+          if (source && e instanceof DomainError && e.code === 'IDEMPOTENCY_CONFLICT') {
+            await this.limiter.consume(`booking-ip:${source}`, this.abuse.bookingsPerIpPerMinute, 60, busy);
+          }
+          throw e;
+        }
+      }
+    }
+    // Giới hạn tần suất (ngoài transaction, để bộ đếm không bị ROLLBACK khi yêu cầu thất bại).
     if (source) await this.limiter.consume(`booking-ip:${source}`, this.abuse.bookingsPerIpPerMinute, 60, busy);
     if (operatorId) {
       await this.limiter.consume(`booking-phone:${operatorId}:${phone}`, this.abuse.bookingsPerPhonePerHour, 3600, busy);
     }
 
     try {
-      return await this.db.tx((c) => this.holdInTx(c, legs, data.contactName, phone, key, requestHash, ctx, data.note));
+      return await this.db.tx((c) => this.holdInTx(
+        c, legs, data.contactName, phone, key, requestHash, retryTokenHash, ctx.phoneToken, data.note,
+      ));
     } catch (e) {
       // Cùng khóa nhưng gửi cho chuyến khác, chạy song song: ràng buộc duy nhất chặn, trả kết quả nhất quán.
-      if (isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'bookings_operator_id_idempotency_key_key') {
-        const existing = await this.findByIdempotency(data.tripId, key);
-        if (existing) return this.replay(existing, requestHash);
+      if (operatorId && isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'bookings_operator_id_idempotency_key_key') {
+        const existing = await this.findByKey(this.db, operatorId, key);
+        if (existing) return this.replay(this.db, existing, requestHash, retryTokenHash, ctx.phoneToken);
       }
       throw e;
     }
@@ -182,7 +214,8 @@ export class BookingsService {
     phone: string,
     key: string,
     requestHash: string,
-    ctx: HoldContext,
+    retryTokenHash: Buffer | null,
+    phoneToken?: string,
     note?: string,
   ): Promise<HoldResult> {
     const tripId = legs[0]!.tripId;
@@ -201,7 +234,7 @@ export class BookingsService {
       throw new DomainError('VALIDATION_FAILED', 'Chuyến về phải đúng tuyến ngược chiều và khởi hành sau chuyến đi.');
 
     const existing = await this.findByKey(c, trip.operator_id, key);
-    if (existing) return this.replay(existing, requestHash);
+    if (existing) return this.replay(c, existing, requestHash, retryTokenHash, phoneToken);
 
     if (trips.some(t => t.status !== 'OPEN' || now < t.sales_open_at || now >= t.sales_close_at || now >= t.depart_at)) {
       throw new DomainError('TRIP_NOT_ON_SALE', 'Chuyến hiện không mở bán.');
@@ -213,7 +246,7 @@ export class BookingsService {
       });
     }
 
-    if (policy.requirePhoneOtp && !this.phones.verifyToken(ctx.phoneToken, trip.operator_id, phone)) {
+    if (policy.requirePhoneOtp && !this.phones.verifyToken(phoneToken, trip.operator_id, phone)) {
       throw new DomainError('PHONE_VERIFICATION_REQUIRED', 'Vui lòng xác thực số điện thoại bằng mã OTP trước khi giữ chỗ.');
     }
 
@@ -277,12 +310,12 @@ export class BookingsService {
       const { rows } = await c.query<BookingRow>(
         `INSERT INTO bookings (operator_id, trip_id, code, status, hold_expires_at, contact_name, contact_phone,
                                total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at, passenger_note,
-                               release_at)
-         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14)
+                               release_at, retry_token_hash)
+         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15)
          ON CONFLICT (code) DO NOTHING
          RETURNING ${BOOKING_COLUMNS}`,
         [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, total,
-          deposit, JSON.stringify(policy), key, requestHash, now, note || null, releaseAt],
+          deposit, JSON.stringify(policy), key, requestHash, now, note || null, releaseAt, retryTokenHash],
       );
       booking = rows[0];
     }
@@ -405,16 +438,81 @@ export class BookingsService {
   /** Khôi phục liên hệ từ một đơn mà thiết bị đang giữ token. */
   async contactByCode(code: string, accessToken: string): Promise<{ name: string; phone: string }> {
     const { rows } = await this.db.query<{
-      id: string; access_token_version: number; contact_name: string; contact_phone: string;
+      id: string; access_token_version: number; contact_name: string; contact_phone: string; contact_erased_at: Date | null;
     }>(
-      'SELECT id, access_token_version, contact_name, contact_phone FROM bookings WHERE code = $1',
+      'SELECT id, access_token_version, contact_name, contact_phone, contact_erased_at FROM bookings WHERE code = $1',
       [code],
     );
     const booking = rows[0];
     if (!booking || !verifyBookingAccessToken(this.tokenSecret.value, booking.id, booking.access_token_version, accessToken)) {
       throw notFound('đơn');
     }
+    // Khách đã xóa thông tin: không trả chữ thay thế như một tên thật.
+    if (booking.contact_erased_at) return { name: '', phone: '' };
     return { name: booking.contact_name, phone: booking.contact_phone };
+  }
+
+  /**
+   * Khách xóa họ tên, số điện thoại, ghi chú của một đơn đã xong (máy giữ token của đơn).
+   * Chỉ cho đơn nhà xe không còn cần liên hệ, và luôn sau khi mọi chuyến của đơn đã khởi hành hoặc bị hủy
+   * (trước đó tiền chuyển muộn vẫn có thể tự xác nhận lại đơn hết hạn — PaymentsService.reinstate):
+   * đã hoàn tất; đã xác nhận và không chuyến nào bị hủy (bị hủy thì còn hoàn cọc);
+   * hoặc đã hủy/hết hạn mà chưa nhận đồng nào.
+   * Gọi lại khi đã xóa trả kết quả cũ.
+   */
+  async eraseContactByCode(code: string, accessToken: string): Promise<{ code: string; erasedAt: Date }> {
+    const { rows } = await this.db.query<{ id: string; access_token_version: number }>(
+      'SELECT id, access_token_version FROM bookings WHERE code = $1',
+      [code],
+    );
+    const found = rows[0];
+    if (!found || !verifyBookingAccessToken(this.tokenSecret.value, found.id, found.access_token_version, accessToken)) {
+      throw notFound('đơn');
+    }
+    return this.db.tx(async (c) => {
+      const { rows: locked } = await c.query<{
+        id: string; access_token_version: number; status: string; release_at: Date | null;
+        paid_amount: number; contact_erased_at: Date | null;
+      }>(
+        `SELECT id, access_token_version, status, release_at, paid_amount, contact_erased_at
+         FROM bookings WHERE id = $1 FOR UPDATE`,
+        [found.id],
+      );
+      const b = locked[0]!;
+      if (!verifyBookingAccessToken(this.tokenSecret.value, b.id, b.access_token_version, accessToken)) throw notFound('đơn');
+      if (b.contact_erased_at) return { code, erasedAt: b.contact_erased_at };
+      const now = this.clock.now();
+      const status = this.effectiveStatus(b);
+      const { rows: trips } = await c.query<{ depart_at: Date; status: string }>(
+        `SELECT DISTINCT t.id, t.depart_at, t.status FROM booking_items i JOIN trips t ON t.id = i.trip_id
+         WHERE i.booking_id = $1`,
+        [b.id],
+      );
+      const settled = trips.length > 0 && trips.every((t) => t.status === 'CANCELLED' || t.depart_at <= now);
+      const tripCancelled = trips.some((t) => t.status === 'CANCELLED');
+      const owesMoney = b.paid_amount > 0 && (status !== 'CONFIRMED' || tripCancelled);
+      const allowed =
+        status === 'COMPLETED' ||
+        (settled && status === 'CONFIRMED' && !tripCancelled) ||
+        (settled && (status === 'CANCELLED' || status === 'EXPIRED') && b.paid_amount === 0);
+      if (!allowed) {
+        throw new DomainError(
+          'CONFLICT',
+          owesMoney
+            ? 'Đơn còn tiền cọc cần đối soát nên chưa xóa được thông tin. Vui lòng liên hệ nhà xe.'
+            : 'Chuyến chưa khởi hành nên nhà xe vẫn cần thông tin liên hệ. Bạn xóa được sau giờ khởi hành.',
+          { status },
+        );
+      }
+      await c.query(
+        `UPDATE bookings
+         SET contact_name = 'Khách đã xóa thông tin', contact_phone = '', passenger_note = NULL,
+             contact_erased_at = $2, updated_at = $2
+         WHERE id = $1`,
+        [b.id, now],
+      );
+      return { code, erasedAt: now };
+    });
   }
 
   /**
@@ -452,25 +550,34 @@ export class BookingsService {
     });
   }
 
-  private async findByKey(q: Queryable, operatorId: string, key: string): Promise<BookingRow | undefined> {
-    const { rows } = await q.query<BookingRow>(
-      `SELECT ${BOOKING_COLUMNS}
+  private async findByKey(q: Queryable, operatorId: string, key: string): Promise<BookingReplayRow | undefined> {
+    const { rows } = await q.query<BookingReplayRow>(
+      `SELECT ${BOOKING_COLUMNS}, operator_id, contact_phone, retry_token_hash
        FROM bookings WHERE operator_id = $1 AND idempotency_key = $2`,
       [operatorId, key],
     );
     return rows[0];
   }
 
-  private async findByIdempotency(tripId: string, key: string): Promise<BookingRow | undefined> {
-    const { rows } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [tripId]);
-    return rows[0] ? this.findByKey(this.db, rows[0].operator_id, key) : undefined;
-  }
-
-  private async replay(existing: BookingRow, requestHash: string): Promise<HoldResult> {
+  private async replay(
+    q: Queryable,
+    existing: BookingReplayRow,
+    requestHash: string,
+    retryTokenHash: Buffer | null,
+    phoneToken?: string,
+  ): Promise<HoldResult> {
+    const storedHash = existing.retry_token_hash;
+    // An access token version bump also revokes the original checkout's recovery credential.
+    const authorized = existing.access_token_version === 1 && (storedHash
+      ? retryTokenHash !== null && storedHash.length === retryTokenHash.length && timingSafeEqual(storedHash, retryTokenHash)
+      : this.phones.verifyToken(phoneToken, existing.operator_id, existing.contact_phone));
+    if (!authorized) {
+      throw new DomainError('IDEMPOTENCY_CONFLICT', 'Không thể mở lại đơn. Vui lòng kiểm tra Vé của tôi hoặc liên hệ nhà xe.');
+    }
     if (existing.request_hash !== requestHash) {
       throw new DomainError('IDEMPOTENCY_CONFLICT', 'Idempotency-Key đã được dùng cho một yêu cầu khác.');
     }
-    return { booking: await this.view(this.db, existing), accessToken: this.token(existing), replayed: true };
+    return { booking: await this.view(q, existing), accessToken: this.token(existing), replayed: true };
   }
 
   private token(b: BookingRow): string {

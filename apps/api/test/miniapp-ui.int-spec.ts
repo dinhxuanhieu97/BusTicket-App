@@ -1,4 +1,4 @@
-import { buildServices, errorCode, newKey, resetDatabase, seedOperatorWithTrips } from './helpers';
+import { buildServices, errorCode, newKey, newRetryToken, resetDatabase, seedOperatorWithTrips } from './helpers';
 
 const services = buildServices();
 let seed: Awaited<ReturnType<typeof seedOperatorWithTrips>>;
@@ -13,11 +13,12 @@ it('stores a trimmed optional note, replays identical requests and rejects chang
   const key = newKey();
   const request = { tripId: seed.limoTrip.id, contactName: 'Khách thử', contactPhone: '0912345678',
     note: '  Đăng ký hỗ trợ vé khám bệnh  ', items: [{ seatCode: 'A1' }] };
-  const hold = await services.bookings.createHold(request, key);
+  const attempt = { retryToken: newRetryToken() };
+  const hold = await services.bookings.createHold(request, key, attempt);
   const view = await services.bookings.getByCode(hold.booking.code, hold.accessToken);
   expect(view.note).toBe(request.note.trim());
-  expect((await services.bookings.createHold({ ...request, note: request.note.trim() }, key)).replayed).toBe(true);
-  expect(await errorCode(services.bookings.createHold({ ...request, note: 'Ghi chú khác' }, key))).toBe('IDEMPOTENCY_CONFLICT');
+  expect((await services.bookings.createHold({ ...request, note: request.note.trim() }, key, attempt)).replayed).toBe(true);
+  expect(await errorCode(services.bookings.createHold({ ...request, note: 'Ghi chú khác' }, key, attempt))).toBe('IDEMPOTENCY_CONFLICT');
   await expect(services.bookings.createHold({ ...request, note: 'a'.repeat(501) }, newKey())).rejects.toThrow();
 });
 

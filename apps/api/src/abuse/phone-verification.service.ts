@@ -60,10 +60,10 @@ export class PhoneVerificationService {
     await this.limiter.consume(`otp-ip:${clientKey(ip) ?? 'unknown'}`, this.config.otpPerIpPerHour, 3600, busy);
 
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    const now = this.clock.now();
-    const expiresAt = new Date(now.getTime() + this.config.otpTtlSeconds * 1000);
-    const id = await this.db.tx(async (c) => {
+    const { id, expiresAt } = await this.db.tx(async (c) => {
       await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`otp-send:${op.id}:${phone}`]);
+      const now = this.clock.now();
+      const expiresAt = new Date(now.getTime() + this.config.otpTtlSeconds * 1000);
       const { rows: last } = await c.query<{ created_at: Date }>(
         'SELECT created_at FROM phone_verifications WHERE operator_id = $1 AND phone = $2 ORDER BY created_at DESC LIMIT 1',
         [op.id, phone],
@@ -76,8 +76,9 @@ export class PhoneVerificationService {
       }
       // Hạn mức theo giờ chỉ tính các lần thực sự gửi (sau khi qua khoảng cách tối thiểu).
       // Một SĐT nhận tối đa 2N mã/giờ trên toàn nền tảng (không nhân lên theo số nhà xe).
-      await this.limiter.consume(`otp-phone-all:${phone}`, this.config.otpPerPhonePerHour * 2, 3600, busy);
-      await this.limiter.consume(`otp-phone:${op.id}:${phone}`, this.config.otpPerPhonePerHour, 3600, busy);
+      const window = { queryable: c, now };
+      await this.limiter.consume(`otp-phone-all:${phone}`, this.config.otpPerPhonePerHour * 2, 3600, busy, window);
+      await this.limiter.consume(`otp-phone:${op.id}:${phone}`, this.config.otpPerPhonePerHour, 3600, busy, window);
       const { rows } = await c.query<{ id: string }>(
         `INSERT INTO phone_verifications (operator_id, phone, code_hash, expires_at, created_at)
          VALUES ($1, $2, 'pending', $3, $4) RETURNING id`,
@@ -85,7 +86,7 @@ export class PhoneVerificationService {
       );
       const newId = rows[0]!.id;
       await c.query('UPDATE phone_verifications SET code_hash = $2 WHERE id = $1', [newId, this.codeHash(newId, code)]);
-      return newId;
+      return { id: newId, expiresAt };
     });
     const minutes = Math.round(this.config.otpTtlSeconds / 60);
     try {

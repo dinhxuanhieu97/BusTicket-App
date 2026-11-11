@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { AbuseConfig } from '../src/abuse/abuse-config';
 import { base32Decode, hotp } from '../src/auth/totp';
 import { UsersService } from '../src/auth/users.service';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
@@ -39,7 +40,7 @@ beforeAll(async () => {
     imports: [
       AppModule.forRoot({
         databaseUrl: TEST_DB_URL, bookingTokenSecret: TOKEN_SECRET, authTokenSecret: AUTH_SECRET,
-        abuse: RELAXED_ABUSE, clock: s.clock, authAccessTtlSeconds: 15 * 60,
+        abuse: RELAXED_ABUSE, clock: s.clock, authAccessTtlSeconds: 15 * 60, authRequireMfa: true,
       }),
     ],
   }).compile();
@@ -53,6 +54,26 @@ afterAll(async () => {
 });
 
 describe('login issues a session', () => {
+  it('limits proxied logins by the verified client IP and rejects spoofed proxy credentials', async () => {
+    const env = process.env.PNTICKET_LOGIN_PROXY_KEY;
+    const config = app.get(AbuseConfig);
+    const originalLimit = config.loginsPerIpPer15Min;
+    const key = 'test-only-login-proxy-key'.padEnd(32, '0');
+    process.env.PNTICKET_LOGIN_PROXY_KEY = key;
+    config.loginsPerIpPer15Min = 1;
+    try {
+      const proxy = (ip: string, supplied = key) => login({ phone: '0900000999', password: 'invalid' })
+        .set('X-PNTicket-Login-Proxy-Key', supplied).set('X-PNTicket-Login-Client-Ip', ip);
+      await proxy('192.0.2.1', 'wrong').expect(403);
+      await proxy('192.0.2.1').expect(401);
+      await proxy('192.0.2.1').expect(429);
+      await proxy('192.0.2.2').expect(401);
+    } finally {
+      config.loginsPerIpPer15Min = originalLimit;
+      if (env === undefined) delete process.env.PNTICKET_LOGIN_PROXY_KEY;
+      else process.env.PNTICKET_LOGIN_PROXY_KEY = env;
+    }
+  });
   it('without remember me: 15-minute access token, 12-hour session, refresh token only stored hashed', async () => {
     const now = s.clock.now().getTime();
     const res = await login(SELLER).expect(200);
@@ -92,28 +113,25 @@ describe('refresh', () => {
     await refresh(next.refreshToken).expect(200);
   });
 
-  it('tolerates the just-replaced token during the grace window without rotating again', async () => {
+  it('recovers the same successor within the grace window', async () => {
     const first = (await login(SELLER).expect(200)).body;
     const second = (await refresh(first.refreshToken).expect(200)).body;
     s.clock.advanceMinutes(0.25);
     const late = (await refresh(first.refreshToken).expect(200)).body;
-    expect(late.refreshToken).toBeNull();
+    expect(late.refreshToken).toBe(second.refreshToken);
     await me(late.accessToken).expect(200);
     await refresh(second.refreshToken).expect(200); // token mới nhất vẫn dùng được
   });
 
-  it('after the grace window the replaced token recovers a lost response, and the other branch is then caught as theft', async () => {
+  it('revokes the entire session when the just-replaced token is used after grace', async () => {
     const first = (await login(SELLER).expect(200)).body;
-    const second = (await refresh(first.refreshToken).expect(200)).body; // phản hồi này "bị mất" hoặc rơi vào tay kẻ gian
+    const second = (await refresh(first.refreshToken).expect(200)).body;
     s.clock.advanceMinutes(1);
-    const recovered = (await refresh(first.refreshToken).expect(200)).body;
-    expect(recovered.refreshToken).toBeTruthy();
-    await me(recovered.accessToken).expect(200);
-    // Ai đó dùng token của nhánh bị loại → đánh cắp → cả phiên bị thu hồi.
-    expect((await refresh(second.refreshToken).expect(401)).body.error.code).toBe('UNAUTHENTICATED');
-    await refresh(recovered.refreshToken).expect(401);
-    await me(recovered.accessToken).expect(401); // access token gắn phiên cũng chết ngay
-    const sid = (first.refreshToken as string).split('.')[0];
+    expect((await refresh(first.refreshToken).expect(401)).body.error.code).toBe('UNAUTHENTICATED');
+    await refresh(second.refreshToken).expect(401);
+    await me(second.accessToken).expect(401);
+    await refresh(first.refreshToken).expect(401);
+    const [sid] = (first.refreshToken as string).split('.');
     const { rows } = await s.db.query<{ revoke_reason: string }>('SELECT revoke_reason FROM auth_sessions WHERE id = $1', [sid]);
     expect(rows[0]!.revoke_reason).toBe('REUSE');
   });
@@ -138,11 +156,11 @@ describe('refresh', () => {
 
   it('accepts the replaced token right up to the 30-second grace boundary', async () => {
     const t1 = (await login(SELLER).expect(200)).body;
-    await refresh(t1.refreshToken).expect(200);
+    const t2 = (await refresh(t1.refreshToken).expect(200)).body;
     s.clock.advanceMinutes(0.5);
-    expect((await refresh(t1.refreshToken).expect(200)).body.refreshToken).toBeNull();
+    expect((await refresh(t1.refreshToken).expect(200)).body.refreshToken).toBe(t2.refreshToken);
     s.clock.advanceMinutes(1 / 60);
-    expect((await refresh(t1.refreshToken).expect(200)).body.refreshToken).toBeTruthy(); // hết ân hạn → cấp nhánh mới
+    await refresh(t1.refreshToken).expect(401);
   });
 
   it('parallel refreshes with the same token all succeed and rotate exactly once', async () => {
@@ -150,7 +168,8 @@ describe('refresh', () => {
     const results = await Promise.all(Array.from({ length: 6 }, () => refresh(first.refreshToken)));
     expect(results.map((r) => r.status)).toEqual(Array(6).fill(200));
     const rotated = results.map((r) => r.body.refreshToken).filter(Boolean);
-    expect(rotated).toHaveLength(1);
+    expect(rotated).toHaveLength(6);
+    expect(new Set(rotated).size).toBe(1);
     await refresh(rotated[0]).expect(200);
   });
 

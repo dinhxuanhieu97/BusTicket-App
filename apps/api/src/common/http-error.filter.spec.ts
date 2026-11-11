@@ -27,6 +27,21 @@ describe('HttpErrorFilter', () => {
     expect(r.body.error.details[0].path).toBe('name');
   });
 
+  it('bounds the number of validation issues returned to a client', () => {
+    const error = z.array(z.string()).safeParse(Array(50).fill(0)).error!;
+    const r = run(error);
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe('VALIDATION_FAILED');
+    expect(r.body.error.details).toHaveLength(20);
+  });
+
+  it('does not echo a large list of unknown keys in a validation issue', () => {
+    const payload = Object.fromEntries(Array.from({ length: 250 }, (_, i) => [`unexpected_${i}`, i]));
+    const error = z.object({}).strict().safeParse(payload).error!;
+    const r = run(error);
+    expect(r.body.error.details).toEqual([{ path: '', message: 'Dữ liệu chứa trường không được hỗ trợ.' }]);
+  });
+
   it('maps an unknown route to NOT_FOUND', () => {
     const r = run(new NotFoundException());
     expect(r).toEqual({ status: 404, body: { error: { code: 'NOT_FOUND', message: 'Không tìm thấy đường dẫn.' } } });
