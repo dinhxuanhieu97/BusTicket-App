@@ -15,6 +15,8 @@ import { TripAssistantsService } from '../trips/trip-assistants.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
 
 const tripStatusBody = z.object({ status: z.enum(['OPEN', 'CLOSED']) }).strict();
+const passengerListQuery = z.object({ status: z.enum(['active', 'all']).default('active') }).strict();
+const passengerExportQuery = passengerListQuery.extend({ format: z.enum(['xlsx', 'csv']).default('xlsx') }).strict();
 const ownerPasswordBody = z
   .object({
     password: passwordSchema,
@@ -395,6 +397,39 @@ export class AdminController {
   @Perm('trip.assigned.read')
   myTripPassengers(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('tripId') tripId: string) {
     return this.assistants.passengers(op, req.auth.id, tripId);
+  }
+
+  /**
+   * Danh sách khách (họ tên, SĐT) của một chuyến cho nhân viên nhà xe. `status=active` (mặc định) gồm đơn đang giữ chỗ
+   * còn hạn; `status=all` thêm đơn hết hạn/đã hủy. Mỗi lần xem được ghi nhật ký vì có dữ liệu cá nhân.
+   */
+  @Get('operators/:operatorId/trips/:tripId/passengers')
+  @Perm('booking.read')
+  async tripPassengers(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const { status } = passengerListQuery.parse(query);
+    const r = await this.assistants.tripPassengers(op, tripId, status);
+    await this.log(req, op, 'passenger.list.view', 'trip', tripId, { status, bookings: r.bookings.length });
+    return r;
+  }
+
+  /** Cùng dữ liệu, dùng để dựng file Excel/CSV ở dashboard; quyền riêng và nhật ký riêng cho việc xuất file. */
+  @Get('operators/:operatorId/trips/:tripId/passengers/export')
+  @Perm('booking.export')
+  async exportTripPassengers(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const { status, format } = passengerExportQuery.parse(query);
+    const r = await this.assistants.tripPassengers(op, tripId, status);
+    await this.log(req, op, 'passenger.list.export', 'trip', tripId, { status, format, bookings: r.bookings.length });
+    return r;
   }
 
   @Get('operators/:operatorId/trips/:tripId')

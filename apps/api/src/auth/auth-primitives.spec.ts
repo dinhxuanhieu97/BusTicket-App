@@ -135,6 +135,14 @@ describe('role permissions', () => {
     }
   });
 
+  it('lets operator staff, but not assistants or the platform admin, read and export trip passenger lists', () => {
+    for (const role of ROLES) {
+      const staff = role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER' || role === 'ACCOUNTANT';
+      expect(can(role, 'booking.read')).toBe(staff);
+      expect(can(role, 'booking.export')).toBe(staff);
+    }
+  });
+
   it('assistants only read the trips they are assigned to', () => {
     expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read']);
   });
