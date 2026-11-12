@@ -164,6 +164,11 @@ it('shows an assistant only the trips assigned to them and only confirmed passen
   const one = list.body.bookings.find((b: { code: string }) => b.code === paid);
   expect(one).toMatchObject({ contactPhone: '+84912000001', paidAmount: 50_000, paymentStatus: 'PARTIAL' });
   expect(one.seats.map((x: { code: string }) => x.code)).toEqual(['A1', 'A2']);
+  // Hợp đồng của phụ xe không đổi khi thêm danh sách khách cho quản trị.
+  expect(Object.keys(one).sort()).toEqual(
+    ['code', 'contactName', 'contactPhone', 'dueAmount', 'note', 'paidAmount', 'paymentStatus', 'seats', 'status', 'totalAmount'],
+  );
+  expect(list.body).not.toHaveProperty('holding');
   expect(one.dueAmount).toBe(one.totalAmount - 50_000);
   expect(list.body.summary).toMatchObject({ bookings: 2, seats: 3 });
   expect(JSON.stringify(list.body)).not.toContain('Đang giữ');

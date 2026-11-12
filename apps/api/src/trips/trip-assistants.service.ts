@@ -4,6 +4,7 @@ import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
 import { Db, Queryable } from '../db/db';
+import { loadTripPassengers } from './trip-passengers';
 
 /** Tối đa phụ xe trên một chuyến. */
 export const MAX_ASSISTANTS_PER_TRIP = 5;
@@ -153,72 +154,23 @@ export class TripAssistantsService {
       [tripId, userId, operatorId],
     );
     if (!own[0]) throw notFound('chuyến');
-    const trip = await this.tripSummary(operatorId, tripId);
-    const { rows } = await this.db.query<{
-      id: string; code: string; status: string; contact_name: string; contact_phone: string; passenger_note: string | null;
-      total_amount: number; paid_amount: number; payment_status: string;
-      seat_code: string; floor: string; occupancy: number; infant_count: number;
-    }>(
-      `SELECT b.id, b.code, b.status, b.contact_name, b.contact_phone, b.passenger_note, b.total_amount, b.paid_amount,
-              b.payment_status, bi.seat_code, ts.floor, bi.occupancy, bi.infant_count
-       FROM booking_items bi
-       JOIN bookings b ON b.id = bi.booking_id
-       JOIN trip_seats ts ON ts.trip_id = bi.trip_id AND ts.seat_code = bi.seat_code
-       WHERE bi.trip_id = $1 AND b.operator_id = $2 AND b.status IN ('CONFIRMED', 'COMPLETED')
-       ORDER BY ts.floor, length(bi.seat_code), bi.seat_code, b.code`,
-      [tripId, operatorId],
-    );
-    const byBooking = new Map<string, {
-      code: string; status: string; contactName: string; contactPhone: string; note: string | null;
-      totalAmount: number; paidAmount: number; dueAmount: number; paymentStatus: string;
-      seats: { code: string; floor: string; occupancy: number; infantCount: number }[];
-    }>();
-    for (const r of rows) {
-      let b = byBooking.get(r.id);
-      if (!b) {
-        b = {
-          code: r.code, status: r.status, contactName: r.contact_name, contactPhone: r.contact_phone, note: r.passenger_note,
-          totalAmount: r.total_amount, paidAmount: r.paid_amount, dueAmount: Math.max(r.total_amount - r.paid_amount, 0),
-          paymentStatus: r.payment_status, seats: [],
-        };
-        byBooking.set(r.id, b);
-      }
-      b.seats.push({ code: r.seat_code, floor: r.floor, occupancy: r.occupancy, infantCount: r.infant_count });
-    }
-    const bookings = [...byBooking.values()];
+    const r = await loadTripPassengers(this.db, operatorId, tripId, 'confirmed', this.clock.now());
+    // Giữ nguyên hợp đồng cũ của phụ xe: không thêm kênh bán, giờ tạo đơn, hạn giữ chỗ hay số đơn đang giữ.
     return {
-      trip,
-      bookings,
-      summary: {
-        bookings: bookings.length,
-        seats: rows.length,
-        people: rows.reduce((n, r) => n + r.occupancy, 0),
-        infants: rows.reduce((n, r) => n + r.infant_count, 0),
-        dueAmount: bookings.reduce((n, b) => n + b.dueAmount, 0),
-      },
-      fetchedAt: this.clock.now().toISOString(),
+      trip: r.trip,
+      bookings: r.bookings.map(({ channel: _c, contactErased: _e, holdUntil: _h, createdAt: _t, ...b }) => b),
+      summary: r.summary,
+      fetchedAt: r.fetchedAt,
     };
   }
 
-  /** Tóm tắt chuyến (tuyến, xe) cho trang danh sách khách. */
-  private async tripSummary(operatorId: string, tripId: string) {
-    const { rows } = await this.db.query<{
-      id: string; name: string; status: string; depart_at: Date; contact_phone: string | null;
-      route_code: string; origin: string; destination: string; vehicle_code: string; vehicle_name: string; plate_number: string | null;
-    }>(
-      `SELECT t.id, t.name, t.status, t.depart_at, t.contact_phone, r.code AS route_code, r.origin, r.destination,
-              v.code AS vehicle_code, v.name AS vehicle_name, v.plate_number
-       FROM trips t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
-       WHERE t.id = $1 AND t.operator_id = $2`,
-      [tripId, operatorId],
-    );
-    const t = rows[0];
-    if (!t) throw notFound('chuyến');
-    return {
-      id: t.id, name: t.name, status: t.status, departAt: t.depart_at.toISOString(), contactPhone: t.contact_phone,
-      route: { code: t.route_code, origin: t.origin, destination: t.destination },
-      vehicle: { code: t.vehicle_code, name: t.vehicle_name, plateNumber: t.plate_number },
-    };
+  /**
+   * Danh sách khách của một chuyến cho nhân viên nhà xe (`booking.read`): mặc định gồm cả đơn đang giữ chỗ còn hạn;
+   * `all` thêm đơn hết hạn/đã hủy. Chuyến của nhà xe khác trả 404.
+   */
+  async tripPassengers(operatorId: string, tripId: string, scope: 'active' | 'all') {
+    if (!isUuid(operatorId) || !isUuid(tripId)) throw notFound('chuyến');
+    return loadTripPassengers(this.db, operatorId, tripId, scope, this.clock.now());
   }
 
   private async assertTrip(q: Queryable, operatorId: string, tripId: string, lock = false) {
