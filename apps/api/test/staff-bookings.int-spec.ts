@@ -240,7 +240,8 @@ describe('counter sales (C1)', () => {
 
     // Đóng bán online: quầy vẫn bán. Nháp/đã hủy/đã khởi hành: không.
     await s.trips.setStatus(seed.op.id, tripId, 'CLOSED');
-    await counter('seller', tripId, body).expect(200);
+    const soldKey = newKey();
+    const sold = await counter('seller', tripId, body, { key: soldKey }).expect(200);
     await s.trips.setStatus(seed.op.id, tripId, 'OPEN');
     const [next] = await freeSeats(tripId, 1);
     for (const status of ['DRAFT', 'CANCELLED']) {
@@ -254,6 +255,9 @@ describe('counter sales (C1)', () => {
       [tripId, new Date(T0.getTime() - 120_000), new Date(T0.getTime() - 60_000)]);
     try {
       expect((await counter('seller', tripId, { ...body, items: [{ seatCode: next }] }).expect(409)).body.error.code).toBe('TRIP_NOT_ON_SALE');
+      // Gửi lại đúng yêu cầu đã bán sau giờ chạy vẫn nhận lại kết quả cũ.
+      const again = await counter('seller', tripId, body, { key: soldKey }).expect(200);
+      expect(again.body).toMatchObject({ replayed: true, booking: { code: sold.body.booking.code } });
     } finally {
       await s.db.query('UPDATE trips SET depart_at = $2, sales_close_at = $3 WHERE id = $1', [tripId, orig!.depart_at, orig!.sales_close_at]);
     }
@@ -308,7 +312,7 @@ describe('import new passengers (B3)', () => {
       `Dòng 4: chỗ ${onlineSeat} đã có đơn ${online.booking.code}.`,
       'Dòng 5: SĐT không hợp lệ.',
       `Dòng 6: chỗ ZZ9 không có trên xe này.`,
-      'Dòng 7: điểm đón "Chợ Lớn" không có trong tuyến của chuyến.',
+      'Dòng 7: điểm đón không có trong tuyến của chuyến.',
       'Dòng 8: thiếu Họ tên khách.',
       'Dòng 9: đã trả 99.000.000đ lớn hơn tổng tiền ' + `${(await price(tripId, c!)).toLocaleString('vi-VN')}đ.`,
     ]);
@@ -321,6 +325,24 @@ describe('import new passengers (B3)', () => {
       rows: [{ row: 2, seatCode: a, contactName: 'X', contactPhone: '0912222010' }, { row: 5, seatCode: a, contactName: 'Y', contactPhone: '0912222011' }],
     }, { dryRun: true }).expect(200);
     expect(dup.body.issues).toEqual([{ rows: [2, 5], message: `Dòng 2 và 5 cùng chỗ ${a}.` }]);
+  });
+
+  it('names the rows whose pickup points conflict and reads money/phone cells strictly', async () => {
+    const tripId = seed.limoTrip.id;
+    const [a, b, c, d] = await freeSeats(tripId, 4, '1');
+    const r = await importRows('seller', tripId, {
+      rows: [
+        { row: 2, seatCode: a, contactName: 'Khách Gộp', contactPhone: '0912333001' },
+        { row: 3, seatCode: b, contactName: 'Khách Gộp', contactPhone: '912 333 001', pickupStop: 'Bến xe Miền Đông' },
+        { row: 4, seatCode: c, contactName: 'Khách Gộp', contactPhone: '0912333001', pickupStop: 'Ngã tư Thủ Đức' },
+        { row: 5, seatCode: d, contactName: 'Tiền Lẻ', contactPhone: '0912333002', paidAmount: '5000.00' },
+      ],
+    }, { dryRun: true }).expect(200);
+    expect(r.body.issues.map((i: { message: string }) => i.message)).toEqual([
+      'Dòng 3 và 4 cùng khách nhưng khác điểm đón.',
+      'Dòng 5: Đã trả phải là số tiền không âm.',
+    ]);
+    expect(r.body.bookings).toHaveLength(0);
   });
 
   it('writes all rows or none, and replays the same file without creating duplicates', async () => {

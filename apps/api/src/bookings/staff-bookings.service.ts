@@ -149,17 +149,22 @@ const text = (v: string | number | null | undefined) => (v === null || v === und
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const rowsLabel = (rows: number[]) => (rows.length > 1 ? `Dòng ${rows.slice(0, -1).join(', ')} và ${rows.at(-1)}` : `Dòng ${rows[0]}`);
 
-/** Số nguyên không âm từ ô (chấp nhận "840.000", "840,000đ"). undefined = ô trống; NaN = không đọc được. */
-function wholeNumber(v: string | number | null | undefined): number | undefined {
+/**
+ * Số nguyên không âm từ ô (chấp nhận "840000", "840.000", "840,000đ"). undefined = ô trống; NaN = không đọc được.
+ * Dấu chấm/phẩy chỉ được hiểu là phân cách hàng nghìn (nhóm đúng 3 chữ số); "5000.00" hay "1.234,5" bị từ chối.
+ */
+export function wholeNumber(v: string | number | null | undefined): number | undefined {
   if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return undefined;
   if (typeof v === 'number') return Number.isInteger(v) ? v : NaN;
-  const s = v.trim().replace(/[\s.,đ₫]|vnd/gi, '');
-  return /^-?\d+$/.test(s) ? Number(s) : NaN;
+  const s = v.trim().replace(/\s|đ|₫|vnd/gi, '');
+  if (/^\d+$/.test(s)) return Number(s);
+  if (/^\d{1,3}(\.\d{3})+$/.test(s) || /^\d{1,3}(,\d{3})+$/.test(s)) return Number(s.replace(/[.,]/g, ''));
+  return NaN;
 }
 
 /** SĐT từ ô Excel: ô dạng số làm mất số 0 đầu (912345678) → thêm lại. */
-function phoneFromCell(v: string | number | null | undefined): string {
-  const s = text(v);
+export function phoneFromCell(v: string | number | null | undefined): string {
+  const s = text(v).replace(/[\s.\-()]/g, '');
   return /^[35789]\d{8}$/.test(s) ? `0${s}` : s;
 }
 
@@ -212,6 +217,9 @@ export class StaffBookingsService {
     const requestHash = createHash('sha256').update(JSON.stringify({ tripId, phone, ...data })).digest('hex');
     try {
       return await this.db.tx(async (c) => {
+        // Tra lại trước khi kiểm trạng thái chuyến: client gửi lại sau giờ chạy vẫn nhận kết quả cũ.
+        const early = await this.replayCounter(c, operatorId, key, requestHash);
+        if (early) return early;
         const ctx = await this.loadTrip(c, operatorId, tripId, true);
         const existing = await this.replayCounter(c, operatorId, key, requestHash);
         if (existing) return existing;
@@ -272,6 +280,8 @@ export class StaffBookingsService {
       .digest('hex');
     try {
       return await this.db.tx(async (c) => {
+        const early = await this.replayImport(c, operatorId, key, requestHash);
+        if (early) return early;
         const ctx = await this.loadTrip(c, operatorId, tripId, true);
         const existing = await this.replayImport(c, operatorId, key, requestHash);
         if (existing) return existing;
@@ -368,11 +378,12 @@ export class StaffBookingsService {
   /** Đọc dòng file thành nhóm khách (cùng SĐT + họ tên = một đơn); dòng thiếu/sai ghi vào `issues`. */
   private groupRows(ctx: TripCtx, rows: z.output<typeof importRowSchema>[], issues: PlanIssue[]): Group[] {
     const groups = new Map<string, Group>();
+    const stopRows = new Map<string, number>();
     for (const r of rows) {
       const errs: string[] = [];
       const seatCode = text(r.seatCode).toUpperCase().replace(/\s+/g, '');
       if (!seatCode) errs.push('thiếu Phòng/Chỗ');
-      else if (!SEAT_CODE.test(seatCode)) errs.push(`mã chỗ "${seatCode.slice(0, 12)}" không hợp lệ`);
+      else if (!SEAT_CODE.test(seatCode)) errs.push('mã Phòng/Chỗ không hợp lệ');
       const name = text(r.contactName);
       if (!name) errs.push('thiếu Họ tên khách');
       else if (name.length > 120) errs.push('họ tên quá 120 ký tự');
@@ -401,13 +412,13 @@ export class StaffBookingsService {
         pickup = resolveStop(ctx.stops, 'pickup', text(r.pickupStop));
       } catch (e) {
         if (!(e instanceof DomainError)) throw e;
-        errs.push(lowerFirst(e.message.replace(/\.$/, '')));
+        errs.push(ctx.stops?.pickup?.length ? 'điểm đón không có trong tuyến của chuyến' : lowerFirst(e.message.replace(/\.$/, '')));
       }
       try {
         dropoff = resolveStop(ctx.stops, 'dropoff', text(r.dropoffStop));
       } catch (e) {
         if (!(e instanceof DomainError)) throw e;
-        errs.push(lowerFirst(e.message.replace(/\.$/, '')));
+        errs.push(ctx.stops?.dropoff?.length ? 'điểm trả không có trong tuyến của chuyến' : lowerFirst(e.message.replace(/\.$/, '')));
       }
       if (errs.length) {
         issues.push({ rows: [r.row], message: `Dòng ${r.row}: ${errs.join('; ')}.` });
@@ -422,10 +433,15 @@ export class StaffBookingsService {
       for (const [field, value, label] of [['pickup', pickup, 'điểm đón'], ['dropoff', dropoff, 'điểm trả']] as const) {
         if (!value) continue;
         const current = g[field];
+        const setBy = stopRows.get(`${groupKey}|${field}`);
         if (current && current.name !== value.name) {
-          issues.push({ rows: [g.rows[0]!, r.row], message: `${rowsLabel([g.rows[0]!, r.row])} cùng khách nhưng khác ${label}.` });
+          const pair = [setBy ?? g.rows[0]!, r.row];
+          issues.push({ rows: pair, message: `${rowsLabel(pair)} cùng khách nhưng khác ${label}.` });
           g.invalid = true;
-        } else g[field] = value;
+        } else if (!current) {
+          g[field] = value;
+          stopRows.set(`${groupKey}|${field}`, r.row);
+        }
       }
       g.rows.push(r.row);
       g.items.push({ row: r.row, seatCode, occupancy, infantCount });
