@@ -149,8 +149,15 @@ describe('role permissions', () => {
     }
   });
 
-  it('assistants only read the trips they are assigned to', () => {
-    expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read']);
+  it('assistants only read and board the trips they are assigned to', () => {
+    expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read', 'trip.assigned.board']);
+  });
+
+  it('lets dispatchers and sellers board passengers, but only dispatchers cancel bookings', () => {
+    for (const role of ROLES) {
+      expect(can(role, 'booking.board')).toBe(role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER');
+      expect(can(role, 'booking.cancel')).toBe(role === 'OWNER' || role === 'DISPATCHER');
+    }
   });
 
   it('requires 2FA for owners, accountants and platform admins', () => {

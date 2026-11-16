@@ -155,10 +155,13 @@ export class TripAssistantsService {
     );
     if (!own[0]) throw notFound('chuyến');
     const r = await loadTripPassengers(this.db, operatorId, tripId, 'confirmed', this.clock.now());
-    // Phụ xe chỉ thêm điểm đón/trả (để đón khách); không có kênh bán, người tạo, giờ tạo, hạn giữ chỗ hay số đơn đang giữ.
+    // Phụ xe chỉ thêm điểm đón/trả (để đón khách) và giờ lên xe của từng chỗ; không có kênh bán, người tạo, giờ tạo,
+    // hạn giữ chỗ, số đơn đang giữ, số tiền đã ghi thu trên xe hay lý do hủy.
     return {
       trip: r.trip,
-      bookings: r.bookings.map(({ channel: _c, contactErased: _e, holdUntil: _h, createdAt: _t, createdBy: _u, ...b }) => b),
+      bookings: r.bookings.map(
+        ({ channel: _c, contactErased: _e, holdUntil: _h, createdAt: _t, createdBy: _u, onboardCollected: _o, cancelReason: _r, ...b }) => b,
+      ),
       summary: r.summary,
       fetchedAt: r.fetchedAt,
     };
