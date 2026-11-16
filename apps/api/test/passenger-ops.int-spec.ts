@@ -314,4 +314,14 @@ describe('re-import boarding + cash collected on board (B2)', () => {
     expect(lower.body.error.details.issues[0].message).toMatch(/nhỏ hơn số đã ghi/);
     await imp(tripId, [{ row: 2, code: b.code, boarded: 'x' }], { who: 'accountant' }).expect(403);
   });
+
+  it('skips untouched rows of held or cancelled bookings in the exported file, but refuses to board or collect on them', async () => {
+    const tripId = seed.bedTrip.id;
+    const hold = await sell(tripId, { confirm: false });
+    const ok = await imp(tripId, [{ row: 2, code: hold.code, seatCode: hold.seats[0], boarded: null, collected: null }], { dryRun: true }).expect(200);
+    expect(ok.body).toMatchObject({ ok: true, unchanged: 1, updates: [] });
+    const bad = await imp(tripId, [{ row: 2, code: hold.code, seatCode: hold.seats[0], boarded: 'x', collected: null }], { dryRun: true }).expect(200);
+    expect(bad.body.ok).toBe(false);
+    expect(bad.body.issues[0].message).toMatch(/chưa được xác nhận/);
+  });
 });

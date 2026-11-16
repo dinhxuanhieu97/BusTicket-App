@@ -387,15 +387,12 @@ export class PassengerOpsService {
     }
     type Acc = { rows: number[]; board: Set<string>; collected: number | null };
     const acc = new Map<string, Acc>();
+    let unchanged = 0;
     for (const r of rows) {
       const code = r.code.trim().toUpperCase();
       const e = bookings.get(code);
       if (!BOOKING_CODE.test(code) || !e) {
         issues.push({ rows: [r.row], message: `Dòng ${r.row}: mã vé không thuộc chuyến này.` });
-        continue;
-      }
-      if (e.b.status !== 'CONFIRMED' && e.b.status !== 'COMPLETED') {
-        issues.push({ rows: [r.row], message: `Dòng ${r.row}: đơn ${code} ${e.b.status === 'CANCELLED' ? 'đã hủy' : 'chưa được xác nhận'}.` });
         continue;
       }
       const errs: string[] = [];
@@ -409,6 +406,13 @@ export class PassengerOpsService {
         issues.push({ rows: [r.row], message: `Dòng ${r.row}: ${errs.join('; ')}.` });
         continue;
       }
+      if (e.b.status !== 'CONFIRMED' && e.b.status !== 'COMPLETED') {
+        // File xuất gồm cả đơn đang giữ chỗ/đã hủy: dòng không ghi gì thì bỏ qua; ghi lên xe/thu tiền thì báo lỗi.
+        if (boarded || (collected !== undefined && collected > 0)) {
+          issues.push({ rows: [r.row], message: `Dòng ${r.row}: đơn ${code} ${e.b.status === 'CANCELLED' ? 'đã hủy' : 'chưa được xác nhận'}, không ghi lên xe/thực thu được.` });
+        } else unchanged += 1;
+        continue;
+      }
       let a = acc.get(code);
       if (!a) {
         a = { rows: [], board: new Set(), collected: null };
@@ -419,7 +423,6 @@ export class PassengerOpsService {
       if (collected !== undefined) a.collected = (a.collected ?? 0) + collected;
     }
     const updates: BoardingUpdate[] = [];
-    let unchanged = 0;
     for (const [code, a] of acc) {
       const e = bookings.get(code)!;
       const boardSeats = [...a.board].filter((s) => e.seats.get(s) === null);
