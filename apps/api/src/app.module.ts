@@ -16,6 +16,7 @@ import { SecretBox } from './auth/totp';
 import { UsersService } from './auth/users.service';
 import { BookingsService, TokenSecret } from './bookings/bookings.service';
 import { StaffBookingsService } from './bookings/staff-bookings.service';
+import { PassengerOpsService } from './bookings/passenger-ops.service';
 import { HoldSweepConfig, HoldSweeper } from './bookings/hold-sweeper';
 import { Clock, SystemClock } from './common/clock';
 import { Db, DbConfig } from './db/db';
@@ -82,6 +83,7 @@ export class AppModule {
         { provide: ScheduleRunnerConfig, useValue: new ScheduleRunnerConfig(opts.scheduleIntervalMs ?? 0) },
         BookingsService,
         StaffBookingsService,
+        PassengerOpsService,
         { provide: HoldSweepConfig, useValue: new HoldSweepConfig(opts.holdSweepIntervalMs ?? 0) },
         HoldSweeper,
         AuditService,

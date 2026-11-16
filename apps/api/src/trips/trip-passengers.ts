@@ -15,6 +15,8 @@ export interface PassengerSeat {
   floor: string;
   occupancy: number;
   infantCount: number;
+  /** Thời điểm đánh dấu lên xe; null = chưa lên. */
+  boardedAt: string | null;
 }
 
 export interface PassengerBooking {
@@ -38,6 +40,10 @@ export interface PassengerBooking {
   /** Hạn nhả chỗ của đơn đang giữ; null với đơn khác. */
   holdUntil: string | null;
   createdAt: string;
+  /** Tổng tiền phụ xe đã thu trên xe (ghi qua file nhập lại); chỉ nhân viên văn phòng thấy. */
+  onboardCollected: number;
+  /** Lý do nhân viên hủy đơn; null nếu không phải nhân viên hủy. */
+  cancelReason: string | null;
   seats: PassengerSeat[];
 }
 
@@ -47,6 +53,9 @@ export interface PassengerSummary {
   people: number;
   infants: number;
   dueAmount: number;
+  /** Số chỗ (của đơn đã xác nhận) đã đánh dấu lên xe; `boardedPeople` tính theo số người của chỗ. */
+  boarded: number;
+  boardedPeople: number;
 }
 
 /**
@@ -66,12 +75,15 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
     contact_erased_at: Date | null; passenger_note: string | null; total_amount: number; paid_amount: number;
     payment_status: string; release_at: Date | null; created_at: Date;
     pickup_stop: StopPoint | null; dropoff_stop: StopPoint | null; created_by_name: string | null;
-    seat_code: string; floor: string; occupancy: number; infant_count: number;
+    seat_code: string; floor: string; occupancy: number; infant_count: number; boarded_at: Date | null;
+    onboard: number; cancel_reason: string | null;
   }>(
     `SELECT b.id, b.code, b.status, b.channel, b.contact_name, b.contact_phone, b.contact_erased_at, b.passenger_note,
             b.total_amount, b.paid_amount, b.payment_status, b.release_at, b.created_at,
             b.pickup_stop, b.dropoff_stop, u.full_name AS created_by_name,
-            bi.seat_code, ts.floor, bi.occupancy, bi.infant_count
+            bi.seat_code, ts.floor, bi.occupancy, bi.infant_count, bi.boarded_at, b.cancel_reason,
+            COALESCE((SELECT sum(pa.amount) FROM payment_allocations pa JOIN payments p ON p.id = pa.payment_id
+                      WHERE pa.booking_id = b.id AND p.collected_onboard), 0)::int AS onboard
      FROM booking_items bi
      JOIN bookings b ON b.id = bi.booking_id
      LEFT JOIN users u ON u.id = b.created_by
@@ -104,11 +116,15 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
         createdBy: r.created_by_name,
         holdUntil: r.status === 'HOLDING' && r.release_at && r.release_at > now ? r.release_at.toISOString() : null,
         createdAt: r.created_at.toISOString(),
+        onboardCollected: r.onboard,
+        cancelReason: r.cancel_reason,
         seats: [],
       };
       byBooking.set(r.id, b);
     }
-    b.seats.push({ code: r.seat_code, floor: r.floor, occupancy: r.occupancy, infantCount: r.infant_count });
+    b.seats.push({
+      code: r.seat_code, floor: r.floor, occupancy: r.occupancy, infantCount: r.infant_count, boardedAt: r.boarded_at?.toISOString() ?? null,
+    });
   }
   const bookings = [...byBooking.values()];
   const confirmed = bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'COMPLETED');
@@ -130,6 +146,8 @@ function summarize(bookings: PassengerBooking[]): PassengerSummary {
     people: seats.reduce((n, s) => n + s.occupancy, 0),
     infants: seats.reduce((n, s) => n + s.infantCount, 0),
     dueAmount: bookings.reduce((n, b) => n + b.dueAmount, 0),
+    boarded: seats.filter((s) => s.boardedAt).length,
+    boardedPeople: seats.reduce((n, s) => n + (s.boardedAt ? s.occupancy : 0), 0),
   };
 }
 
