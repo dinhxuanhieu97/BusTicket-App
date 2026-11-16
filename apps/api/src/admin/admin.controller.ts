@@ -7,6 +7,7 @@ import { UsersService } from '../auth/users.service';
 import { Clock } from '../common/clock';
 import { DomainError } from '../common/errors';
 import { configureAccountSchema, PaymentsService } from '../payments/payments.service';
+import { StaffBookingsService } from '../bookings/staff-bookings.service';
 import { LOGO_MAX_BYTES, OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
@@ -17,6 +18,7 @@ import { VehiclesService } from '../vehicles/vehicles.service';
 const tripStatusBody = z.object({ status: z.enum(['OPEN', 'CLOSED']) }).strict();
 const passengerListQuery = z.object({ status: z.enum(['active', 'all']).default('active') }).strict();
 const passengerExportQuery = passengerListQuery.extend({ format: z.enum(['xlsx', 'csv']).default('xlsx') }).strict();
+const dryRunQuery = z.object({ dryRun: z.enum(['true', 'false']).default('false') }).strict();
 const ownerPasswordBody = z
   .object({
     password: passwordSchema,
@@ -75,6 +77,7 @@ export class AdminController {
     private readonly schedules: TripSchedulesService,
     private readonly auth: AuthService,
     private readonly assistants: TripAssistantsService,
+    private readonly staffBookings: StaffBookingsService,
     private readonly clock: Clock,
   ) {}
 
@@ -430,6 +433,44 @@ export class AdminController {
     const r = await this.assistants.tripPassengers(op, tripId, status);
     await this.log(req, op, 'passenger.list.export', 'trip', tripId, { status, format, bookings: r.bookings.length });
     return r;
+  }
+
+  /**
+   * Bán vé tại quầy: tạo đơn `STAFF` cho các chỗ đã chọn. `?dryRun=true` chỉ tính giá/kiểm tra chỗ (không cần khóa).
+   * Ghi thật bắt buộc Idempotency-Key; nhật ký ghi trong cùng transaction.
+   */
+  @Post('operators/:operatorId/trips/:tripId/bookings')
+  @HttpCode(200)
+  @Perm('booking.create')
+  createCounterBooking(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const { dryRun } = dryRunQuery.parse(query);
+    return this.staffBookings.createAtCounter(req.auth, op, tripId, body, { dryRun: dryRun === 'true', idempotencyKey });
+  }
+
+  /**
+   * Nhập danh sách khách mới (dòng không có mã vé) từ file đã đọc ở dashboard. `?dryRun=true`: xem trước, không ghi.
+   * Ghi thật: tất cả hoặc không dòng nào; Idempotency-Key bắt buộc (băm nội dung file).
+   */
+  @Post('operators/:operatorId/trips/:tripId/passengers/import')
+  @HttpCode(200)
+  @Perm('booking.create')
+  importPassengers(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const { dryRun } = dryRunQuery.parse(query);
+    return this.staffBookings.importPassengers(req.auth, op, tripId, body, { dryRun: dryRun === 'true', idempotencyKey });
   }
 
   @Get('operators/:operatorId/trips/:tripId')

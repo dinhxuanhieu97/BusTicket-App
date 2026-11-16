@@ -1,5 +1,6 @@
 import { notFound } from '../common/errors';
 import { Queryable } from '../db/db';
+import type { StopPoint } from '../bookings/stops';
 
 /**
  * Phạm vi đơn trong danh sách khách của chuyến:
@@ -29,6 +30,11 @@ export interface PassengerBooking {
   paidAmount: number;
   dueAmount: number;
   paymentStatus: string;
+  /** Điểm đón/trả khách chọn (chụp lúc đặt); null = chưa chọn. */
+  pickupStop: StopPoint | null;
+  dropoffStop: StopPoint | null;
+  /** Nhân viên tạo đơn tại quầy/nhập file; null với đơn online. */
+  createdBy: string | null;
   /** Hạn nhả chỗ của đơn đang giữ; null với đơn khác. */
   holdUntil: string | null;
   createdAt: string;
@@ -59,13 +65,16 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
     id: string; code: string; status: string; channel: string; contact_name: string; contact_phone: string;
     contact_erased_at: Date | null; passenger_note: string | null; total_amount: number; paid_amount: number;
     payment_status: string; release_at: Date | null; created_at: Date;
+    pickup_stop: StopPoint | null; dropoff_stop: StopPoint | null; created_by_name: string | null;
     seat_code: string; floor: string; occupancy: number; infant_count: number;
   }>(
     `SELECT b.id, b.code, b.status, b.channel, b.contact_name, b.contact_phone, b.contact_erased_at, b.passenger_note,
             b.total_amount, b.paid_amount, b.payment_status, b.release_at, b.created_at,
+            b.pickup_stop, b.dropoff_stop, u.full_name AS created_by_name,
             bi.seat_code, ts.floor, bi.occupancy, bi.infant_count
      FROM booking_items bi
      JOIN bookings b ON b.id = bi.booking_id
+     LEFT JOIN users u ON u.id = b.created_by
      JOIN trip_seats ts ON ts.trip_id = bi.trip_id AND ts.seat_code = bi.seat_code
      WHERE bi.trip_id = $1 AND b.operator_id = $2 AND ${statusFilter}
      ORDER BY ts.floor, length(bi.seat_code), bi.seat_code, b.created_at, b.code`,
@@ -90,6 +99,9 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
         paidAmount: r.paid_amount,
         dueAmount: Math.max(r.total_amount - r.paid_amount, 0),
         paymentStatus: r.payment_status,
+        pickupStop: r.pickup_stop,
+        dropoffStop: r.dropoff_stop,
+        createdBy: r.created_by_name,
         holdUntil: r.status === 'HOLDING' && r.release_at && r.release_at > now ? r.release_at.toISOString() : null,
         createdAt: r.created_at.toISOString(),
         seats: [],

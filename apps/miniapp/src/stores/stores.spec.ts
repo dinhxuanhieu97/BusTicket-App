@@ -59,6 +59,20 @@ describe("booking draft retry credentials", () => {
     expect(useBookingDraft.getState().selection).toEqual({});
   });
 
+  it("starts a new attempt when the pickup or drop-off changes, and forgets them on another trip", () => {
+    const s = useBookingDraft.getState();
+    s.openTrip("t1");
+    s.setStops({ pickupStop: "Bến xe Miền Đông" });
+    const first = useBookingDraft.getState().ensureHoldAttempt();
+    useBookingDraft.getState().setStops({ pickupStop: "Bến xe Miền Đông" });
+    expect(useBookingDraft.getState().ensureHoldAttempt()).toEqual(first);
+    useBookingDraft.getState().setStops({ dropoffStop: "Hoài Ân" });
+    expect(useBookingDraft.getState().ensureHoldAttempt().idempotencyKey).not.toBe(first.idempotencyKey);
+    expect(useBookingDraft.getState()).toMatchObject({ pickupStop: "Bến xe Miền Đông", dropoffStop: "Hoài Ân" });
+    useBookingDraft.getState().openTrip("t2");
+    expect(useBookingDraft.getState()).toMatchObject({ pickupStop: "", dropoffStop: "" });
+  });
+
   it("forgets the verified phone token when the phone number changes", () => {
     const s = useBookingDraft.getState();
     s.setContact({ contactPhone: "0912345678" });

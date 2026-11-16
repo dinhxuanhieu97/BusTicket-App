@@ -90,6 +90,9 @@ export interface BookingItem {
 export interface BookingView {
   ticketProof?: string;
   note?: string;
+  /** Điểm đón/trả đã chọn lúc đặt (giờ dự kiến theo ngày khởi hành + day). */
+  pickupStop?: RouteStop;
+  dropoffStop?: RouteStop;
   code: string;
   status: BookingStatus;
   tripId: string;
@@ -113,6 +116,9 @@ export interface HoldResult {
 export interface CreateHoldRequest {
   returnLeg?: { tripId: string; items: CreateHoldRequest["items"] };
   note?: string;
+  /** Tên điểm đón/trả của chuyến đi (theo danh sách điểm của tuyến). */
+  pickupStop?: string;
+  dropoffStop?: string;
   tripId: string;
   contactName: string;
   contactPhone: string;

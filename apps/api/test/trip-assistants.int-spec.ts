@@ -166,7 +166,7 @@ it('shows an assistant only the trips assigned to them and only confirmed passen
   expect(one.seats.map((x: { code: string }) => x.code)).toEqual(['A1', 'A2']);
   // Hợp đồng của phụ xe không đổi khi thêm danh sách khách cho quản trị.
   expect(Object.keys(one).sort()).toEqual(
-    ['code', 'contactName', 'contactPhone', 'dueAmount', 'note', 'paidAmount', 'paymentStatus', 'seats', 'status', 'totalAmount'],
+    ['code', 'contactName', 'contactPhone', 'dropoffStop', 'dueAmount', 'note', 'paidAmount', 'paymentStatus', 'pickupStop', 'seats', 'status', 'totalAmount'],
   );
   expect(list.body).not.toHaveProperty('holding');
   expect(one.dueAmount).toBe(one.totalAmount - 50_000);

@@ -120,6 +120,9 @@ export default function CheckoutPage() {
     touched && !isValidVnMobile(draft.contactPhone)
       ? copy.checkout.phoneInvalid
       : undefined;
+  // Chỉ gửi điểm còn trong danh sách điểm hiện tại của chuyến (nhà xe có thể vừa sửa tuyến).
+  const pickupStop = map.stops?.pickup.some((s) => s.name === draft.pickupStop) ? draft.pickupStop : "";
+  const dropoffStop = map.stops?.dropoff.some((s) => s.name === draft.dropoffStop) ? draft.dropoffStop : "";
   const tokenValid =
     !!draft.phoneToken &&
     normalizeVnMobile(draft.phoneToken.phone) === normalizeVnMobile(draft.contactPhone) &&
@@ -186,6 +189,8 @@ export default function CheckoutPage() {
           contactName: draft.contactName.trim(),
           contactPhone: draft.contactPhone.trim(),
           ...(draft.note.trim() ? { note: draft.note.trim() } : {}),
+          ...(pickupStop ? { pickupStop } : {}),
+          ...(dropoffStop ? { dropoffStop } : {}),
           items: toHoldItems(selection),
           ...(inbound
             ? {
@@ -404,6 +409,30 @@ export default function CheckoutPage() {
               </p>
             )}
           </label>
+          {(["pickup", "dropoff"] as const).map((kind) => {
+            const list = map.stops?.[kind] ?? [];
+            if (!list.length) return null;
+            const value = kind === "pickup" ? pickupStop : dropoffStop;
+            return (
+              <label className="pn-field" key={kind}>
+                <span>{kind === "pickup" ? copy.checkout.pickupStop : copy.checkout.dropoffStop}</span>
+                <select
+                  value={value}
+                  onChange={(e) =>
+                    draft.setStops(kind === "pickup" ? { pickupStop: e.target.value } : { dropoffStop: e.target.value })
+                  }
+                >
+                  <option value="">{copy.checkout.stopUnset}</option>
+                  {list.map((stop) => (
+                    <option key={stop.name} value={stop.name}>
+                      {stop.time}
+                      {stop.day > 0 ? ` (+${stop.day} ngày)` : ""} · {stop.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
           <label className="pn-field">
             <span>Ghi chú cho nhà xe (không bắt buộc)</span>
             <textarea

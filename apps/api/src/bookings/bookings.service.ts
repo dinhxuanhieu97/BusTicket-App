@@ -15,6 +15,7 @@ import { OperatorsService } from '../operators/operators.service';
 import { SEAT_CODE } from '../seat-layouts/layout-parser';
 import { amountDueNow, depositAmount, fixedUnitDeposit, priceItems } from './pricing';
 import { TokenSecret } from './token-secret';
+import { resolveStop, StopPoint, TripStops } from './stops';
 
 export { TokenSecret };
 
@@ -39,6 +40,9 @@ export const createHoldSchema = z
     contactName: z.string().trim().min(1).max(120),
     contactPhone: z.string().min(1).max(30),
     note: z.string().trim().max(500).optional(),
+    /** Tên điểm đón/trả của chuyến đi (theo danh sách điểm của tuyến); bỏ trống = chưa chọn. */
+    pickupStop: z.string().trim().max(160).optional(),
+    dropoffStop: z.string().trim().max(160).optional(),
     items: holdItems,
     returnLeg: z.object({ tripId: z.string().uuid(), items: holdItems }).strict().optional(),
   })
@@ -56,6 +60,9 @@ export interface BookingView {
   /** Lúc nhả chỗ thật (hạn thanh toán + ân hạn chờ tiền ngân hàng báo chậm). */
   releaseAt: string | null;
   note?: string;
+  /** Điểm đón/trả đã chọn (chụp lúc đặt) — chỉ có khi khách chọn. */
+  pickupStop?: StopPoint;
+  dropoffStop?: StopPoint;
   totalAmount: number;
   /** Số tiền phải trả để xác nhận vé (cọc hoặc toàn bộ). */
   depositAmount: number;
@@ -100,6 +107,8 @@ interface BookingRow {
   request_hash: string | null;
   passenger_note: string | null;
   access_token_version: number;
+  pickup_stop: StopPoint | null;
+  dropoff_stop: StopPoint | null;
 }
 
 interface BookingReplayRow extends BookingRow {
@@ -109,7 +118,7 @@ interface BookingReplayRow extends BookingRow {
 }
 
 const BOOKING_COLUMNS =
-  'id, code, status, trip_id, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note';
+  'id, code, status, trip_id, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note, pickup_stop, dropoff_stop';
 
 const MAX_CODE_ATTEMPTS = 5;
 
@@ -121,6 +130,18 @@ export interface HoldContext {
   phoneToken?: string;
   /** Separate secret for recovering a hold if its first response is lost. */
   retryToken?: string;
+}
+
+/** Giải phóng các đơn HOLDING đã quá hạn của một chuyến (bên gọi đã khóa hàng `trips` trong transaction). */
+export async function expireDueHoldsForTrip(c: Queryable, tripId: string, now: Date): Promise<void> {
+  const { rows } = await c.query<{ id: string }>(
+    `UPDATE bookings SET status = 'EXPIRED', updated_at = $2
+     WHERE id IN (SELECT booking_id FROM booking_items WHERE trip_id = $1) AND status = 'HOLDING' AND release_at <= $2 RETURNING id`,
+    [tripId, now],
+  );
+  if (rows.length) {
+    await c.query('UPDATE trip_seats SET booking_id = NULL WHERE booking_id = ANY($1::uuid[])', [rows.map((r) => r.id)]);
+  }
 }
 
 @Injectable()
@@ -166,7 +187,8 @@ export class BookingsService {
     }
     const items = data.items;
     const requestHash = createHash('sha256')
-      .update(JSON.stringify({ tripId: data.tripId, name: data.contactName, phone, items, ...(data.returnLeg ? { returnLeg: data.returnLeg } : {}), ...(data.note ? { note: data.note } : {}) }))
+      .update(JSON.stringify({ tripId: data.tripId, name: data.contactName, phone, items, ...(data.returnLeg ? { returnLeg: data.returnLeg } : {}), ...(data.note ? { note: data.note } : {}),
+        ...(data.pickupStop ? { pickupStop: data.pickupStop } : {}), ...(data.dropoffStop ? { dropoffStop: data.dropoffStop } : {}) }))
       .digest('hex');
 
     const { rows: tripOps } = await this.db.query<{ operator_id: string }>('SELECT operator_id FROM trips WHERE id = $1', [data.tripId]);
@@ -196,6 +218,7 @@ export class BookingsService {
     try {
       return await this.db.tx((c) => this.holdInTx(
         c, legs, data.contactName, phone, key, requestHash, retryTokenHash, ctx.phoneToken, data.note,
+        { pickup: data.pickupStop, dropoff: data.dropoffStop },
       ));
     } catch (e) {
       // Cùng khóa nhưng gửi cho chuyến khác, chạy song song: ràng buộc duy nhất chặn, trả kết quả nhất quán.
@@ -217,13 +240,15 @@ export class BookingsService {
     retryTokenHash: Buffer | null,
     phoneToken?: string,
     note?: string,
+    stopNames: { pickup?: string; dropoff?: string } = {},
   ): Promise<HoldResult> {
     const tripId = legs[0]!.tripId;
     const now = this.clock.now();
     const { rows: trips } = await c.query<{
       id: string; origin: string; destination: string; operator_id: string; status: string; sales_open_at: Date; sales_close_at: Date; depart_at: Date;
+      stops: TripStops | null;
     }>(
-      `SELECT t.*, r.origin, r.destination FROM trips t JOIN routes r ON r.id=t.route_id
+      `SELECT t.*, r.origin, r.destination, COALESCE(t.stops_snapshot, r.stops) AS stops FROM trips t JOIN routes r ON r.id=t.route_id
        WHERE t.id = ANY($1::uuid[]) ORDER BY t.id FOR NO KEY UPDATE OF t`, [legs.map(l => l.tripId)],
     );
     const trip = trips.find(t => t.id === tripId);
@@ -239,6 +264,9 @@ export class BookingsService {
     if (trips.some(t => t.status !== 'OPEN' || now < t.sales_open_at || now >= t.sales_close_at || now >= t.depart_at)) {
       throw new DomainError('TRIP_NOT_ON_SALE', 'Chuyến hiện không mở bán.');
     }
+    // Điểm đón/trả thuộc chuyến đi (chiều về dùng điểm mặc định của tuyến, chưa chọn riêng).
+    const pickupStop = resolveStop(trip.stops, 'pickup', stopNames.pickup);
+    const dropoffStop = resolveStop(trip.stops, 'dropoff', stopNames.dropoff);
     const policy = await this.operators.currentPolicy(trip.operator_id, c);
     if (legs.some(l => l.items.length > policy.maxUnitsPerBooking)) {
       throw new DomainError('LIMIT_EXCEEDED', `Mỗi đơn chọn tối đa ${policy.maxUnitsPerBooking} chỗ.`, {
@@ -310,12 +338,13 @@ export class BookingsService {
       const { rows } = await c.query<BookingRow>(
         `INSERT INTO bookings (operator_id, trip_id, code, status, hold_expires_at, contact_name, contact_phone,
                                total_amount, deposit_amount, policy_snapshot, idempotency_key, request_hash, created_at, updated_at, passenger_note,
-                               release_at, retry_token_hash)
-         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15)
+                               release_at, retry_token_hash, pickup_stop, dropoff_stop)
+         VALUES ($1, $2, $3, 'HOLDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15, $16, $17)
          ON CONFLICT (code) DO NOTHING
          RETURNING ${BOOKING_COLUMNS}`,
         [trip.operator_id, tripId, bookingCode(ops[0]!.code), holdExpiresAt, contactName, phone, total,
-          deposit, JSON.stringify(policy), key, requestHash, now, note || null, releaseAt, retryTokenHash],
+          deposit, JSON.stringify(policy), key, requestHash, now, note || null, releaseAt, retryTokenHash,
+          pickupStop && JSON.stringify(pickupStop), dropoffStop && JSON.stringify(dropoffStop)],
       );
       booking = rows[0];
     }
@@ -340,15 +369,8 @@ export class BookingsService {
   }
 
   /** Giải phóng các đơn HOLDING đã quá hạn của một chuyến (gọi trong transaction đang khóa chuyến). */
-  private async expireDueHoldsForTrip(c: Queryable, tripId: string, now: Date): Promise<void> {
-    const { rows } = await c.query<{ id: string }>(
-      `UPDATE bookings SET status = 'EXPIRED', updated_at = $2
-       WHERE id IN (SELECT booking_id FROM booking_items WHERE trip_id = $1) AND status = 'HOLDING' AND release_at <= $2 RETURNING id`,
-      [tripId, now],
-    );
-    if (rows.length) {
-      await c.query('UPDATE trip_seats SET booking_id = NULL WHERE booking_id = ANY($1::uuid[])', [rows.map((r) => r.id)]);
-    }
+  private expireDueHoldsForTrip(c: Queryable, tripId: string, now: Date): Promise<void> {
+    return expireDueHoldsForTrip(c, tripId, now);
   }
 
   /**
@@ -611,6 +633,8 @@ export class BookingsService {
       code: b.code,
       ticketProof: ticketProof(this.tokenSecret.value, b.id, b.access_token_version),
       ...(b.passenger_note ? { note: b.passenger_note } : {}),
+      ...(b.pickup_stop ? { pickupStop: b.pickup_stop } : {}),
+      ...(b.dropoff_stop ? { dropoffStop: b.dropoff_stop } : {}),
       status,
       tripId: b.trip_id,
       tripContacts: [...tripContacts].map(([tripId, phone]) => ({ tripId, phone })),

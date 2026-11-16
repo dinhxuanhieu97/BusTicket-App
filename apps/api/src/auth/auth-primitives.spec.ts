@@ -143,6 +143,12 @@ describe('role permissions', () => {
     }
   });
 
+  it('lets owners, dispatchers and sellers create counter/imported bookings, but not accountants, assistants or the platform', () => {
+    for (const role of ROLES) {
+      expect(can(role, 'booking.create')).toBe(role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER');
+    }
+  });
+
   it('assistants only read the trips they are assigned to', () => {
     expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read']);
   });
