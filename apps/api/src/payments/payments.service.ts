@@ -10,7 +10,11 @@ import { Clock } from '../common/clock';
 import { verifyBookingAccessToken } from '../common/codes';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
-import { amountDueNow } from '../bookings/pricing';
+import { expireDueHoldsForTrip } from '../bookings/bookings.service';
+import { amountDueNow, depositAmount, fixedUnitDeposit, priceItems } from '../bookings/pricing';
+import { resolveStop, StopPoint, TripStops } from '../bookings/stops';
+import { OperatorsService } from '../operators/operators.service';
+import { SEAT_CODE } from '../seat-layouts/layout-parser';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import {
   BankTransfer, extractBookingCodes, hashWebhookKey, parseSepayWebhook, SepayTransactionsClient, sepayQrUrl, verifyApiKeyHeader,
@@ -50,6 +54,33 @@ export const allocateSchema = z
   .strict();
 
 export const resolveSchema = z.object({ note: z.string().trim().min(3).max(500) }).strict();
+
+const reinstateItems = z
+  .array(
+    z
+      .object({
+        seatCode: z.string().regex(SEAT_CODE),
+        occupancy: z.number().int().min(1).max(2).default(1),
+        infantCount: z.number().int().min(0).max(2).default(0),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(20);
+
+/**
+ * Cấp lại chỗ cho đơn có tiền về muộn (khoản thu LATE). `legs[0]` là chuyến đi, `legs[1]` (nếu có) là chuyến về.
+ * Được chọn lại đúng chỗ cũ, chỗ khác cùng chuyến hoặc chuyến khác của nhà xe (chốt 17/11/2026).
+ */
+export const reinstateLateSchema = z
+  .object({
+    legs: z.array(z.object({ tripId: z.string().uuid(), items: reinstateItems }).strict()).min(1).max(2),
+    /** Bỏ trống = giữ tên điểm đón/trả cũ (phải có trong tuyến của chuyến đi mới). */
+    pickupStop: z.string().trim().max(160).optional(),
+    dropoffStop: z.string().trim().max(160).optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict();
 
 type ReviewReason = 'UNMATCHED' | 'AMBIGUOUS' | 'LATE' | 'OVERPAID' | 'BOOKING_CLOSED' | 'POSSIBLE_DUPLICATE';
 
@@ -113,6 +144,7 @@ export class PaymentsService {
     private readonly box: SecretBox,
     private readonly tokenSecret: TokenSecret,
     private readonly sepay: SepayTransactionsClient,
+    private readonly operators: OperatorsService,
   ) {}
 
   // ---- Cấu hình tài khoản nhận tiền ------------------------------------------------------------
@@ -511,6 +543,287 @@ export class PaymentsService {
         c,
       );
       return this.paymentView(c, paymentId);
+    });
+  }
+
+  /**
+   * Dữ liệu cho hộp thoại cấp lại chỗ: đơn gốc, từng chuyến với các chỗ cũ (còn trống không), tiền đã có.
+   * Chỉ đọc; trạng thái chỗ có thể đổi trước khi gửi — `reinstateLate` kiểm tra lại dưới khóa.
+   */
+  async reinstateContext(operatorId: string, paymentId: string) {
+    if (!isUuid(operatorId) || !isUuid(paymentId)) throw notFound('khoản thu');
+    const { rows: [p] } = await this.db.query<PaymentRow>(
+      'SELECT * FROM payments WHERE id = $1 AND operator_id = $2', [paymentId, operatorId],
+    );
+    if (!p) throw notFound('khoản thu');
+    if (!p.matched_booking_id) throw new DomainError('CONFLICT', 'Khoản thu chưa gắn với đơn nào, hãy phân bổ thủ công.');
+    const { rows: [b] } = await this.db.query<{
+      id: string; code: string; status: string; trip_id: string; release_at: Date | null; total_amount: number; paid_amount: number;
+      pickup_stop: StopPoint | null; dropoff_stop: StopPoint | null;
+    }>(
+      `SELECT id, code, status, trip_id, release_at, total_amount, paid_amount, pickup_stop, dropoff_stop
+       FROM bookings WHERE id = $1 AND operator_id = $2`,
+      [p.matched_booking_id, operatorId],
+    );
+    if (!b) throw notFound('đơn');
+    const now = this.clock.now();
+    const { rows: items } = await this.db.query<{
+      trip_id: string; trip_name: string; trip_code: string; depart_at: Date; trip_status: string;
+      seat_code: string; occupancy: number; infant_count: number; free: boolean;
+    }>(
+      `SELECT i.trip_id, t.name AS trip_name, t.code AS trip_code, t.depart_at, t.status AS trip_status,
+              i.seat_code, i.occupancy, i.infant_count,
+              ts.sellable AND (ts.booking_id IS NULL OR ts.booking_id = i.booking_id OR EXISTS (
+                SELECT 1 FROM bookings o WHERE o.id = ts.booking_id AND o.status = 'HOLDING' AND o.release_at <= $2
+              )) AS free
+       FROM booking_items i JOIN trips t ON t.id = i.trip_id JOIN trip_seats ts ON ts.trip_id = i.trip_id AND ts.seat_code = i.seat_code
+       WHERE i.booking_id = $1
+       ORDER BY (i.trip_id = $3) DESC, t.depart_at, i.seat_code`,
+      [b.id, now, b.trip_id],
+    );
+    const legs: { tripId: string; tripName: string; tripCode: string; departAt: string; departed: boolean; cancelled: boolean;
+      seats: { seatCode: string; occupancy: number; infantCount: number; available: boolean }[] }[] = [];
+    for (const i of items) {
+      let leg = legs.find((l) => l.tripId === i.trip_id);
+      if (!leg) {
+        leg = { tripId: i.trip_id, tripName: i.trip_name, tripCode: i.trip_code, departAt: i.depart_at.toISOString(),
+          departed: i.depart_at <= now, cancelled: i.trip_status === 'CANCELLED', seats: [] };
+        legs.push(leg);
+      }
+      leg.seats.push({ seatCode: i.seat_code, occupancy: i.occupancy, infantCount: i.infant_count, available: i.free });
+    }
+    const lapsed = b.status === 'EXPIRED' || (b.status === 'HOLDING' && b.release_at !== null && b.release_at <= now);
+    return {
+      paymentId: p.id,
+      unallocatedAmount: p.amount - p.allocated_amount,
+      eligible: p.review_status === 'NEEDS_REVIEW' && p.review_reason === 'LATE' && p.amount > p.allocated_amount && lapsed,
+      booking: {
+        code: b.code, status: lapsed ? 'EXPIRED' : b.status, previousTotal: b.total_amount, paidAmount: b.paid_amount,
+        pickupStop: b.pickup_stop?.name ?? null, dropoffStop: b.dropoff_stop?.name ?? null,
+      },
+      legs,
+    };
+  }
+
+  /**
+   * Cấp lại chỗ cho đơn đã hết hạn khi tiền về muộn (khoản thu đang chờ kiểm tra với lý do LATE).
+   * Nhân viên chọn chỗ: đúng chỗ cũ nếu còn trống, chỗ khác cùng chuyến hoặc chuyến khác của nhà xe chưa khởi hành.
+   * Giá tính theo chỗ mới (chính sách hiện hành); đủ cọc → xác nhận vé, chưa đủ → giữ chỗ mới chờ khách chuyển thêm.
+   * Phần tiền dư → khoản thu vẫn chờ kiểm tra với lý do OVERPAID để hoàn. Tất cả trong một transaction.
+   */
+  async reinstateLate(actor: AuthUser, operatorId: string, paymentId: string, input: z.input<typeof reinstateLateSchema>) {
+    const data = reinstateLateSchema.parse(input);
+    if (!isUuid(operatorId) || !isUuid(paymentId)) throw notFound('khoản thu');
+    if (new Set(data.legs.map((l) => l.tripId)).size !== data.legs.length) {
+      throw new DomainError('VALIDATION_FAILED', 'Chuyến đi và chuyến về phải khác nhau.');
+    }
+    for (const leg of data.legs) {
+      leg.items.sort((a, b) => a.seatCode.localeCompare(b.seatCode));
+      if (new Set(leg.items.map((i) => i.seatCode)).size !== leg.items.length) {
+        throw new DomainError('VALIDATION_FAILED', 'Một chỗ chỉ được chọn một lần trên cùng chuyến.');
+      }
+    }
+    return this.db.tx(async (c) => {
+      const { rows: [found] } = await c.query<{ matched_booking_id: string | null }>(
+        'SELECT matched_booking_id FROM payments WHERE id = $1 AND operator_id = $2', [paymentId, operatorId],
+      );
+      if (!found) throw notFound('khoản thu');
+      if (!found.matched_booking_id) throw new DomainError('CONFLICT', 'Khoản thu chưa gắn với đơn nào, hãy phân bổ thủ công.');
+      const bookingId = found.matched_booking_id;
+
+      // Thứ tự khóa như các luồng khác: mọi chuyến liên quan (cũ + mới) theo ID → khoản thu → đơn.
+      const { rows: oldTrips } = await c.query<{ trip_id: string }>(
+        'SELECT DISTINCT trip_id FROM booking_items WHERE booking_id = $1', [bookingId],
+      );
+      const tripIds = [...new Set([...oldTrips.map((t) => t.trip_id), ...data.legs.map((l) => l.tripId)])];
+      const { rows: trips } = await c.query<{
+        id: string; operator_id: string; status: string; depart_at: Date; origin: string; destination: string; stops: TripStops | null;
+      }>(
+        `SELECT t.id, t.operator_id, t.status, t.depart_at, r.origin, r.destination, COALESCE(t.stops_snapshot, r.stops) AS stops
+         FROM trips t JOIN routes r ON r.id = t.route_id
+         WHERE t.id = ANY($1::uuid[]) ORDER BY t.id FOR NO KEY UPDATE OF t`,
+        [tripIds],
+      );
+      const tripBy = new Map(trips.map((t) => [t.id, t]));
+
+      const { rows: [payment] } = await c.query<PaymentRow>(
+        'SELECT * FROM payments WHERE id = $1 AND operator_id = $2 FOR UPDATE', [paymentId, operatorId],
+      );
+      if (payment!.review_status !== 'NEEDS_REVIEW' || payment!.review_reason !== 'LATE') {
+        throw new DomainError('CONFLICT', 'Chỉ cấp lại chỗ cho khoản tiền về muộn đang chờ xử lý.', {
+          reviewStatus: payment!.review_status, reviewReason: payment!.review_reason,
+        });
+      }
+      const available = payment!.amount - payment!.allocated_amount;
+      if (available <= 0) throw new DomainError('CONFLICT', 'Khoản thu này đã được phân bổ hết.');
+
+      const { rows: [b] } = await c.query<LockedBooking & { pickup_stop: StopPoint | null; dropoff_stop: StopPoint | null }>(
+        `SELECT id, code, operator_id, trip_id, status, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount,
+                pickup_stop, dropoff_stop
+         FROM bookings WHERE id = $1 AND operator_id = $2 FOR UPDATE`,
+        [bookingId, operatorId],
+      );
+      if (!b) throw notFound('đơn');
+      const now = this.clock.now();
+      const lapsed = b.status === 'EXPIRED' || (b.status === 'HOLDING' && b.release_at !== null && b.release_at <= now);
+      if (!lapsed) {
+        throw new DomainError('CONFLICT', 'Đơn không ở trạng thái hết hạn giữ chỗ nên không cấp lại được.', { bookingStatus: b.status });
+      }
+      const { rows: previous } = await c.query<{ trip_id: string; seat_code: string; occupancy: number; infant_count: number }>(
+        'SELECT trip_id, seat_code, occupancy, infant_count FROM booking_items WHERE booking_id = $1 ORDER BY trip_id, seat_code',
+        [b.id],
+      );
+      // Một yêu cầu khác vừa đổi chỗ của đơn sau lúc đọc danh sách chuyến → chuyến mới của đơn chưa được khóa.
+      if (previous.some((i) => !tripBy.has(i.trip_id))) {
+        throw new DomainError('CONFLICT', 'Đơn vừa được thay đổi, vui lòng tải lại và thử lại.');
+      }
+
+      const legTrips = data.legs.map((l) => tripBy.get(l.tripId));
+      for (const t of legTrips) {
+        if (!t || t.operator_id !== operatorId) throw notFound('chuyến');
+        if (t.status === 'DRAFT') throw new DomainError('TRIP_NOT_ON_SALE', 'Chuyến đang ở bản nháp, chưa bán vé được.');
+        if (t.status === 'CANCELLED') throw new DomainError('TRIP_NOT_ON_SALE', 'Chuyến đã hủy.');
+        if (now >= t.depart_at) throw new DomainError('TRIP_NOT_ON_SALE', 'Chuyến đã khởi hành.');
+      }
+      const outbound = legTrips[0]!;
+      const inbound = legTrips[1];
+      if (inbound && (inbound.origin !== outbound.destination || inbound.destination !== outbound.origin || inbound.depart_at <= outbound.depart_at)) {
+        throw new DomainError('VALIDATION_FAILED', 'Chuyến về phải đúng tuyến ngược chiều và khởi hành sau chuyến đi.');
+      }
+      const policy = await this.operators.currentPolicy(operatorId, c);
+      if (data.legs.some((l) => l.items.length > policy.maxUnitsPerBooking)) {
+        throw new DomainError('LIMIT_EXCEEDED', `Mỗi đơn chọn tối đa ${policy.maxUnitsPerBooking} chỗ.`, { max: policy.maxUnitsPerBooking });
+      }
+      // Nhân viên chọn điểm → phải có trong tuyến. Không chọn → giữ điểm cũ nếu tuyến mới cũng có, không thì để trống.
+      const stop = (kind: 'pickup' | 'dropoff', chosen: string | undefined, previous: StopPoint | null) => {
+        if (chosen !== undefined) return resolveStop(outbound.stops, kind, chosen);
+        try {
+          return resolveStop(outbound.stops, kind, previous?.name);
+        } catch {
+          return null;
+        }
+      };
+      const pickupStop = stop('pickup', data.pickupStop, b.pickup_stop);
+      const dropoffStop = stop('dropoff', data.dropoffStop, b.dropoff_stop);
+
+      // Nhả chỗ của các đơn giữ quá hạn (kể cả chính đơn này nếu tác vụ nền chưa dọn) rồi mới kiểm tra chỗ trống.
+      for (const t of legTrips) await expireDueHoldsForTrip(c, t!.id, now);
+      await c.query('UPDATE trip_seats SET booking_id = NULL WHERE booking_id = $1', [b.id]);
+
+      const pricedLegs = [];
+      for (const { tripId, items } of data.legs) {
+        const codes = items.map((i) => i.seatCode);
+        const { rows: seats } = await c.query<{ seat_code: string; floor: string; max_occupancy: number; sellable: boolean; booking_id: string | null }>(
+          'SELECT seat_code, floor, max_occupancy, sellable, booking_id FROM trip_seats WHERE trip_id = $1 AND seat_code = ANY($2::text[])',
+          [tripId, codes],
+        );
+        const unknown = codes.filter((code) => !seats.some((s) => s.seat_code === code));
+        if (unknown.length) throw new DomainError('VALIDATION_FAILED', 'Chuyến không có một số chỗ đã chọn.', { seats: unknown, tripId });
+        const taken = seats.filter((s) => !s.sellable || s.booking_id !== null).map((s) => s.seat_code).sort();
+        if (taken.length) {
+          throw new DomainError('SEAT_UNAVAILABLE', `Chỗ ${taken.join(', ')} đã có người giữ hoặc không bán.`, { seats: taken, tripId });
+        }
+        const { rows: fares } = await c.query<{ floor: string; occupancy: number; price: number }>(
+          'SELECT floor, occupancy, price FROM trip_fares WHERE trip_id = $1', [tripId],
+        );
+        const priced = priceItems(
+          items, seats.map((s) => ({ seatCode: s.seat_code, floor: s.floor, maxOccupancy: s.max_occupancy })), fares, policy.childPolicy,
+        );
+        pricedLegs.push({ tripId, codes, priced });
+      }
+      const total = pricedLegs.reduce((sum, leg) => sum + leg.priced.total, 0);
+      const fixed = policy.fixedDeposit;
+      const deposit = fixed
+        ? pricedLegs.flatMap((l) => l.priced.items).reduce((sum, it) => sum + fixedUnitDeposit(it.lineTotal, it.occupancy, fixed), 0)
+        : depositAmount(total, policy.depositPercent);
+      if (b.paid_amount > total) {
+        throw new DomainError('CONFLICT', 'Đơn đã nhận nhiều hơn giá các chỗ mới. Chọn thêm chỗ hoặc hoàn tiền.', {
+          paidAmount: b.paid_amount, totalAmount: total,
+        });
+      }
+
+      const allocate = Math.min(available, total - b.paid_amount);
+      const paid = b.paid_amount + allocate;
+      const confirm = paid >= deposit;
+      const status = confirm ? 'CONFIRMED' : 'HOLDING';
+      const paymentStatus = paid >= total ? 'PAID' : confirm ? 'DEPOSIT_PAID' : paid > 0 ? 'PARTIAL' : 'UNPAID';
+      const holdExpiresAt = confirm ? null : new Date(now.getTime() + policy.holdMinutes * 60_000);
+      const releaseAt = holdExpiresAt && new Date(holdExpiresAt.getTime() + policy.paymentGraceMinutes * 60_000);
+
+      await c.query('DELETE FROM booking_items WHERE booking_id = $1', [b.id]);
+      for (const { tripId, codes, priced } of pricedLegs) {
+        for (const it of priced.items) {
+          await c.query(
+            `INSERT INTO booking_items (booking_id, trip_id, seat_code, occupancy, infant_count, unit_price, infant_price, line_total)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [b.id, tripId, it.seatCode, it.occupancy, it.infantCount, it.unitPrice, it.infantPrice, it.lineTotal],
+          );
+        }
+        const upd = await c.query(
+          'UPDATE trip_seats SET booking_id = $1 WHERE trip_id = $2 AND seat_code = ANY($3::text[]) AND booking_id IS NULL',
+          [b.id, tripId, codes],
+        );
+        if (upd.rowCount !== codes.length) throw new Error('Seat inventory changed while the trip row was locked');
+      }
+      await c.query(
+        `UPDATE bookings SET trip_id = $2, status = $3, hold_expires_at = $4, release_at = $5, total_amount = $6, deposit_amount = $7,
+                paid_amount = $8, payment_status = $9, policy_snapshot = $10, pickup_stop = $11, dropoff_stop = $12,
+                confirmed_at = CASE WHEN $13 THEN $14 ELSE confirmed_at END, updated_at = $14
+         WHERE id = $1`,
+        [b.id, outbound.id, status, holdExpiresAt, releaseAt, total, deposit, paid, paymentStatus, JSON.stringify(policy),
+          pickupStop && JSON.stringify(pickupStop), dropoffStop && JSON.stringify(dropoffStop), confirm, now],
+      );
+
+      if (allocate > 0) {
+        const { rows: al } = await c.query<{ id: string }>(
+          'INSERT INTO payment_allocations (payment_id, booking_id, amount, allocated_by) VALUES ($1, $2, $3, $4) RETURNING id',
+          [payment!.id, b.id, allocate, actor.id],
+        );
+        await c.query('UPDATE payments SET allocated_amount = allocated_amount + $2 WHERE id = $1', [payment!.id, allocate]);
+        await this.outbox(c, operatorId, 'payment.allocated', b.id, `payment.allocated:${al[0]!.id}`, {
+          bookingCode: b.code, amount: allocate, paidAmount: paid, paymentStatus,
+        });
+      }
+      const leftover = available - allocate;
+      // Chưa đủ cọc: giữ khoản thu trong hàng chờ để tiền không "biến mất" nếu khách không chuyển thêm và đơn hết hạn lần nữa.
+      const autoNote = leftover > 0 ? 'Đã cấp lại chỗ, còn tiền dư cần hoàn'
+        : confirm ? 'Đã cấp lại chỗ'
+          : `Đã giữ chỗ mới, chờ khách chuyển thêm ${(deposit - paid).toLocaleString('vi-VN')}đ trước ${holdExpiresAt!.toISOString()}`;
+      await c.query(
+        leftover > 0 ? `UPDATE payments SET review_reason = 'OVERPAID', review_note = $2 WHERE id = $1`
+          : confirm ? `UPDATE payments SET review_status = 'RESOLVED', review_note = $2 WHERE id = $1`
+            : `UPDATE payments SET review_note = $2 WHERE id = $1`,
+        [payment!.id, data.note ? `${data.note} · ${autoNote}` : autoNote],
+      );
+      if (confirm) {
+        await this.outbox(c, operatorId, 'booking.confirmed', b.id, `booking.confirmed:${b.id}`, {
+          bookingCode: b.code, reinstated: true, reassigned: true,
+        });
+      } else {
+        // Báo khách chỗ mới, hạn mới và số tiền còn thiếu (gửi ở worker thông báo).
+        await this.outbox(c, operatorId, 'booking.reinstated_hold', b.id, `booking.reinstated_hold:${b.id}:${now.getTime()}`, {
+          bookingCode: b.code, holdExpiresAt: holdExpiresAt!.toISOString(), amountDue: deposit - paid, totalAmount: total,
+        });
+      }
+      const seatsOf = (rows: { tripId: string; seatCode: string }[]) => rows.map((r) => ({ tripId: r.tripId, seatCode: r.seatCode }));
+      await this.audit.record(
+        { operatorId, actorUserId: actor.id, action: 'booking.reinstate', entity: 'booking', entityId: b.id,
+          data: {
+            bookingCode: b.code, previousStatus: b.status, paymentId: payment!.id, manual: true, note: data.note ?? null,
+            previousSeats: seatsOf(previous.map((i) => ({ tripId: i.trip_id, seatCode: i.seat_code }))),
+            seats: seatsOf(pricedLegs.flatMap((l) => l.codes.map((seatCode) => ({ tripId: l.tripId, seatCode })))),
+            previousTotal: b.total_amount, totalAmount: total, allocated: allocate, leftover, status,
+          } },
+        c,
+      );
+      return {
+        booking: {
+          code: b.code, status, tripId: outbound.id, totalAmount: total, depositAmount: deposit, paidAmount: paid, paymentStatus,
+          holdExpiresAt: holdExpiresAt?.toISOString() ?? null,
+          items: pricedLegs.flatMap((l) => l.priced.items.map((it) => ({ tripId: l.tripId, ...it }))),
+        },
+        payment: await this.paymentView(c, payment!.id),
+      };
     });
   }
 

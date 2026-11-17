@@ -624,6 +624,28 @@ export class AdminController {
     return this.payments.allocate(req.auth, operatorId, paymentId, body as never);
   }
 
+  /**
+   * Tiền về muộn (khoản thu LATE): cấp lại chỗ cũ nếu còn trống hoặc đổi sang chỗ/chuyến khác đã thỏa thuận với khách.
+   * Giá tính theo chỗ mới; tiền dư giữ ở hàng chờ (OVERPAID) để hoàn.
+   */
+  @Get('operators/:operatorId/payments/:paymentId/reinstate')
+  @Perm('payment.manage')
+  reinstateContext(@Param('operatorId') operatorId: string, @Param('paymentId') paymentId: string) {
+    return this.payments.reinstateContext(operatorId, paymentId);
+  }
+
+  @Post('operators/:operatorId/payments/:paymentId/reinstate')
+  @HttpCode(200)
+  @Perm('payment.manage')
+  reinstateLatePayment(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') operatorId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: unknown,
+  ) {
+    return this.payments.reinstateLate(req.auth, operatorId, paymentId, body as never);
+  }
+
   @Post('operators/:operatorId/payments/:paymentId/resolve')
   @HttpCode(200)
   @Perm('payment.manage')

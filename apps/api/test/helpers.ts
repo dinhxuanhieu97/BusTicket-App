@@ -89,7 +89,7 @@ export function buildServices(clock = new FixedClock(T0), abuse: Partial<AbuseCo
   const phones = new PhoneVerificationService(db, clock, config, limiter, sms, secret);
   const bookings = new BookingsService(db, operators, clock, secret, limiter, config, phones);
   const sepay = new FakeSepayClient();
-  const payments = new PaymentsService(db, clock, new AuditService(db), new SecretBox(AUTH_SECRET), secret, sepay);
+  const payments = new PaymentsService(db, clock, new AuditService(db), new SecretBox(AUTH_SECRET), secret, sepay, operators);
   return { db, clock, layouts, operators, vehicles, trips, bookings, limiter, phones, sms, payments, sepay };
 }
 
