@@ -191,7 +191,9 @@ describe('staff edit booking details', () => {
     const cleared = await edit(b.code, 'dispatcher', { pickupStop: '', note: null, contactName: 'Trần Văn Mới' }).expect(200);
     expect(cleared.body.changed).toEqual(['note', 'pickupStop']);
     expect(await row(b.code)).toMatchObject({ pickup_stop: null, passenger_note: null });
-    const same = await edit(b.code, 'owner', { contactName: 'Trần Văn Mới' }).expect(200);
+    const same = await edit(b.code, 'owner', {
+      contactName: 'Trần Văn Mới', contactPhone: '+84987654321', dropoffStop: 'Phù Mỹ', note: '',
+    }).expect(200);
     expect(same.body.changed).toEqual([]);
     const { rows: n } = await s.db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM audit_logs WHERE action = 'booking.edit_staff' AND entity_id = $1`, [after.id],
@@ -205,6 +207,8 @@ describe('staff edit booking details', () => {
       const r = await edit(b.code, 'seller', body).expect(400);
       expect(r.body.error.code).toBe('VALIDATION_FAILED');
     }
+    const phone = await edit(b.code, 'seller', { contactPhone: '12345' }).expect(400);
+    expect(phone.body.error.details).toMatchObject({ field: 'contactPhone' });
     expect((await row(b.code)).contact_name).toBe('Khách Test');
   });
 

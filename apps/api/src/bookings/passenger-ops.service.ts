@@ -210,7 +210,13 @@ export class PassengerOpsService {
     const data = bookingEditSchema.parse(input);
     const upper = code.trim().toUpperCase();
     if (!isUuid(operatorId) || !BOOKING_CODE.test(upper)) throw notFound('đơn');
-    const phone = data.contactPhone === undefined ? undefined : normalizeVnPhone(data.contactPhone);
+    let phone: string | undefined;
+    try {
+      phone = data.contactPhone === undefined ? undefined : normalizeVnPhone(data.contactPhone);
+    } catch (e) {
+      if (e instanceof DomainError) throw new DomainError(e.code, e.message, { field: 'contactPhone' });
+      throw e;
+    }
     return this.db.tx(async (c) => {
       const { rows } = await c.query<{
         id: string; code: string; status: string; release_at: Date | null; contact_name: string; contact_phone: string;
@@ -241,7 +247,11 @@ export class PassengerOpsService {
         pickup_stop: data.pickupStop === undefined ? b.pickup_stop : resolveStop(b.stops, 'pickup', data.pickupStop),
         dropoff_stop: data.dropoffStop === undefined ? b.dropoff_stop : resolveStop(b.stops, 'dropoff', data.dropoffStop),
       };
-      const same = (a: unknown, z: unknown) => JSON.stringify(a ?? null) === JSON.stringify(z ?? null);
+      // jsonb trả khóa theo thứ tự riêng của PostgreSQL: so điểm đón/trả theo từng trường, không so chuỗi JSON.
+      const same = (a: string | StopPoint | null, z: string | StopPoint | null) =>
+        a === null || z === null || typeof a === 'string' || typeof z === 'string'
+          ? (a ?? null) === (z ?? null)
+          : a.name === z.name && a.time === z.time && a.day === z.day;
       const changed = (
         [
           ['contactName', next.contact_name, b.contact_name],
