@@ -101,7 +101,7 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
 - [ ] 04/11/2026 · T6 · Một nhà xe có thể "chiếm trước" số tài khoản của nhà xe khác (ràng buộc duy nhất theo số tài khoản). Webhook vẫn cần đúng API Key do chủ tài khoản đặt trong SePay nên không giả được tiền, nhưng nhà xe thật bị chặn cấu hình → cần quy trình xác minh quyền sở hữu tài khoản (quản trị nền tảng xử lý tay).
 - [ ] 04/11/2026 · T6 · Đối soát chỉ lấy tối đa 5.000 giao dịch/lần, chưa phân trang; worker gọi định kỳ ở T10.
 - [ ] 04/11/2026 · T6 · Hoàn tiền (refund có duyệt) chưa làm: hiện chỉ "đánh dấu đã xử lý" kèm ghi chú. Cần module hoàn tiền theo PNTicketDocs mục 5.4/6.4 (task mới).
-- [~] 04/11/2026 · T6 · Tiền đến muộn (LATE) chưa có thao tác "cấp lại chỗ" có kiểm tra — hiện kế toán xử lý ngoài hệ thống (hoàn tiền hoặc đặt hộ đơn mới).
+- [x] 04/11/2026 · T6 · Tiền đến muộn (LATE) chưa có thao tác "cấp lại chỗ" có kiểm tra — hiện kế toán xử lý ngoài hệ thống (hoàn tiền hoặc đặt hộ đơn mới).
   - 17/11/2026 · **Người dùng chốt quy tắc** khi tiền về sau lúc nhả chỗ, theo thứ tự:
     1. Ghế cũ còn trống → cấp lại đúng ghế đó. **Đã có**: `reinstate()` trong `apps/api/src/payments/payments.service.ts` (tự động; chỉ chạy khi nhà xe bật tự xác nhận lại, tiền đủ cọc và chuyến chưa chạy/chưa hủy).
     2. Không còn đủ đúng các ghế đó → nhân viên liên hệ khách, đề nghị **đổi sang ghế khác**. **Chưa có**: cần API quản trị "cấp lại với ghế khác" cho đơn LATE (khóa chuyến, kiểm tra ghế trống, tính lại giá, xác nhận vé, phân bổ khoản tiền, ghi nhật ký) và nút tương ứng trên dashboard ở hàng chờ "Cần kiểm tra".
@@ -123,7 +123,8 @@ Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong (typecheck + toà
       | PaymentsService — điểm đón khác tuyến | Có (Thấp) | tên điểm cũ không có ở tuyến mới → lỗi | Đã sửa: để trống |
   - [ ] **Phát hiện 17/11/2026 (có sẵn từ trước)**: đơn giữ chỗ đã nhận một phần tiền (chưa đủ cọc) rồi hết hạn → `expireDueHoldsForTrip` đổi sang EXPIRED nhưng tiền đã phân bổ không vào hàng chờ kiểm tra hay khoản cần hoàn nào; kế toán không thấy để hoàn. Cần: khi hết hạn đơn có `paid_amount > 0` thì đưa vào hàng chờ/khoản cần hoàn (task riêng).
   - [ ] **Ghi chú**: mục "Hoàn tiền chưa làm" phía trên đã cũ một phần — `passenger-ops` đã có khoản cần hoàn cho đơn hủy (`GET/POST .../refunds`); khoản thu LATE/OVERPAID vẫn chỉ "đánh dấu đã xử lý".
-  - [ ] Nút trên dashboard ở hàng chờ "Cần kiểm tra" (repo `BusTicket-DashboardAdmin`): mặc định chọn sẵn ghế cũ nếu còn trống, cho chọn ghế/chuyến khác, hiển thị giá mới và tiền dư/thiếu trước khi xác nhận.
+  - [x] Nút trên dashboard ở hàng chờ "Cần kiểm tra" (repo `BusTicket-DashboardAdmin`, nhánh `hieufeature_late-payment-reassign`): chọn sẵn ghế cũ còn trống, đổi ghế/chuyến, tạm tính tiền dư/thiếu. Kiểm tra và giới hạn: xem [task.md workspace](../task.md) mục "Cấp lại chỗ cho tiền về muộn".
+  - [ ] Outbox `booking.reinstated_hold` chưa có worker gửi cho khách (chờ T7).
 - [x] 04/11/2026 · T3 · **`scripts/seed.ts` lỗi** (`pnpm --filter api seed` báo `VALIDATION_FAILED` regex): giá vé dùng tầng `A`/`B` trong khi sơ đồ đã đổi sang tầng `1`/`2`. Seed còn tạo nhà xe trước rồi mới lỗi → chạy lại báo trùng. — đã sửa: tầng `1`/`2`, chạy lại thì bỏ qua (05/11/2026)
 - [ ] 04/11/2026 · T11 · API chưa bật CORS: Mini App chạy trên domain của Zalo sẽ bị trình duyệt chặn. Dev dùng proxy của Vite; khi phát hành cần `enableCors` với danh sách domain Mini App (hoặc reverse proxy cùng origin).
 - [x] 04/11/2026 · T11 · Sơ đồ chỗ công khai không trả chính sách trẻ em (`childPolicy`: giá, tối đa mỗi chỗ) → Mini App chỉ tạm tính chưa gồm trẻ em và cho chọn tối đa 2 trẻ/chỗ theo schema; máy chủ mới kiểm tra đúng giới hạn. Nên thêm `childPolicy` vào `GET /trips/:id/seats`.
