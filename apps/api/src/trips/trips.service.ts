@@ -11,6 +11,7 @@ import { vnDayRange } from '../common/vn-time';
 import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { MAX_UNIT_PRICE } from '../bookings/pricing';
 import { OperatorsService } from '../operators/operators.service';
+import { pickTripCode, tripCodeBase } from './trip-code';
 
 const stop = z.object({
   name: z.string().trim().min(1).max(160),
@@ -62,6 +63,7 @@ export type CreateTripInput = z.input<typeof createTripSchema>;
 
 export interface TripRow {
   id: string;
+  code: string;
   operator_id: string;
   route_id: string;
   vehicle_id: string;
@@ -192,11 +194,13 @@ export class TripsService {
           const existing = await this.findTripByKey(c, operatorId, key);
           if (existing) return this.replayTrip(existing, requestHash!);
         }
-        const { rows: routes } = await c.query('SELECT id, stops FROM routes WHERE id = $1 AND operator_id = $2', [
-          data.routeId,
-          operatorId,
-        ]);
+        const { rows: routes } = await c.query<{ id: string; code: string; stops: z.output<typeof stopsSchema> | null }>(
+          'SELECT id, code, stops FROM routes WHERE id = $1 AND operator_id = $2',
+          [data.routeId, operatorId],
+        );
         if (!routes[0]) throw notFound('tuyến');
+        const { rows: operatorRows } = await c.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [operatorId]);
+        if (!operatorRows[0]) throw notFound('nhà xe');
         const { rows: vehicles } = await c.query<{ id: string; seat_layout_id: string; status: string }>(
           // Serialize vehicle allocations and pin the current seat layout.
           'SELECT id, seat_layout_id, status FROM vehicles WHERE id = $1 AND operator_id = $2 FOR UPDATE',
@@ -235,12 +239,21 @@ export class TripsService {
           throw new DomainError('VALIDATION_FAILED', 'Có giá cho tầng/số người mà sơ đồ xe không có.', { extra });
         }
 
+        // Khóa theo tiền tố mã để hai lần tạo cùng ngày-tuyến không chọn trùng số thứ tự.
+        const base = tripCodeBase(operatorRows[0].code, data.departAt, routes[0].code);
+        await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`trip-code:${operatorId}:${base}`]);
+        const { rows: takenRows } = await c.query<{ code: string }>(
+          `SELECT code FROM trips WHERE operator_id = $1 AND (code = $2 OR code LIKE $2 || '-%')`,
+          [operatorId, base],
+        );
+        const code = pickTripCode(base, new Set(takenRows.map((r) => r.code)));
+
         const { rows } = await c.query<TripRow>(
           `INSERT INTO trips (operator_id, route_id, vehicle_id, seat_layout_id, name, contact_phone,
-                              depart_at, sales_open_at, sales_close_at, status, idempotency_key, request_hash, occupied_until)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+                              depart_at, sales_open_at, sales_close_at, status, idempotency_key, request_hash, occupied_until, code)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
           [operatorId, data.routeId, vehicle.id, vehicle.seat_layout_id, data.name, contactPhone,
-            data.departAt, data.salesOpenAt, data.salesCloseAt, data.status, key ?? null, requestHash, occupiedUntil],
+            data.departAt, data.salesOpenAt, data.salesCloseAt, data.status, key ?? null, requestHash, occupiedUntil, code],
         );
         const trip = rows[0]!;
         await c.query(
@@ -343,7 +356,7 @@ export class TripsService {
     if (!isUuid(operatorId)) return [];
     const now = this.clock.now();
     const { rows } = await this.db.query(
-      `SELECT t.id, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone,
+      `SELECT t.id, t.code, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone,
               r.code AS route_code, v.code AS vehicle_code, v.name AS vehicle_name,
               (SELECT COUNT(*)::int FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
                 WHERE ts.trip_id = t.id AND (${SEAT_STATUS_SQL}) = 'AVAILABLE') AS available,
@@ -366,7 +379,7 @@ export class TripsService {
            AND ($5::timestamptz IS NULL OR (depart_at, id) > ($5::timestamptz, $6::uuid))
          ORDER BY depart_at, id LIMIT $7
        )
-       SELECT t.id, t.name, t.status, t.depart_at,
+       SELECT t.id, t.code, t.name, t.status, t.depart_at,
          to_char(t.depart_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at, t.sales_open_at, t.sales_close_at, t.contact_phone,
          r.code AS route_code, v.code AS vehicle_code, v.name AS vehicle_name,
          (SELECT COUNT(*)::int FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
@@ -392,13 +405,14 @@ export class TripsService {
     const { rows: trips } = await this.db.query<{
       id: string; name: string; status: TripRow['status']; depart_at: Date; sales_open_at: Date; sales_close_at: Date;
       contact_phone: string | null; created_at: Date; planned_arrive_at: Date | null;
+      code: string;
       route_id: string; route_code: string; origin: string; destination: string; stops: z.output<typeof stopsSchema>;
       vehicle_id: string; vehicle_code: string; vehicle_name: string; vehicle_type: string; plate_number: string | null;
       vehicle_status: string; vehicle_layout_id: string;
       layout_id: string; layout_code: string; layout_version: number; layout_name: string; unit: string; kind: string;
       definition: { floors: { code: string; label: string; rows: string[] }[] };
     }>(
-      `SELECT t.id, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone, t.created_at,
+      `SELECT t.id, t.code, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone, t.created_at,
               r.id AS route_id, r.code AS route_code, r.origin, r.destination, COALESCE(t.stops_snapshot,r.stops) AS stops, t.planned_arrive_at,
               v.id AS vehicle_id, v.code AS vehicle_code, v.name AS vehicle_name, v.type AS vehicle_type,
               v.plate_number, v.status AS vehicle_status, v.seat_layout_id AS vehicle_layout_id,
@@ -434,6 +448,7 @@ export class TripsService {
     return {
       trip: {
         id: t.id,
+        code: t.code,
         name: t.name,
         status: t.status,
         departAt: t.depart_at.toISOString(),
