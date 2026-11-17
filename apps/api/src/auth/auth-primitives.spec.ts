@@ -157,6 +157,7 @@ describe('role permissions', () => {
     for (const role of ROLES) {
       expect(can(role, 'booking.board')).toBe(role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER');
       expect(can(role, 'booking.cancel')).toBe(role === 'OWNER' || role === 'DISPATCHER');
+      expect(can(role, 'booking.update')).toBe(role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER');
     }
   });
 
