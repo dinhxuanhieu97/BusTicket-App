@@ -460,6 +460,8 @@ export class TripsService {
         onSale: t.status === 'OPEN' && t.sales_open_at <= now && now < t.sales_close_at,
       },
       route: { id: t.route_id, code: t.route_code, origin: t.origin, destination: t.destination },
+      /** Điểm đón/trả của chuyến (chụp theo lịch chạy, hoặc theo tuyến hiện tại) — để chọn khi bán tại quầy/nhập file. */
+      stops: t.stops,
       vehicle: {
         id: t.vehicle_id, code: t.vehicle_code, name: t.vehicle_name, type: t.vehicle_type,
         plateNumber: t.plate_number, status: t.vehicle_status,

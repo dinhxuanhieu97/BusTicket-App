@@ -212,6 +212,22 @@ export default function BookingDetailPage() {
         </div>
         <ReceiptActions saved={saved} booking={booking} />
       </section>
+      {(booking.pickupStop || booking.dropoffStop) && (
+        <section className="pn-card">
+          <h2 className="pn-section-title">Điểm đón, điểm trả</h2>
+          {(["pickupStop", "dropoffStop"] as const).map((key) => {
+            const stop = booking[key];
+            if (!stop) return null;
+            return (
+              <p key={key}>
+                {key === "pickupStop" ? "Đón" : "Trả"}: {stop.time}
+                {stop.day > 0 ? ` (+${stop.day} ngày)` : ""} · {stop.name}
+              </p>
+            );
+          })}
+          <p className="pn-meta">Giờ đón/trả là dự kiến, nhà xe có thể gọi xác nhận lại.</p>
+        </section>
+      )}
       {booking.note && (
         <section className="pn-card">
           <h2 className="pn-section-title">Ghi chú cho nhà xe</h2>

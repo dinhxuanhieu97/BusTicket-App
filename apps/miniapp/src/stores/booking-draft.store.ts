@@ -20,6 +20,10 @@ interface BookingDraftState {
   selection: Selection;
   note: string;
   setNote: (note: string) => void;
+  /** Tên điểm đón/trả đã chọn của chuyến đi; "" = chưa chọn (nhà xe gọi xác nhận). */
+  pickupStop: string;
+  dropoffStop: string;
+  setStops: (stops: { pickupStop?: string; dropoffStop?: string }) => void;
   contactName: string;
   contactPhone: string;
   /** Token "đã xác thực SĐT" (chế độ cao điểm), gắn với đúng số đã xác thực. */
@@ -51,12 +55,22 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
       selections: {},
       holdAttempt: null,
       note: "",
+      pickupStop: "",
+      dropoffStop: "",
     }),
   tripId: null,
   trip: null,
   selection: {},
   note: "",
   setNote: (note) => set((s) => ({ note, holdAttempt: note.trim() === s.note.trim() ? s.holdAttempt : null })),
+  pickupStop: "",
+  dropoffStop: "",
+  setStops: (stops) =>
+    set((s) => {
+      const next = { pickupStop: stops.pickupStop ?? s.pickupStop, dropoffStop: stops.dropoffStop ?? s.dropoffStop };
+      const changed = next.pickupStop !== s.pickupStop || next.dropoffStop !== s.dropoffStop;
+      return { ...next, holdAttempt: changed ? null : s.holdAttempt };
+    }),
   contactName: "",
   contactPhone: "",
   phoneToken: null,
@@ -76,6 +90,8 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
         ? (s.selections[tripId] ?? {})
         : {},
       note: "",
+      // Điểm đón/trả theo chuyến đi: giữ khi chỉ chuyển giữa chiều đi/về của cùng hành trình.
+      ...(s.pair?.some((t) => t.id === tripId) ? {} : { pickupStop: "", dropoffStop: "" }),
       holdAttempt: null,
     });
   },
@@ -112,6 +128,8 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
       selections: {},
       selection: {},
       note: "",
+      pickupStop: "",
+      dropoffStop: "",
       holdAttempt: null,
     }),
 }));

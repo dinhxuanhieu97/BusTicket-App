@@ -7,6 +7,8 @@ import { UsersService } from '../auth/users.service';
 import { Clock } from '../common/clock';
 import { DomainError } from '../common/errors';
 import { configureAccountSchema, PaymentsService } from '../payments/payments.service';
+import { StaffBookingsService } from '../bookings/staff-bookings.service';
+import { PassengerOpsService } from '../bookings/passenger-ops.service';
 import { LOGO_MAX_BYTES, OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
@@ -15,6 +17,9 @@ import { TripAssistantsService } from '../trips/trip-assistants.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
 
 const tripStatusBody = z.object({ status: z.enum(['OPEN', 'CLOSED']) }).strict();
+const passengerListQuery = z.object({ status: z.enum(['active', 'all']).default('active') }).strict();
+const passengerExportQuery = passengerListQuery.extend({ format: z.enum(['xlsx', 'csv']).default('xlsx') }).strict();
+const dryRunQuery = z.object({ dryRun: z.enum(['true', 'false']).default('false') }).strict();
 const ownerPasswordBody = z
   .object({
     password: passwordSchema,
@@ -73,6 +78,8 @@ export class AdminController {
     private readonly schedules: TripSchedulesService,
     private readonly auth: AuthService,
     private readonly assistants: TripAssistantsService,
+    private readonly staffBookings: StaffBookingsService,
+    private readonly passengerOps: PassengerOpsService,
     private readonly clock: Clock,
   ) {}
 
@@ -395,6 +402,134 @@ export class AdminController {
   @Perm('trip.assigned.read')
   myTripPassengers(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('tripId') tripId: string) {
     return this.assistants.passengers(op, req.auth.id, tripId);
+  }
+
+  /** Phụ xe quét QR trên vé (hoặc gõ mã vé) để đánh dấu khách lên xe — chỉ chuyến mình được phân công. */
+  @Post('operators/:operatorId/my-trips/:tripId/boarding')
+  @HttpCode(200)
+  @Perm('trip.assigned.board')
+  myTripBoarding(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('tripId') tripId: string, @Body() body: unknown) {
+    return this.passengerOps.setBoarding(req.auth, op, tripId, body, { assignedTo: req.auth.id });
+  }
+
+  /** Nhân viên nhà xe đánh dấu/bỏ đánh dấu lên xe (nút trong danh sách khách, hoặc quét vé). */
+  @Post('operators/:operatorId/trips/:tripId/boarding')
+  @HttpCode(200)
+  @Perm('booking.board')
+  tripBoarding(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('tripId') tripId: string, @Body() body: unknown) {
+    return this.passengerOps.setBoarding(req.auth, op, tripId, body);
+  }
+
+  /**
+   * Nhập lại file đã xuất: dòng có Mã vé cập nhật "Đã lên xe" và "Thực thu trên xe" (tổng tiền phụ xe thu của đơn).
+   * `?dryRun=true` xem trước; ghi thật cần Idempotency-Key, tất cả hoặc không dòng nào.
+   */
+  @Post('operators/:operatorId/trips/:tripId/passengers/boarding-import')
+  @HttpCode(200)
+  @Perm('booking.board')
+  importBoarding(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const { dryRun } = dryRunQuery.parse(query);
+    return this.passengerOps.importBoarding(req.auth, op, tripId, body, { dryRun: dryRun === 'true', idempotencyKey });
+  }
+
+  /** Hủy đơn thay khách: bắt buộc lý do; chỗ được nhả; đơn đã thu tiền → tạo khoản cần hoàn cho kế toán. */
+  @Post('operators/:operatorId/bookings/:code/cancel')
+  @HttpCode(200)
+  @Perm('booking.cancel')
+  cancelBooking(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('code') code: string, @Body() body: unknown) {
+    return this.passengerOps.cancel(req.auth, op, code, body);
+  }
+
+  /** Khoản cần hoàn (đơn đã hủy sau khi thu tiền). Kế toán hoàn ngoài hệ thống rồi đánh dấu đã hoàn/miễn. */
+  @Get('operators/:operatorId/refunds')
+  @Perm('payment.read')
+  refunds(@Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    return this.passengerOps.refunds(op, query);
+  }
+
+  @Post('operators/:operatorId/refunds/:refundId/resolve')
+  @HttpCode(200)
+  @Perm('payment.manage')
+  resolveRefund(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('refundId') id: string, @Body() body: unknown) {
+    return this.passengerOps.resolveRefund(req.auth, op, id, body);
+  }
+
+  /**
+   * Danh sách khách (họ tên, SĐT) của một chuyến cho nhân viên nhà xe. `status=active` (mặc định) gồm đơn đang giữ chỗ
+   * còn hạn; `status=all` thêm đơn hết hạn/đã hủy. Mỗi lần xem được ghi nhật ký vì có dữ liệu cá nhân.
+   */
+  @Get('operators/:operatorId/trips/:tripId/passengers')
+  @Perm('booking.read')
+  async tripPassengers(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const { status } = passengerListQuery.parse(query);
+    const r = await this.assistants.tripPassengers(op, tripId, status);
+    await this.log(req, op, 'passenger.list.view', 'trip', tripId, { status, bookings: r.bookings.length });
+    return r;
+  }
+
+  /** Cùng dữ liệu, dùng để dựng file Excel/CSV ở dashboard; quyền riêng và nhật ký riêng cho việc xuất file. */
+  @Get('operators/:operatorId/trips/:tripId/passengers/export')
+  @Perm('booking.export')
+  async exportTripPassengers(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const { status, format } = passengerExportQuery.parse(query);
+    const r = await this.assistants.tripPassengers(op, tripId, status);
+    await this.log(req, op, 'passenger.list.export', 'trip', tripId, { status, format, bookings: r.bookings.length });
+    return r;
+  }
+
+  /**
+   * Bán vé tại quầy: tạo đơn `STAFF` cho các chỗ đã chọn. `?dryRun=true` chỉ tính giá/kiểm tra chỗ (không cần khóa).
+   * Ghi thật bắt buộc Idempotency-Key; nhật ký ghi trong cùng transaction.
+   */
+  @Post('operators/:operatorId/trips/:tripId/bookings')
+  @HttpCode(200)
+  @Perm('booking.create')
+  createCounterBooking(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const { dryRun } = dryRunQuery.parse(query);
+    return this.staffBookings.createAtCounter(req.auth, op, tripId, body, { dryRun: dryRun === 'true', idempotencyKey });
+  }
+
+  /**
+   * Nhập danh sách khách mới (dòng không có mã vé) từ file đã đọc ở dashboard. `?dryRun=true`: xem trước, không ghi.
+   * Ghi thật: tất cả hoặc không dòng nào; Idempotency-Key bắt buộc (băm nội dung file).
+   */
+  @Post('operators/:operatorId/trips/:tripId/passengers/import')
+  @HttpCode(200)
+  @Perm('booking.create')
+  importPassengers(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('tripId') tripId: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const { dryRun } = dryRunQuery.parse(query);
+    return this.staffBookings.importPassengers(req.auth, op, tripId, body, { dryRun: dryRun === 'true', idempotencyKey });
   }
 
   @Get('operators/:operatorId/trips/:tripId')

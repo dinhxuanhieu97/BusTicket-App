@@ -135,8 +135,29 @@ describe('role permissions', () => {
     }
   });
 
-  it('assistants only read the trips they are assigned to', () => {
-    expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read']);
+  it('lets operator staff, but not assistants or the platform admin, read and export trip passenger lists', () => {
+    for (const role of ROLES) {
+      const staff = role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER' || role === 'ACCOUNTANT';
+      expect(can(role, 'booking.read')).toBe(staff);
+      expect(can(role, 'booking.export')).toBe(staff);
+    }
+  });
+
+  it('lets owners, dispatchers and sellers create counter/imported bookings, but not accountants, assistants or the platform', () => {
+    for (const role of ROLES) {
+      expect(can(role, 'booking.create')).toBe(role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER');
+    }
+  });
+
+  it('assistants only read and board the trips they are assigned to', () => {
+    expect(PERMISSIONS.filter((p) => can('ASSISTANT', p))).toEqual(['trip.assigned.read', 'trip.assigned.board']);
+  });
+
+  it('lets dispatchers and sellers board passengers, but only dispatchers cancel bookings', () => {
+    for (const role of ROLES) {
+      expect(can(role, 'booking.board')).toBe(role === 'OWNER' || role === 'DISPATCHER' || role === 'SELLER');
+      expect(can(role, 'booking.cancel')).toBe(role === 'OWNER' || role === 'DISPATCHER');
+    }
   });
 
   it('requires 2FA for owners, accountants and platform admins', () => {
