@@ -71,6 +71,10 @@ export interface BookingView {
   /** Còn phải trả để xác nhận vé (khi đang giữ chỗ) hoặc để trả đủ (khi đã xác nhận). */
   amountDueNow: number;
   items: { tripId?: string; seatCode: string; occupancy: number; infantCount: number; unitPrice: number; infantPrice: number; lineTotal: number }[];
+  /** Lúc khách báo đã chuyển khoản (gửi ảnh lần đầu), null nếu chưa. */
+  transferClaimedAt: string | null;
+  /** Số ảnh lệnh chuyển khoản khách đã gửi. */
+  paymentProofCount: number;
 }
 
 export interface TicketVerification {
@@ -100,6 +104,7 @@ interface BookingRow {
   trip_id: string;
   hold_expires_at: Date | null;
   release_at: Date | null;
+  transfer_claimed_at: Date | null;
   total_amount: number;
   deposit_amount: number;
   paid_amount: number;
@@ -118,7 +123,7 @@ interface BookingReplayRow extends BookingRow {
 }
 
 const BOOKING_COLUMNS =
-  'id, code, status, trip_id, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note, pickup_stop, dropoff_stop';
+  'id, code, status, trip_id, hold_expires_at, release_at, total_amount, deposit_amount, paid_amount, payment_status, request_hash, access_token_version, passenger_note, pickup_stop, dropoff_stop, transfer_claimed_at';
 
 const MAX_CODE_ATTEMPTS = 5;
 
@@ -622,6 +627,9 @@ export class BookingsService {
        WHERE i.booking_id = $1 ORDER BY i.seat_code`,
       [b.id],
     );
+    const proofCount = await q.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM booking_payment_proofs WHERE booking_id = $1', [b.id],
+    );
     const roundTrip = rows.some(r => r.trip_id !== b.trip_id);
     const tripContacts = new Map<string, string>();
     for (const row of rows) {
@@ -653,6 +661,8 @@ export class BookingsService {
         infantPrice: r.infant_price,
         lineTotal: r.line_total,
       })),
+      transferClaimedAt: b.transfer_claimed_at ? b.transfer_claimed_at.toISOString() : null,
+      paymentProofCount: proofCount.rows[0]?.n ?? 0,
     };
   }
 }

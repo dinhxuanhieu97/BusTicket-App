@@ -160,7 +160,8 @@ export class TripAssistantsService {
     return {
       trip: r.trip,
       bookings: r.bookings.map(
-        ({ channel: _c, contactErased: _e, holdUntil: _h, createdAt: _t, createdBy: _u, onboardCollected: _o, cancelReason: _r, ...b }) => b,
+        ({ channel: _c, contactErased: _e, holdUntil: _h, createdAt: _t, createdBy: _u, onboardCollected: _o, cancelReason: _r,
+          transferClaimedAt: _tc, paymentProofCount: _pc, ...b }) => b,
       ),
       summary: r.summary,
       fetchedAt: r.fetchedAt,

@@ -1,7 +1,10 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { z } from 'zod';
 import { AuditService } from '../audit/audit.service';
 import { AuthedRequest, AuthGuard, Perm } from '../auth/auth.guard';
+import { readLimited } from '../common/read-limited';
+import { PaymentProofsService } from '../bookings/payment-proofs.service';
 import { AuthService, passwordSchema } from '../auth/auth.service';
 import { UsersService } from '../auth/users.service';
 import { Clock } from '../common/clock';
@@ -32,34 +35,6 @@ const paymentAccountBody = configureAccountSchema.extend({
   otp: z.string().regex(/^\d{6}$/).optional(),
 });
 
-/** Đọc thân request thô, dừng và báo lỗi khi vượt `max` byte (body parser JSON không xử lý image/*). */
-function readLimited(req: NodeJS.ReadableStream, max: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let done = false;
-    const fail = () => {
-      if (done) return;
-      done = true;
-      req.removeAllListeners('data');
-      req.resume();
-      reject(new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' }));
-    };
-    req.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > max) return fail();
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (!done) {
-        done = true;
-        resolve(Buffer.concat(chunks));
-      }
-    });
-    req.on('error', fail);
-  });
-}
-
 /**
  * API quản trị. Mọi route đều qua AuthGuard (đăng nhập + quyền + giới hạn theo `:operatorId`).
  * Thao tác ghi được lưu nhật ký (`audit_logs`).
@@ -81,6 +56,7 @@ export class AdminController {
     private readonly staffBookings: StaffBookingsService,
     private readonly passengerOps: PassengerOpsService,
     private readonly clock: Clock,
+    private readonly proofs: PaymentProofsService,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
@@ -137,7 +113,7 @@ export class AdminController {
     if (!/^image\/(png|jpeg|webp)\b/i.test(type)) {
       throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
     }
-    const data = await readLimited(req, LOGO_MAX_BYTES);
+    const data = await readLimited(req, LOGO_MAX_BYTES, 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', 'logo');
     const mime = await this.operators.setLogo(op, data, type, this.clock.now());
     await this.log(req, op, 'operator.logo.update', 'operator', op, { mime, bytes: data.length });
     return this.operators.profile(op);
@@ -472,6 +448,31 @@ export class AdminController {
    * Danh sách khách (họ tên, SĐT) của một chuyến cho nhân viên nhà xe. `status=active` (mặc định) gồm đơn đang giữ chỗ
    * còn hạn; `status=all` thêm đơn hết hạn/đã hủy. Mỗi lần xem được ghi nhật ký vì có dữ liệu cá nhân.
    */
+  /** Ảnh lệnh chuyển khoản khách gửi cho đơn (chỉ thông tin, không kèm ảnh). */
+  @Get('operators/:operatorId/bookings/:code/payment-proofs')
+  @Perm('payment.read')
+  bookingPaymentProofs(@Param('operatorId') op: string, @Param('code') code: string) {
+    return this.proofs.listForBooking(op, code);
+  }
+
+  /** Dữ liệu một ảnh chuyển khoản; không cho trình duyệt đoán kiểu hay lưu đệm. */
+  @Get('operators/:operatorId/payment-proofs/:proofId')
+  @Perm('payment.read')
+  async paymentProofImage(@Param('operatorId') op: string, @Param('proofId') id: string, @Res() res: Response) {
+    const img = await this.proofs.image(op, id);
+    res
+      .status(200)
+      .set({
+        'Content-Type': img.mime,
+        'Content-Length': String(img.data.length),
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Content-Disposition': 'inline',
+      })
+      .end(img.data);
+  }
+
   @Get('operators/:operatorId/trips/:tripId/passengers')
   @Perm('booking.read')
   async tripPassengers(

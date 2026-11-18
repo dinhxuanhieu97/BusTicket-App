@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useSnackbar } from "zmp-ui";
+import { Button, useSnackbar } from "zmp-ui";
 import { copy, errorMessage } from "@/constants/copy";
 import { config } from "@/config";
 import receiptLogo from "@/assets/receipt-logo.png";
 import { EmptyState } from "@/components/booking/empty-state";
 import { ReceiptActions } from "@/components/booking/receipt-actions";
 import { StatusBadge } from "@/components/booking/status-badge";
+import { TransferProof } from "@/components/booking/transfer-proof";
 import { Journey } from "@/components/booking/journey";
 import { LoadingState } from "@/components/common/loading-state";
 import { Notice } from "@/components/common/notice";
@@ -252,7 +253,10 @@ export default function BookingDetailPage() {
             <p>{errorMessage(payment.error)}</p>
           </Notice>
         ) : payment.data?.payable ? (
-          <PaymentBox key={payment.data.qrImageUrl} payment={payment.data} />
+          <>
+            <PaymentBox key={payment.data.qrImageUrl} payment={payment.data} />
+            <TransferProof booking={booking} accessToken={saved.accessToken} />
+          </>
         ) : payment.data ? (
           <Notice
             tone="warning"
@@ -293,6 +297,9 @@ export default function BookingDetailPage() {
           ))}
         </div>
       </div>
+      <Button variant="secondary" fullWidth onClick={() => navigate("/my-bookings")}>
+        {copy.myBookings.title}
+      </Button>
     </div>
   );
 }

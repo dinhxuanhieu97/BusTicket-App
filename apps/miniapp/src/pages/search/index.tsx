@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { copy } from "@/constants/copy";
-import { useOpenRoutes } from "@/services/trip/trip.queries";
+import { useOpenRoutes, useTrips } from "@/services/trip/trip.queries";
 import { formatVnDate, vnDate } from "@/utils/time";
 import { DiscoverRoutes } from "@/components/home/discover-routes";
 import { Stepper } from "@/components/booking/stepper";
@@ -11,6 +11,8 @@ import { useTripSearch } from "@/stores/trip-search.store";
 import { tripResultsUrl, validRoundTrip } from "@/utils/trip-search";
 import { SearchIcon } from "@/components/common/vectors";
 import { Notice } from "@/components/common/notice";
+import { TravelDateField } from "@/components/booking/travel-date-field";
+import { earliestTravelDate } from "@/utils/travel-date";
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -41,6 +43,20 @@ export default function SearchPage() {
     ],
     [catalog.data, origin],
   );
+  const today = vnDate(new Date());
+  const todayTrips = useTrips(today);
+  const minDate = earliestTravelDate(
+    new Date(),
+    todayTrips.data,
+    origin,
+    destination,
+  );
+  // Ngày đã lưu từ lần tìm trước có thể đã qua hoặc hết chuyến: dời lên ngày sớm nhất còn chọn được.
+  useEffect(() => {
+    if (date && date < minDate) setDate(minDate);
+    if (returnDate && returnDate < (date && date > minDate ? date : minDate))
+      setReturnDate("");
+  }, [minDate, date, returnDate]);
   useEffect(() => {
     const first = catalog.data?.[0];
     if (initialized.current || !first) return;
@@ -140,20 +156,22 @@ export default function SearchPage() {
             />
           </div>
           <div className={`pn-search-date ${roundTrip ? "pn-date-pair" : ""}`}>
-            <TravelDate
+            <TravelDateField
               label={copy.search.date}
               value={date}
-              min={vnDate(new Date())}
+              min={minDate}
+              placeholder="Chọn ngày đi"
               onChange={(value) => {
                 setDate(value);
                 if (returnDate && returnDate < value) setReturnDate("");
               }}
             />
             {roundTrip && (
-              <TravelDate
+              <TravelDateField
                 label={copy.search.returnDate}
                 value={returnDate}
-                min={date || vnDate(new Date())}
+                min={date && date > minDate ? date : minDate}
+                placeholder="Chọn ngày về"
                 onChange={setReturnDate}
               />
             )}
@@ -238,41 +256,5 @@ export default function SearchPage() {
         />
       </div>
     </div>
-  );
-}
-
-function TravelDate({
-  label,
-  value,
-  min,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  min: string;
-  onChange: (date: string) => void;
-}) {
-  return (
-    <label className="pn-field">
-      <span>{label}</span>
-      <div className="pn-date-display">
-        <svg aria-hidden="true" viewBox="0 0 24 24">
-          <rect x="3" y="5" width="18" height="16" rx="3" />
-          <path d="M7 3v5m10-5v5M3 11h18" />
-        </svg>
-        <span aria-hidden="true">
-          {value ? formatVnDate(`${value}T00:00:00+07:00`) : "Chọn ngày về"}
-        </span>
-        <input
-          type="date"
-          required
-          aria-label={label}
-          min={min}
-          value={value}
-          onClick={(event) => event.currentTarget.showPicker?.()}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      </div>
-    </label>
   );
 }
