@@ -7,6 +7,9 @@ export interface TripSearch {
   date: string;
   origin: string;
   destination: string;
+  /** Điểm đón/trả khách chọn ngay ở form tìm (điền sẵn ở bước thanh toán nếu chuyến có điểm đó). */
+  pickup?: string;
+  dropoff?: string;
   roundTrip: boolean;
   returnDate: string;
 }

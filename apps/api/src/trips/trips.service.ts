@@ -549,13 +549,18 @@ export class TripsService {
   }
 
   /** One row per bookable route. Pick a departure that actually offers the displayed fare. */
+  /**
+   * Tuyến đang bán của nhà xe cho màn tìm chuyến: giá thấp nhất, số chuyến, và tên các điểm đón/trả
+   * (theo danh sách điểm của chuyến nếu có bản chụp, không thì của tuyến) để khách chọn ngay ở form tìm.
+   */
   async discover(operatorCode: string) {
     const op = await this.operators.getByCode(operatorCode);
     const { rows } = await this.db.query<{
       code: string; origin: string; destination: string; depart_at: Date; from_price: number | null; count: number;
+      stops: ({ pickup?: { name: string }[]; dropoff?: { name: string }[] } | null)[];
     }>(
       `WITH bookable AS (
-         SELECT r.code, r.origin, r.destination, t.depart_at,
+         SELECT r.code, r.origin, r.destination, t.depart_at, COALESCE(t.stops_snapshot, r.stops) AS stops,
                 (SELECT MIN(f.price) FROM trip_fares f WHERE f.trip_id = t.id AND f.occupancy = 1) AS price
            FROM trips t JOIN routes r ON r.id = t.route_id
           WHERE t.operator_id = $1 AND t.status = 'OPEN' AND t.depart_at > $2
@@ -564,12 +569,17 @@ export class TripsService {
                          WHERE ts.trip_id = t.id AND (${SEAT_STATUS_SQL}) = 'AVAILABLE')
        )
        SELECT code, origin, destination, MIN(price)::int AS from_price, COUNT(*)::int AS count,
-              (array_agg(depart_at ORDER BY price NULLS LAST, depart_at))[1] AS depart_at
+              (array_agg(depart_at ORDER BY price NULLS LAST, depart_at))[1] AS depart_at,
+              jsonb_agg(DISTINCT stops) AS stops
          FROM bookable GROUP BY code, origin, destination ORDER BY from_price NULLS LAST, code`,
       [op.id, this.clock.now()],
     );
+    const names = (lists: ({ name: string }[] | undefined)[]) => [
+      ...new Set(lists.flatMap((l) => (l ?? []).map((s) => s.name.trim()).filter(Boolean))),
+    ];
     return rows.map(r => ({ code: r.code, origin: r.origin, destination: r.destination,
-      fromPrice: r.from_price, tripCount: r.count, departAt: r.depart_at.toISOString() }));
+      fromPrice: r.from_price, tripCount: r.count, departAt: r.depart_at.toISOString(),
+      pickupStops: names(r.stops.map((s) => s?.pickup)), dropoffStops: names(r.stops.map((s) => s?.dropoff)) }));
   }
 
   /** Sơ đồ chỗ công khai: chỉ mã chỗ, trạng thái, sức chứa và giá — không có dữ liệu khách. */

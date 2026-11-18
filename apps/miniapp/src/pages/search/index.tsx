@@ -13,6 +13,12 @@ import { SearchIcon } from "@/components/common/vectors";
 import { Notice } from "@/components/common/notice";
 import { TravelDateField } from "@/components/booking/travel-date-field";
 import { earliestTravelDate } from "@/utils/travel-date";
+import {
+  destinationOptions,
+  originOptions,
+  placeKey,
+  resolvePlace,
+} from "@/utils/search-places";
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -20,6 +26,8 @@ export default function SearchPage() {
   const [date, setDate] = useState(search.date);
   const [origin, setOrigin] = useState(search.origin);
   const [destination, setDestination] = useState(search.destination);
+  const [pickup, setPickup] = useState(search.pickup ?? "");
+  const [dropoff, setDropoff] = useState(search.dropoff ?? "");
   const [roundTrip, setRoundTrip] = useState(search.roundTrip);
   const [returnDate, setReturnDate] = useState(search.returnDate);
   const [adults, setAdults] = useState(search.adults ?? 1);
@@ -29,20 +37,30 @@ export default function SearchPage() {
   const [formError, setFormError] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const catalog = useOpenRoutes();
+  // Điểm đi gồm thành phố/bến và các điểm đón của nó; điểm đến gồm điểm đến và các điểm trả.
   const origins = useMemo(
-    () => [...new Set(catalog.data?.map((route) => route.origin))],
+    () => originOptions(catalog.data ?? []),
     [catalog.data],
   );
   const destinations = useMemo(
-    () => [
-      ...new Set(
-        catalog.data
-          ?.filter((route) => !origin || route.origin === origin)
-          .map((route) => route.destination),
-      ),
-    ],
-    [catalog.data, origin],
+    () => destinationOptions(catalog.data ?? [], origin, pickup),
+    [catalog.data, origin, pickup],
   );
+  // Điểm đón/trả đã lưu nhưng không còn bán: giữ thành phố, bỏ điểm.
+  useEffect(() => {
+    if (!catalog.data) return;
+    if (pickup && !resolvePlace(origins, origin, pickup).stop) setPickup("");
+    if (dropoff && !resolvePlace(destinations, destination, dropoff).stop)
+      setDropoff("");
+  }, [
+    catalog.data,
+    origins,
+    destinations,
+    origin,
+    pickup,
+    destination,
+    dropoff,
+  ]);
   const today = vnDate(new Date());
   const todayTrips = useTrips(today);
   const minDate = earliestTravelDate(
@@ -70,6 +88,8 @@ export default function SearchPage() {
       date,
       origin,
       destination,
+      pickup,
+      dropoff,
       roundTrip,
       returnDate,
       adults,
@@ -124,12 +144,17 @@ export default function SearchPage() {
           <div className="pn-search-route">
             <RouteSelect
               label={copy.search.origin}
-              value={origin}
+              value={placeKey(origin, pickup)}
               options={origins}
               placeholder={copy.search.allOrigins}
-              onChange={(value) => {
-                setOrigin(value);
-                setDestination("");
+              stopLabel="Điểm đón"
+              onChange={(option) => {
+                setOrigin(option?.place ?? "");
+                setPickup(option?.stop ?? "");
+                if (option?.place !== origin) {
+                  setDestination("");
+                  setDropoff("");
+                }
               }}
             />
             <button
@@ -138,8 +163,22 @@ export default function SearchPage() {
               aria-label="Đổi điểm đi và điểm đến"
               disabled={!origin || !destination}
               onClick={() => {
-                setOrigin(destination);
-                setDestination(origin);
+                // Chiều ngược: điểm trả thành điểm đón và ngược lại (bỏ nếu chiều về không có điểm đó).
+                const back = catalog.data ?? [];
+                const from = resolvePlace(
+                  originOptions(back),
+                  destination,
+                  dropoff,
+                );
+                const to = resolvePlace(
+                  destinationOptions(back, from.place, from.stop),
+                  origin,
+                  pickup,
+                );
+                setOrigin(from.place);
+                setPickup(from.stop);
+                setDestination(to.place);
+                setDropoff(to.stop);
               }}
             >
               <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -148,10 +187,14 @@ export default function SearchPage() {
             </button>
             <RouteSelect
               label={copy.search.destination}
-              value={destination}
+              value={placeKey(destination, dropoff)}
               options={destinations}
               placeholder={copy.search.allDestinations}
-              onChange={setDestination}
+              stopLabel="Điểm trả"
+              onChange={(option) => {
+                setDestination(option?.place ?? "");
+                setDropoff(option?.stop ?? "");
+              }}
               alignEnd
             />
           </div>

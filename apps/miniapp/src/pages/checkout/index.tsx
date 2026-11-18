@@ -13,6 +13,7 @@ import {
 } from "@/services/booking/booking.mutations";
 import { useSeatMap } from "@/services/trip/trip.queries";
 import { useBookingDraft } from "@/stores/booking-draft.store";
+import { useTripSearch } from "@/stores/trip-search.store";
 import { usePassengers } from "@/stores/passengers.store";
 import { useProfile } from "@/stores/profile.store";
 import {
@@ -69,6 +70,27 @@ export default function CheckoutPage() {
     if (Object.keys(defaults).length) current.setContact(defaults);
   }, []);
 
+  // Điểm đón/trả khách đã chọn ở form tìm chuyến: điền sẵn một lần cho chuyến đi, nếu chuyến có điểm đó.
+  const prefilledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!map?.stops || !firstId || prefilledFor.current === firstId) return;
+    prefilledFor.current = firstId;
+    const { pickup, dropoff } = useTripSearch.getState().search;
+    const current = useBookingDraft.getState();
+    current.setStops({
+      ...(!current.pickupStop &&
+      pickup &&
+      map.stops.pickup.some((s) => s.name === pickup)
+        ? { pickupStop: pickup }
+        : {}),
+      ...(!current.dropoffStop &&
+      dropoff &&
+      map.stops.dropoff.some((s) => s.name === dropoff)
+        ? { dropoffStop: dropoff }
+        : {}),
+    });
+  }, [map, firstId]);
+
   if (finished.current) return null;
   if (
     !firstId ||
@@ -121,14 +143,22 @@ export default function CheckoutPage() {
       ? copy.checkout.phoneInvalid
       : undefined;
   // Chỉ gửi điểm còn trong danh sách điểm hiện tại của chuyến (nhà xe có thể vừa sửa tuyến).
-  const pickupStop = map.stops?.pickup.some((s) => s.name === draft.pickupStop) ? draft.pickupStop : "";
-  const dropoffStop = map.stops?.dropoff.some((s) => s.name === draft.dropoffStop) ? draft.dropoffStop : "";
+  const pickupStop = map.stops?.pickup.some((s) => s.name === draft.pickupStop)
+    ? draft.pickupStop
+    : "";
+  const dropoffStop = map.stops?.dropoff.some(
+    (s) => s.name === draft.dropoffStop,
+  )
+    ? draft.dropoffStop
+    : "";
   const tokenValid =
     !!draft.phoneToken &&
-    normalizeVnMobile(draft.phoneToken.phone) === normalizeVnMobile(draft.contactPhone) &&
+    normalizeVnMobile(draft.phoneToken.phone) ===
+      normalizeVnMobile(draft.contactPhone) &&
     new Date(draft.phoneToken.expiresAt).getTime() > Date.now();
   const needsOtp =
-    !tokenValid && (otpRequested || (map.booking.requiresPhoneOtp && !draft.holdAttempt));
+    !tokenValid &&
+    (otpRequested || (map.booking.requiresPhoneOtp && !draft.holdAttempt));
 
   const fillFromZalo = () => {
     zaloContact.mutate(undefined, {
@@ -147,7 +177,9 @@ export default function CheckoutPage() {
         useProfile.getState().markZaloShared();
         if (name.trim()) useProfile.getState().save(name, c.phone);
         openSnackbar({
-          text: c.name ? copy.checkout.zaloFilled : copy.checkout.zaloPhoneFilled,
+          text: c.name
+            ? copy.checkout.zaloFilled
+            : copy.checkout.zaloPhoneFilled,
           type: "success",
         });
       },
@@ -178,7 +210,9 @@ export default function CheckoutPage() {
     try {
       attempt = draft.ensureHoldAttempt();
     } catch {
-      setHoldError("Thiết bị chưa hỗ trợ giữ chỗ an toàn. Vui lòng cập nhật Zalo hoặc dùng trình duyệt mới hơn.");
+      setHoldError(
+        "Thiết bị chưa hỗ trợ giữ chỗ an toàn. Vui lòng cập nhật Zalo hoặc dùng trình duyệt mới hơn.",
+      );
       return;
     }
     setOtpRequested(false);
@@ -217,7 +251,9 @@ export default function CheckoutPage() {
                 },
               }
             : {}),
-          route: first ? `${first.route.origin} → ${first.route.destination}` : "",
+          route: first
+            ? `${first.route.origin} → ${first.route.destination}`
+            : "",
           seatCodes: codes,
         },
       },
@@ -246,7 +282,8 @@ export default function CheckoutPage() {
             error.code === "PHONE_VERIFICATION_REQUIRED"
           ) {
             const current = useBookingDraft.getState();
-            if (current.phoneToken?.token === submission.phoneToken) current.setPhoneToken(null);
+            if (current.phoneToken?.token === submission.phoneToken)
+              current.setPhoneToken(null);
             setOtpRequested(true);
             return;
           }
@@ -415,11 +452,19 @@ export default function CheckoutPage() {
             const value = kind === "pickup" ? pickupStop : dropoffStop;
             return (
               <label className="pn-field" key={kind}>
-                <span>{kind === "pickup" ? copy.checkout.pickupStop : copy.checkout.dropoffStop}</span>
+                <span>
+                  {kind === "pickup"
+                    ? copy.checkout.pickupStop
+                    : copy.checkout.dropoffStop}
+                </span>
                 <select
                   value={value}
                   onChange={(e) =>
-                    draft.setStops(kind === "pickup" ? { pickupStop: e.target.value } : { dropoffStop: e.target.value })
+                    draft.setStops(
+                      kind === "pickup"
+                        ? { pickupStop: e.target.value }
+                        : { dropoffStop: e.target.value },
+                    )
                   }
                 >
                   <option value="">{copy.checkout.stopUnset}</option>

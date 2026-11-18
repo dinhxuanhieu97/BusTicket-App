@@ -35,6 +35,9 @@ it('exposes the route schedule on its trips and prevents writes from a different
   const stops = {pickup:[{name:'Bến đi',time:'18:30',day:0}],dropoff:[{name:'Bến đến',time:'07:30',day:1}]};
   await services.trips.saveStops(seed.op.id,seed.route.id,stops);
   expect((await services.trips.seatMap(seed.limoTrip.id)).stops).toEqual(stops);
+  // Form tìm chuyến nhận tên điểm đón/trả của tuyến đang bán.
+  await services.db.query('UPDATE trip_seats SET sellable = true WHERE trip_id = ANY($1::uuid[])', [[seed.limoTrip.id, seed.bedTrip.id]]);
+  expect((await services.trips.discover('PN'))[0]).toMatchObject({ pickupStops: ['Bến đi'], dropoffStops: ['Bến đến'] });
   const other = (await services.db.query("SELECT id FROM operators WHERE code='AB'")).rows[0];
   expect(await errorCode(services.trips.saveStops(other!.id,seed.route.id,{pickup:[],dropoff:[]}))).toBe('NOT_FOUND');
 });

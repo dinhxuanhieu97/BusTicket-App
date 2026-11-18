@@ -10,6 +10,9 @@ export interface OpenRoute {
   fromPrice: number | null;
   tripCount: number;
   departAt: string;
+  /** Tên điểm đón/trả của các chuyến đang bán (API cũ không có). */
+  pickupStops?: string[];
+  dropoffStops?: string[];
 }
 
 export interface TripSummary {
