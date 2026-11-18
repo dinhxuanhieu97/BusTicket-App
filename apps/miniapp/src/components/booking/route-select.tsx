@@ -12,6 +12,7 @@ export function RouteSelect({
   placeholder,
   onChange,
   stopLabel,
+  fallbackLabel,
   alignEnd = false,
 }: {
   label: string;
@@ -21,6 +22,8 @@ export function RouteSelect({
   onChange: (option: PlaceOption | null) => void;
   /** "Điểm đón" / "Điểm trả": đọc kèm tên điểm cho trình đọc màn hình. */
   stopLabel: string;
+  /** Tên hiển thị khi `value` chưa có trong `options`. */
+  fallbackLabel?: string;
   alignEnd?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -73,7 +76,8 @@ export function RouteSelect({
               )}
             </>
           ) : (
-            placeholder
+            // Danh sách chưa tải xong hoặc điểm không còn bán: vẫn hiện tên đã chọn.
+            fallbackLabel || placeholder
           )}
         </span>
         <svg

@@ -548,8 +548,8 @@ export class TripsService {
     }));
   }
 
-  /** One row per bookable route. Pick a departure that actually offers the displayed fare. */
   /**
+   * Mỗi tuyến đang bán một dòng; ngày gợi ý là chuyến thật sự có giá đang hiển thị.
    * Tuyến đang bán của nhà xe cho màn tìm chuyến: giá thấp nhất, số chuyến, và tên các điểm đón/trả
    * (theo danh sách điểm của chuyến nếu có bản chụp, không thì của tuyến) để khách chọn ngay ở form tìm.
    */
@@ -575,7 +575,8 @@ export class TripsService {
       [op.id, this.clock.now()],
     );
     const names = (lists: ({ name: string }[] | undefined)[]) => [
-      ...new Set(lists.flatMap((l) => (l ?? []).map((s) => s.name.trim()).filter(Boolean))),
+      // Cùng tên khác khoảng trắng/dạng Unicode giữa các chuyến chỉ hiện một lần.
+      ...new Set(lists.flatMap((l) => (l ?? []).map((s) => s.name.normalize('NFC').trim().replace(/\s+/g, ' ')).filter(Boolean))),
     ];
     return rows.map(r => ({ code: r.code, origin: r.origin, destination: r.destination,
       fromPrice: r.from_price, tripCount: r.count, departAt: r.depart_at.toISOString(),

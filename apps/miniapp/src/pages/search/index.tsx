@@ -46,10 +46,16 @@ export default function SearchPage() {
     () => destinationOptions(catalog.data ?? [], origin, pickup),
     [catalog.data, origin, pickup],
   );
-  // Điểm đón/trả đã lưu nhưng không còn bán: giữ thành phố, bỏ điểm.
+  // Điểm đón/trả đã lưu nhưng không còn bán: giữ thành phố, bỏ điểm. Đổi điểm đón làm điểm đến
+  // không còn trong danh sách thì bỏ luôn điểm đến (tránh ô hiện "Tất cả" mà vẫn tìm theo điểm cũ).
   useEffect(() => {
     if (!catalog.data) return;
     if (pickup && !resolvePlace(origins, origin, pickup).stop) setPickup("");
+    if (destination && !destinations.some((o) => o.place === destination)) {
+      setDestination("");
+      setDropoff("");
+      return;
+    }
     if (dropoff && !resolvePlace(destinations, destination, dropoff).stop)
       setDropoff("");
   }, [
@@ -148,6 +154,7 @@ export default function SearchPage() {
               options={origins}
               placeholder={copy.search.allOrigins}
               stopLabel="Điểm đón"
+              fallbackLabel={pickup || origin}
               onChange={(option) => {
                 setOrigin(option?.place ?? "");
                 setPickup(option?.stop ?? "");
@@ -191,6 +198,7 @@ export default function SearchPage() {
               options={destinations}
               placeholder={copy.search.allDestinations}
               stopLabel="Điểm trả"
+              fallbackLabel={dropoff || destination}
               onChange={(option) => {
                 setDestination(option?.place ?? "");
                 setDropoff(option?.stop ?? "");

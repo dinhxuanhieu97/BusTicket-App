@@ -59,5 +59,9 @@ describe("pickup and drop-off in the results URL", () => {
     expect(
       tripResultsUrl({ ...search, origin: "", destination: "" }),
     ).not.toMatch(/pickup|dropoff/);
+    // Điểm đón/trả không kèm điểm đi/đến (link sửa tay) bị bỏ qua.
+    expect(
+      readTripSearch(new URLSearchParams("date=2026-11-20&pickup=X&dropoff=Y")),
+    ).toMatchObject({ pickup: "", dropoff: "" });
   });
 });

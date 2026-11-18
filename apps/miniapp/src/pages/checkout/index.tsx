@@ -71,12 +71,19 @@ export default function CheckoutPage() {
   }, []);
 
   // Điểm đón/trả khách đã chọn ở form tìm chuyến: điền sẵn một lần cho chuyến đi, nếu chuyến có điểm đó.
-  const prefilledFor = useRef<string | null>(null);
+  // Ghi dấu trong store (không phải ref) để quay lại trang không điền đè lựa chọn "chưa chọn" của khách,
+  // và không điền khi đã có lượt giữ chỗ (đổi điểm sẽ tạo khóa idempotency mới).
   useEffect(() => {
-    if (!map?.stops || !firstId || prefilledFor.current === firstId) return;
-    prefilledFor.current = firstId;
-    const { pickup, dropoff } = useTripSearch.getState().search;
     const current = useBookingDraft.getState();
+    if (
+      !map?.stops ||
+      !firstId ||
+      current.stopsPrefilledFor === firstId ||
+      current.holdAttempt
+    )
+      return;
+    current.markStopsPrefilled(firstId);
+    const { pickup, dropoff } = useTripSearch.getState().search;
     current.setStops({
       ...(!current.pickupStop &&
       pickup &&
