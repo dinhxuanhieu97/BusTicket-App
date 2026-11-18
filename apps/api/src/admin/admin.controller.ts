@@ -335,8 +335,8 @@ export class AdminController {
   async renamePlace(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
     await this.operators.getById(operatorId);
     const result = await this.trips.renamePlace(operatorId, body);
-    const b = body as { from?: unknown; to?: unknown };
-    await this.log(req, operatorId, 'route.place.rename', 'route', undefined, { from: b.from, to: b.to, updated: result.updated });
+    if (result.updated > 0)
+      await this.log(req, operatorId, 'route.place.rename', 'route', undefined, result);
     return result;
   }
 
