@@ -134,7 +134,8 @@ export class TripSchedulesService {
     return this.db.tx(async (c) => {
       // Validate tenant ownership and distinct reverse endpoints before persisting a template.
       const routes = (
-        await c.query('SELECT id,origin,destination FROM routes WHERE operator_id=$1 AND id=ANY($2::uuid[])', [
+        // FOR KEY SHARE: chặn xóa tuyến chen giữa lúc kiểm tra và lưu lịch (config jsonb không có FK).
+        await c.query('SELECT id,origin,destination FROM routes WHERE operator_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR KEY SHARE', [
           operatorId,
           config.legs.map((l) => l.routeId),
         ])

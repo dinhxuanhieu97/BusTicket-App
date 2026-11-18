@@ -341,6 +341,66 @@ export class TripsService {
     });
   }
 
+  /**
+   * Đổi tên một điểm đi/đến trên mọi tuyến của nhà xe (cả hai chiều cùng lúc để cặp tuyến vẫn ngược chiều nhau).
+   * Đổi sang tên điểm đã có là gộp hai điểm. Chuyến/đơn cũ hiển thị theo tên mới (tuyến không lưu bản chụp tên).
+   */
+  async renamePlace(operatorId: string, input: unknown) {
+    const data = z.object({ from: z.string().trim().min(1).max(80), to: z.string().trim().min(1).max(80) }).strict().parse(input);
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    if (data.from === data.to) return { updated: 0 };
+    return this.db.tx(async (c) => {
+      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [operatorId + ':route-pair']);
+      const { rows } = await c.query<{ id: string; origin: string; destination: string }>(
+        'SELECT id, origin, destination FROM routes WHERE operator_id = $1 AND (origin = $2 OR destination = $2) FOR NO KEY UPDATE',
+        [operatorId, data.from],
+      );
+      if (!rows.length) throw notFound('điểm đi/đến');
+      const rename = (x: string) => (x === data.from ? data.to : x);
+      if (rows.some((r) => rename(r.origin) === rename(r.destination)))
+        throw new DomainError('VALIDATION_FAILED', `Đổi thành "${data.to}" sẽ tạo tuyến có điểm đi trùng điểm đến.`);
+      const res = await c.query(
+        `UPDATE routes SET origin = CASE WHEN origin = $2 THEN $3 ELSE origin END,
+                           destination = CASE WHEN destination = $2 THEN $3 ELSE destination END
+          WHERE operator_id = $1 AND (origin = $2 OR destination = $2)`,
+        [operatorId, data.from, data.to],
+      );
+      return { updated: res.rowCount ?? 0 };
+    });
+  }
+
+  /**
+   * Xóa tuyến tạo nhầm. Chỉ khi chưa có chuyến nào (FK trips.route_id) và không lịch chạy nào dùng tuyến;
+   * khóa hàng tuyến FOR UPDATE: tạo chuyến (FK, KEY SHARE) và tạo lịch (FOR KEY SHARE) không chen vào được.
+   */
+  async deleteRoute(operatorId: string, routeId: string) {
+    if (!isUuid(operatorId) || !isUuid(routeId)) throw notFound('tuyến');
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<{ id: string; code: string; origin: string; destination: string }>(
+        'SELECT id, code, origin, destination FROM routes WHERE id = $1 AND operator_id = $2 FOR UPDATE',
+        [routeId, operatorId],
+      );
+      const r = rows[0];
+      if (!r) throw notFound('tuyến');
+      const { rows: used } = await c.query<{ trips: number; schedules: number }>(
+        `SELECT (SELECT count(*) FROM trips WHERE route_id = $1)::int AS trips,
+                (SELECT count(*) FROM trip_schedules WHERE operator_id = $2 AND position(lower($1::text) IN lower(config::text)) > 0)::int AS schedules`,
+        [r.id, operatorId],
+      );
+      const { trips, schedules } = used[0]!;
+      if (trips > 0 || schedules > 0)
+        throw new DomainError(
+          'CONFLICT',
+          trips > 0
+            ? `Tuyến ${r.code} đã có ${trips} chuyến nên không xóa được.`
+            : `Tuyến ${r.code} đang được dùng trong ${schedules} lịch chạy. Xóa lịch trước khi xóa tuyến.`,
+          { trips, schedules },
+        );
+      await c.query('DELETE FROM routes WHERE id = $1 AND operator_id = $2', [r.id, operatorId]);
+      return r;
+    });
+  }
+
   async listRoutes(operatorId: string) {
     if (!isUuid(operatorId)) return [];
     const { rows } = await this.db.query(
