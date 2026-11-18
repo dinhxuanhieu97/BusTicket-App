@@ -23,6 +23,7 @@ export const PERMISSIONS = [
   'booking.create', //        bán vé tại quầy, nhập danh sách khách mới từ file (đơn STAFF)
   'booking.board', //         đánh dấu khách lên xe, nhập lại file đã xuất (lên xe + thực thu trên xe)
   'booking.cancel', //        hủy đơn thay khách (bắt buộc lý do; đã thu tiền → tạo khoản cần hoàn)
+  'booking.update', //        sửa họ tên, SĐT, điểm đón/trả, ghi chú của đơn (không đổi chỗ/tiền)
   'audit.read',
   'payment.configure', //     tài khoản nhận tiền + khóa webhook SePay
   'payment.read', //          xem sổ thu, khoản cần kiểm tra
@@ -56,13 +57,13 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   OWNER: new Set<Permission>(ALL_OPERATOR_PERMISSIONS),
   DISPATCHER: new Set<Permission>([
     'policy.read', 'fleet.read', 'fleet.write', 'route.read', 'route.write', 'trip.read', 'trip.write', ...PASSENGERS, 'booking.create',
-    'booking.board', 'booking.cancel',
+    'booking.board', 'booking.cancel', 'booking.update',
   ]),
   // Bán vé tại quầy được ghi nhận tiền mặt khách trả cho đơn; không phân bổ tay/xử lý ngoại lệ.
   // Bán vé tại quầy / nhập khách mới từ file (kế toán không tạo đơn).
   SELLER: new Set<Permission>([
     'policy.read', 'fleet.read', 'route.read', 'trip.read', 'payment.read', 'payment.record', ...PASSENGERS, 'booking.create',
-    'booking.board',
+    'booking.board', 'booking.update',
   ]),
   ACCOUNTANT: new Set<Permission>(['policy.read', 'fleet.read', 'route.read', 'trip.read', 'audit.read', ...MONEY, ...PASSENGERS]),
   // Phụ xe chỉ xem chuyến được giao, danh sách khách và đánh dấu lên xe của các chuyến đó (lọc theo phân công ở máy chủ).

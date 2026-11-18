@@ -447,6 +447,13 @@ export class AdminController {
     return this.passengerOps.cancel(req.auth, op, code, body);
   }
 
+  /** Sửa họ tên, SĐT, điểm đón/trả, ghi chú của đơn. Không đổi chỗ/tiền; nhật ký chỉ ghi tên trường đã đổi. */
+  @Patch('operators/:operatorId/bookings/:code')
+  @Perm('booking.update')
+  editBooking(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('code') code: string, @Body() body: unknown) {
+    return this.passengerOps.edit(req.auth, op, code, body);
+  }
+
   /** Khoản cần hoàn (đơn đã hủy sau khi thu tiền). Kế toán hoàn ngoài hệ thống rồi đánh dấu đã hoàn/miễn. */
   @Get('operators/:operatorId/refunds')
   @Perm('payment.read')

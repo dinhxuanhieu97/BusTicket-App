@@ -152,6 +152,89 @@ describe('staff cancel (C2)', () => {
   });
 });
 
+describe('staff edit booking details', () => {
+  const STOPS = {
+    pickup: [{ name: 'Bến xe An Sương', time: '17:30', day: 0 }, { name: 'Ngã tư Ga', time: '17:50', day: 0 }],
+    dropoff: [{ name: 'Phù Mỹ', time: '05:15', day: 1 }],
+  };
+  beforeAll(async () => {
+    await s.db.query('UPDATE trips SET stops_snapshot = $2 WHERE id = $1', [seed.limoTrip.id, JSON.stringify(STOPS)]);
+  });
+  const edit = (code: string, who: string, body: object) => http().patch(`${opBase()}/bookings/${code}`).set(bearer(who)).send(body);
+  const row = async (code: string) =>
+    (await s.db.query<{ id: string; contact_name: string; contact_phone: string; passenger_note: string | null; pickup_stop: unknown; dropoff_stop: unknown }>(
+      'SELECT id, contact_name, contact_phone, passenger_note, pickup_stop, dropoff_stop FROM bookings WHERE code = $1', [code],
+    )).rows[0]!;
+
+  it('updates name, phone, stops and note; audit records only the changed field names', async () => {
+    const b = await sell(seed.limoTrip.id);
+    const r = await edit(b.code, 'seller', {
+      contactName: '  Trần Văn Mới ', contactPhone: '0987 654 321', pickupStop: 'ngã tư  ga', dropoffStop: 'Phù Mỹ', note: 'Gọi trước 30 phút',
+    }).expect(200);
+    expect(r.body).toEqual({
+      booking: {
+        code: b.code, contactName: 'Trần Văn Mới', contactPhone: '+84987654321', note: 'Gọi trước 30 phút',
+        pickupStop: { name: 'Ngã tư Ga', time: '17:50', day: 0 }, dropoffStop: { name: 'Phù Mỹ', time: '05:15', day: 1 },
+      },
+      changed: ['contactName', 'contactPhone', 'note', 'pickupStop', 'dropoffStop'],
+    });
+    const after = await row(b.code);
+    expect(after).toMatchObject({ contact_name: 'Trần Văn Mới', contact_phone: '+84987654321', passenger_note: 'Gọi trước 30 phút' });
+    const { rows: audit } = await s.db.query<{ data: Record<string, unknown> }>(
+      `SELECT data FROM audit_logs WHERE action = 'booking.edit_staff' AND entity_id = $1`, [after.id],
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.data).toEqual({ bookingCode: b.code, changed: ['contactName', 'contactPhone', 'note', 'pickupStop', 'dropoffStop'] });
+    expect(JSON.stringify(audit[0]!.data)).not.toContain('987654321');
+
+    // Xóa điểm đón/ghi chú; gửi lại giá trị cũ không ghi nhật ký.
+    const cleared = await edit(b.code, 'dispatcher', { pickupStop: '', note: null, contactName: 'Trần Văn Mới' }).expect(200);
+    expect(cleared.body.changed).toEqual(['note', 'pickupStop']);
+    expect(await row(b.code)).toMatchObject({ pickup_stop: null, passenger_note: null });
+    const same = await edit(b.code, 'owner', {
+      contactName: 'Trần Văn Mới', contactPhone: '+84987654321', dropoffStop: 'Phù Mỹ', note: '',
+    }).expect(200);
+    expect(same.body.changed).toEqual([]);
+    const { rows: n } = await s.db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM audit_logs WHERE action = 'booking.edit_staff' AND entity_id = $1`, [after.id],
+    );
+    expect(n[0]!.n).toBe(2);
+  });
+
+  it('validates input: empty body, unknown fields, bad phone, unknown stop', async () => {
+    const b = await sell(seed.limoTrip.id);
+    for (const body of [{}, { seatCode: 'A1' }, { contactPhone: '12345' }, { pickupStop: 'Đà Lạt' }, { contactName: '   ' }]) {
+      const r = await edit(b.code, 'seller', body).expect(400);
+      expect(r.body.error.code).toBe('VALIDATION_FAILED');
+    }
+    const phone = await edit(b.code, 'seller', { contactPhone: '12345' }).expect(400);
+    expect(phone.body.error.details).toMatchObject({ field: 'contactPhone' });
+    expect((await row(b.code)).contact_name).toBe('Khách Test');
+  });
+
+  it('needs booking.update; other operators and unknown codes get 404', async () => {
+    const b = await sell(seed.limoTrip.id);
+    for (const who of ['accountant', 'assistant']) await edit(b.code, who, { note: 'x' }).expect(403);
+    await http().patch(`${opBase(other.op.id)}/bookings/${b.code}`).set(bearer('owner')).send({ note: 'x' }).expect(404);
+    await edit('ZZZZZZZZ', 'owner', { note: 'x' }).expect(404);
+    await edit('bad code!', 'owner', { note: 'x' }).expect(404);
+  });
+
+  it('refuses cancelled, expired and erased bookings', async () => {
+    const cancelled = await sell(seed.limoTrip.id);
+    await http().post(`${opBase()}/bookings/${cancelled.code}/cancel`).set(bearer('owner')).send({ reason: 'Khách đổi lịch' }).expect(200);
+    expect((await edit(cancelled.code, 'owner', { note: 'x' }).expect(409)).body.error.code).toBe('CONFLICT');
+
+    const hold = await sell(seed.limoTrip.id, { confirm: false });
+    await s.db.query(`UPDATE bookings SET release_at = $2 WHERE code = $1`, [hold.code, new Date(T0.getTime() - 1000)]);
+    await edit(hold.code, 'owner', { note: 'x' }).expect(409);
+
+    const erased = await sell(seed.limoTrip.id);
+    await s.db.query(`UPDATE bookings SET contact_erased_at = $2 WHERE code = $1`, [erased.code, T0]);
+    await edit(erased.code, 'owner', { pickupStop: 'Ngã tư Ga' }).expect(409);
+  });
+});
+
 describe('refund obligations', () => {
   it('lists open refunds for money roles and resolves them once', async () => {
     const b = await sell(seed.bedTrip.id, { paid: 50_000 });

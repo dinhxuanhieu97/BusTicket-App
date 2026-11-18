@@ -12,6 +12,8 @@ import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
 import { SEAT_CODE } from '../seat-layouts/layout-parser';
 import { TokenSecret } from './token-secret';
 import { MAX_IMPORT_ROWS, wholeNumber, type PlanIssue } from './staff-bookings.service';
+import { normalizeVnPhone } from '../common/phone';
+import { resolveStop, type StopPoint, type TripStops } from './stops';
 
 const BOOKING_CODE = /^[A-Z0-9]{4,12}$/;
 const PROOF = /^[A-Za-z0-9_-]{43}$/;
@@ -57,6 +59,21 @@ export const boardingImportSchema = z
       .max(MAX_IMPORT_ROWS * 2, `Mỗi lần cập nhật tối đa ${MAX_IMPORT_ROWS * 2} dòng.`),
   })
   .strict();
+
+/**
+ * Sửa thông tin liên hệ/đón trả/ghi chú của đơn (nhân viên). Chỉ gửi trường cần đổi; chuỗi rỗng hoặc null ở
+ * điểm đón/trả/ghi chú = xóa. Không đổi chỗ, giá hay tiền (tiền ghi qua sổ thu, lên xe qua `boarding`).
+ */
+export const bookingEditSchema = z
+  .object({
+    contactName: z.string().trim().min(1, 'Họ tên không được để trống.').max(120).optional(),
+    contactPhone: z.string().min(1).max(30).optional(),
+    pickupStop: z.string().trim().max(160).nullable().optional(),
+    dropoffStop: z.string().trim().max(160).nullable().optional(),
+    note: z.string().trim().max(500).nullable().optional(),
+  })
+  .strict()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), { message: 'Chưa có thông tin nào để sửa.' });
 
 export const refundListQuery = z.object({ status: z.enum(['OPEN', 'ALL']).default('OPEN') }).strict();
 export const refundResolveSchema = z
@@ -184,6 +201,89 @@ export class PassengerOpsService {
         c,
       );
       return { booking: { code: b.code, status: 'CANCELLED', paidAmount: b.paid_amount }, refund, alreadyCancelled: false };
+    });
+  }
+
+  // ---- Sửa thông tin đơn -------------------------------------------------------------------------
+
+  async edit(actor: AuthUser, operatorId: string, code: string, input: unknown) {
+    const data = bookingEditSchema.parse(input);
+    const upper = code.trim().toUpperCase();
+    if (!isUuid(operatorId) || !BOOKING_CODE.test(upper)) throw notFound('đơn');
+    let phone: string | undefined;
+    try {
+      phone = data.contactPhone === undefined ? undefined : normalizeVnPhone(data.contactPhone);
+    } catch (e) {
+      if (e instanceof DomainError) throw new DomainError(e.code, e.message, { field: 'contactPhone' });
+      throw e;
+    }
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<{
+        id: string; code: string; status: string; release_at: Date | null; contact_name: string; contact_phone: string;
+        contact_erased_at: Date | null; passenger_note: string | null; pickup_stop: StopPoint | null; dropoff_stop: StopPoint | null;
+        trip_status: string; stops: TripStops | null;
+      }>(
+        `SELECT b.id, b.code, b.status, b.release_at, b.contact_name, b.contact_phone, b.contact_erased_at, b.passenger_note,
+                b.pickup_stop, b.dropoff_stop, t.status AS trip_status, COALESCE(t.stops_snapshot, r.stops) AS stops
+         FROM bookings b JOIN trips t ON t.id = b.trip_id JOIN routes r ON r.id = t.route_id
+         WHERE b.operator_id = $1 AND b.code = $2
+         FOR UPDATE OF b`,
+        [operatorId, upper],
+      );
+      const b = rows[0];
+      if (!b) throw notFound('đơn');
+      const now = this.clock.now();
+      const expired = b.status === 'EXPIRED' || (b.status === 'HOLDING' && (!b.release_at || b.release_at <= now));
+      if (b.status === 'CANCELLED' || b.status === 'COMPLETED' || expired) {
+        throw new DomainError('CONFLICT', 'Chỉ sửa được đơn đang giữ chỗ hoặc đã xác nhận.');
+      }
+      if (b.trip_status === 'CANCELLED') throw new DomainError('CONFLICT', 'Chuyến của đơn đã hủy.');
+      if (b.contact_erased_at) throw new DomainError('CONFLICT', 'Khách đã xóa thông tin của đơn này.');
+
+      const next = {
+        contact_name: data.contactName ?? b.contact_name,
+        contact_phone: phone ?? b.contact_phone,
+        passenger_note: data.note === undefined ? b.passenger_note : data.note || null,
+        pickup_stop: data.pickupStop === undefined ? b.pickup_stop : resolveStop(b.stops, 'pickup', data.pickupStop),
+        dropoff_stop: data.dropoffStop === undefined ? b.dropoff_stop : resolveStop(b.stops, 'dropoff', data.dropoffStop),
+      };
+      // jsonb trả khóa theo thứ tự riêng của PostgreSQL: so điểm đón/trả theo từng trường, không so chuỗi JSON.
+      const same = (a: string | StopPoint | null, z: string | StopPoint | null) =>
+        a === null || z === null || typeof a === 'string' || typeof z === 'string'
+          ? (a ?? null) === (z ?? null)
+          : a.name === z.name && a.time === z.time && a.day === z.day;
+      const changed = (
+        [
+          ['contactName', next.contact_name, b.contact_name],
+          ['contactPhone', next.contact_phone, b.contact_phone],
+          ['note', next.passenger_note, b.passenger_note],
+          ['pickupStop', next.pickup_stop, b.pickup_stop],
+          ['dropoffStop', next.dropoff_stop, b.dropoff_stop],
+        ] as const
+      )
+        .filter(([, n, o]) => !same(n, o))
+        .map(([k]) => k);
+      if (changed.length) {
+        await c.query(
+          `UPDATE bookings SET contact_name = $2, contact_phone = $3, passenger_note = $4, pickup_stop = $5, dropoff_stop = $6,
+                  updated_at = $7
+           WHERE id = $1`,
+          [b.id, next.contact_name, next.contact_phone, next.passenger_note, next.pickup_stop && JSON.stringify(next.pickup_stop),
+            next.dropoff_stop && JSON.stringify(next.dropoff_stop), now],
+        );
+        // Nhật ký chỉ ghi tên trường đã đổi (không chép họ tên/SĐT vào nhật ký).
+        await this.audit.record(
+          { operatorId, actorUserId: actor.id, action: 'booking.edit_staff', entity: 'booking', entityId: b.id, data: { bookingCode: b.code, changed } },
+          c,
+        );
+      }
+      return {
+        booking: {
+          code: b.code, contactName: next.contact_name, contactPhone: next.contact_phone, note: next.passenger_note,
+          pickupStop: next.pickup_stop, dropoffStop: next.dropoff_stop,
+        },
+        changed,
+      };
     });
   }
 
