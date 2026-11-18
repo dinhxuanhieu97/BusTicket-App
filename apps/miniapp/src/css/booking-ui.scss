@@ -352,6 +352,28 @@
   margin-top: 16px;
   padding-top: 10px;
 }
+/* Hủy vé / xóa khỏi danh sách dưới mỗi vé. */
+.pn-ticket-actions {
+  gap: 8px;
+  margin-top: 10px;
+}
+.pn-ticket-actions .pn-button {
+  flex: 1;
+}
+.pn-button-muted {
+  width: 100%;
+  border: 1px solid var(--pn-line);
+  background: transparent;
+  color: inherit;
+}
+.pn-button-muted:hover,
+.pn-button-muted:active {
+  background: var(--pn-hover);
+}
+.pn-text-warning {
+  margin-top: 8px;
+  color: var(--pn-warning);
+}
 .pn-trip-foot {
   border-top: 1px solid var(--pn-line);
   margin-top: 14px;

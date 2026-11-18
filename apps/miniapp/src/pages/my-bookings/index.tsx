@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Modal, useSnackbar } from "zmp-ui";
 import { useQueries } from "@tanstack/react-query";
 import { copy } from "@/constants/copy";
 import { EmptyState } from "@/components/booking/empty-state";
@@ -11,7 +12,9 @@ import {
 } from "@/services/booking/booking.queries";
 import { useMyBookings, type SavedBooking } from "@/stores/my-bookings.store";
 import type { BookingView } from "@/types/api.types";
-import { needsPayment } from "@/utils/booking-status";
+import { useCancelBooking } from "@/services/booking/booking.mutations";
+import { errorMessage } from "@/constants/copy";
+import { canCancel, canRemove, needsPayment } from "@/utils/booking-status";
 import { formatVnDate, formatVnTime } from "@/utils/time";
 
 export default function MyBookingsPage() {
@@ -124,6 +127,13 @@ function BookingRow({
   failed: boolean;
   unavailable: boolean;
 }) {
+  const { openSnackbar } = useSnackbar();
+  const cancel = useCancelBooking();
+  const remove = useMyBookings((s) => s.remove);
+  const [confirm, setConfirm] = useState<"cancel" | "remove" | null>(null);
+  const [cancelError, setCancelError] = useState("");
+  const cancellable = !!booking && canCancel(booking);
+  const removable = canRemove(booking, unavailable);
   const statusMessage = unavailable
     ? copy.myBookings.statusUnavailable
     : failed
@@ -177,6 +187,97 @@ function BookingRow({
           <span aria-hidden="true"> →</span>
         </Link>
       </div>
+      {(cancellable || removable) && (
+        <div className="pn-row pn-ticket-actions">
+          {cancellable && (
+            <button
+              type="button"
+              className="pn-button pn-button-danger pn-button-form"
+              aria-label={`${copy.myBookings.cancel} ${saved.code}`}
+              onClick={() => {
+                setCancelError("");
+                setConfirm("cancel");
+              }}
+            >
+              {copy.myBookings.cancel}
+            </button>
+          )}
+          {removable && (
+            <button
+              type="button"
+              className="pn-button pn-button-muted pn-button-form"
+              aria-label={`${copy.myBookings.remove} ${saved.code}`}
+              onClick={() => setConfirm("remove")}
+            >
+              {copy.myBookings.remove}
+            </button>
+          )}
+        </div>
+      )}
+      <Modal
+        visible={confirm === "cancel"}
+        title={copy.myBookings.cancelTitle}
+        onClose={() => !cancel.isPending && setConfirm(null)}
+        actions={[
+          {
+            text: copy.myBookings.keep,
+            close: true,
+            disabled: cancel.isPending,
+          },
+          {
+            text: cancel.isPending
+              ? copy.myBookings.cancelling
+              : copy.myBookings.cancelConfirm,
+            danger: true,
+            disabled: cancel.isPending,
+            onClick: () =>
+              cancel.mutate(saved, {
+                onSuccess: () => {
+                  setConfirm(null);
+                  openSnackbar({
+                    text: copy.myBookings.cancelled(saved.code),
+                    type: "success",
+                  });
+                },
+                onError: (e) => setCancelError(errorMessage(e)),
+              }),
+          },
+        ]}
+      >
+        <p className="pn-meta">{copy.myBookings.cancelBody(saved.code)}</p>
+        {booking?.transferClaimedAt && (
+          <p className="pn-meta pn-text-warning" role="note">
+            {copy.myBookings.cancelClaimed}
+          </p>
+        )}
+        {cancelError && (
+          <p className="pn-field-error" role="alert">
+            {cancelError}
+          </p>
+        )}
+      </Modal>
+      <Modal
+        visible={confirm === "remove"}
+        title={copy.myBookings.removeTitle}
+        onClose={() => setConfirm(null)}
+        actions={[
+          { text: copy.myBookings.keep, close: true },
+          {
+            text: copy.myBookings.removeConfirm,
+            danger: true,
+            onClick: () => {
+              setConfirm(null);
+              remove(saved.code);
+              openSnackbar({
+                text: copy.myBookings.removed(saved.code),
+                type: "success",
+              });
+            },
+          },
+        ]}
+      >
+        <p className="pn-meta">{copy.myBookings.removeBody}</p>
+      </Modal>
     </article>
   );
 }

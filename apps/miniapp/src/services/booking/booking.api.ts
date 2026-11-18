@@ -51,6 +51,13 @@ export const bookingService = {
       headers: { "X-Booking-Token": accessToken },
     }),
 
+  /** Khách tự hủy đơn đang giữ chỗ chưa trả tiền: nhả chỗ ngay (409 nếu đơn đã nhận tiền). */
+  release: (code: string, accessToken: string) =>
+    apiRequest<BookingView>(`/bookings/${encodeURIComponent(code)}/release`, {
+      method: "POST",
+      headers: { "X-Booking-Token": accessToken },
+    }),
+
   payment: (code: string, accessToken: string) =>
     apiRequest<PaymentInstructions>(`/bookings/${encodeURIComponent(code)}/payment?purpose=deposit`, {
       headers: { "X-Booking-Token": accessToken },

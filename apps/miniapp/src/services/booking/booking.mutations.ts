@@ -47,3 +47,20 @@ export function useVerifyPhone() {
     mutationFn: (v: { verificationId: string; code: string }) => bookingService.verifyPhone(v.verificationId, v.code),
   });
 }
+
+/** Hủy đơn đang chờ thanh toán: cập nhật đơn trong bộ nhớ đệm và sơ đồ chỗ của chuyến. */
+export function useCancelBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (saved: SavedBooking) => bookingService.release(saved.code, saved.accessToken),
+    onSuccess: async (booking, saved) => {
+      await qc.cancelQueries({ queryKey: bookingKeys.detail(saved.code) });
+      qc.setQueryData(bookingKeys.detail(saved.code), booking);
+    },
+    onSettled: (_r, _e, saved) => {
+      void qc.invalidateQueries({ queryKey: tripKeys.seatMap(saved.tripId) });
+      if (saved.inbound) void qc.invalidateQueries({ queryKey: tripKeys.seatMap(saved.inbound.tripId) });
+      void qc.invalidateQueries({ queryKey: ["trips"] });
+    },
+  });
+}
