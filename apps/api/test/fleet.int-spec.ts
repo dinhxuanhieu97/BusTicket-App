@@ -284,5 +284,12 @@ describe('deleting vehicles', () => {
       [op.id, JSON.stringify({ legs: [{ vehicles: [{ vehicleId: v.id }] }] })],
     );
     expect(await errorCode(s.vehicles.remove(op.id, v.id))).toBe('CONFLICT');
+    // Lịch lưu UUID viết hoa, xóa bằng chữ thường (và ngược lại) vẫn bị chặn.
+    await s.db.query(`UPDATE trip_schedules SET config = $2 WHERE operator_id = $1`, [
+      op.id,
+      JSON.stringify({ legs: [{ vehicles: [{ vehicleId: v.id.toUpperCase() }] }] }),
+    ]);
+    expect(await errorCode(s.vehicles.remove(op.id, v.id.toLowerCase()))).toBe('CONFLICT');
+    expect(await errorCode(s.vehicles.remove(op.id, v.id.toUpperCase()))).toBe('CONFLICT');
   });
 });
