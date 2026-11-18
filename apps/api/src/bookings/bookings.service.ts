@@ -538,6 +538,8 @@ export class BookingsService {
          WHERE id = $1`,
         [b.id, now],
       );
+      // Ảnh lệnh chuyển khoản thường có họ tên/số tài khoản của khách: xóa cùng lúc.
+      await c.query('DELETE FROM booking_payment_proofs WHERE booking_id = $1', [b.id]);
       return { code, erasedAt: now };
     });
   }

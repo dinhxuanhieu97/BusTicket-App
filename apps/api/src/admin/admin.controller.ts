@@ -444,10 +444,6 @@ export class AdminController {
     return this.passengerOps.resolveRefund(req.auth, op, id, body);
   }
 
-  /**
-   * Danh sách khách (họ tên, SĐT) của một chuyến cho nhân viên nhà xe. `status=active` (mặc định) gồm đơn đang giữ chỗ
-   * còn hạn; `status=all` thêm đơn hết hạn/đã hủy. Mỗi lần xem được ghi nhật ký vì có dữ liệu cá nhân.
-   */
   /** Ảnh lệnh chuyển khoản khách gửi cho đơn (chỉ thông tin, không kèm ảnh). */
   @Get('operators/:operatorId/bookings/:code/payment-proofs')
   @Perm('payment.read')
@@ -458,8 +454,12 @@ export class AdminController {
   /** Dữ liệu một ảnh chuyển khoản; không cho trình duyệt đoán kiểu hay lưu đệm. */
   @Get('operators/:operatorId/payment-proofs/:proofId')
   @Perm('payment.read')
-  async paymentProofImage(@Param('operatorId') op: string, @Param('proofId') id: string, @Res() res: Response) {
+  async paymentProofImage(
+    @Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('proofId') id: string, @Res() res: Response,
+  ) {
     const img = await this.proofs.image(op, id);
+    // Ảnh có thể chứa họ tên/số tài khoản của khách: ghi nhật ký mỗi lần mở.
+    await this.log(req, op, 'payment_proof.view', 'payment_proof', id, { bookingCode: img.bookingCode });
     res
       .status(200)
       .set({
@@ -473,6 +473,10 @@ export class AdminController {
       .end(img.data);
   }
 
+  /**
+   * Danh sách khách (họ tên, SĐT) của một chuyến cho nhân viên nhà xe. `status=active` (mặc định) gồm đơn đang giữ chỗ
+   * còn hạn; `status=all` thêm đơn hết hạn/đã hủy. Mỗi lần xem được ghi nhật ký vì có dữ liệu cá nhân.
+   */
   @Get('operators/:operatorId/trips/:tripId/passengers')
   @Perm('booking.read')
   async tripPassengers(

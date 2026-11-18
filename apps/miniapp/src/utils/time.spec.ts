@@ -28,5 +28,6 @@ describe("Vietnam time helpers", () => {
     expect(secondsLeft(null, now)).toBe(0);
     expect(formatCountdown(545)).toBe("09:05");
     expect(formatCountdown(-3)).toBe("00:00");
+    expect(formatCountdown(7199)).toBe("1:59:59");
   });
 });

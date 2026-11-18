@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { RateLimiter } from '../abuse/rate-limiter';
 import { createHash } from 'node:crypto';
 import { Clock } from '../common/clock';
 import { verifyBookingAccessToken } from '../common/codes';
@@ -14,6 +15,10 @@ export const PROOF_MAX_BYTES = 1_572_864;
 export const PROOF_MAX_PER_BOOKING = 3;
 /** Gia hạn giữ chỗ một lần khi khách báo đã chuyển khoản. */
 export const TRANSFER_CLAIM_EXTENSION_MS = 2 * 60 * 60 * 1000;
+
+/** Giới hạn lượt gửi ảnh (kể cả lượt lỗi) trong 10 phút. */
+export const PROOF_UPLOADS_PER_IP_PER_10_MIN = 30;
+export const PROOF_UPLOADS_PER_BOOKING_PER_10_MIN = 10;
 
 export const PROOF_INVALID = 'Ảnh phải là PNG, JPEG hoặc WebP, tối đa 1,5 MB.';
 
@@ -35,7 +40,19 @@ export class PaymentProofsService {
     private readonly db: Db,
     private readonly clock: Clock,
     private readonly tokenSecret: TokenSecret,
+    private readonly limiter: RateLimiter,
   ) {}
+
+  /**
+   * Kiểm tra trước khi đọc thân ảnh: giới hạn tần suất theo IP và theo đơn, rồi xác thực token đơn.
+   * Nhờ vậy request rác (token sai, gửi dồn) bị chặn mà máy chủ không phải nhận hết 1,5 MB.
+   */
+  async precheck(code: string, accessToken: string, ip: string): Promise<void> {
+    const message = 'Bạn gửi ảnh quá nhanh, vui lòng thử lại sau ít phút.';
+    await this.limiter.consume(`proof-ip:${ip}`, PROOF_UPLOADS_PER_IP_PER_10_MIN, 600, message);
+    await this.limiter.consume(`proof-code:${code}`, PROOF_UPLOADS_PER_BOOKING_PER_10_MIN, 600, message);
+    await this.findByToken(code, accessToken);
+  }
 
   /**
    * Lưu một ảnh và (lần đầu) đánh dấu khách đã báo chuyển khoản + gia hạn giữ chỗ tới
@@ -99,7 +116,11 @@ export class PaymentProofsService {
         const deadline = new Date(latest);
         await c.query(
           `UPDATE bookings SET transfer_claimed_at = $2,
-                  hold_expires_at = GREATEST(hold_expires_at, $3), release_at = GREATEST(release_at, $3), updated_at = $2
+                  hold_expires_at = GREATEST(hold_expires_at, $3),
+                  -- Giữ nguyên ân hạn tiền về chậm như lúc giữ chỗ (hạn nhả = hạn trả + payment_grace_minutes).
+                  release_at = GREATEST(release_at,
+                    $3 + make_interval(mins => COALESCE((policy_snapshot->>'paymentGraceMinutes')::int, 0))),
+                  updated_at = $2
             WHERE id = $1`,
           [b.id, now, deadline],
         );
@@ -125,10 +146,11 @@ export class PaymentProofsService {
   }
 
   /** Dữ liệu một ảnh, chỉ trong phạm vi nhà xe. */
-  async image(operatorId: string, proofId: string): Promise<{ data: Buffer; mime: string }> {
+  async image(operatorId: string, proofId: string): Promise<{ data: Buffer; mime: string; bookingCode: string }> {
     if (!isUuid(operatorId) || !isUuid(proofId)) throw notFound('ảnh');
-    const { rows } = await this.db.query<{ data: Buffer; mime: string }>(
-      'SELECT data, mime FROM booking_payment_proofs WHERE id = $1 AND operator_id = $2',
+    const { rows } = await this.db.query<{ data: Buffer; mime: string; bookingCode: string }>(
+      `SELECT p.data, p.mime, b.code AS "bookingCode" FROM booking_payment_proofs p JOIN bookings b ON b.id = p.booking_id
+        WHERE p.id = $1 AND p.operator_id = $2`,
       [proofId, operatorId],
     );
     if (!rows[0]) throw notFound('ảnh');

@@ -47,7 +47,7 @@ export default function SearchPage() {
   const todayTrips = useTrips(today);
   const minDate = earliestTravelDate(
     new Date(),
-    todayTrips.data,
+    todayTrips.isPlaceholderData ? undefined : todayTrips.data,
     origin,
     destination,
   );

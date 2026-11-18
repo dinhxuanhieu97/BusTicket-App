@@ -2,6 +2,8 @@
 export const PROOF_TARGET_BYTES = 1_000_000;
 export const PROOF_MAX_SIDE = 1600;
 export const PROOF_MAX_COUNT = 3;
+/** Ảnh gốc lớn hơn mức này không giải mã (tránh treo webview yếu vì hết bộ nhớ). */
+export const PROOF_SOURCE_MAX_BYTES = 25_000_000;
 
 /** Kích thước sau khi thu nhỏ để cạnh dài nhất không vượt `max` (giữ tỉ lệ, không phóng to). */
 export function fitWithin(width: number, height: number, max = PROOF_MAX_SIDE): { width: number; height: number } {
@@ -42,6 +44,7 @@ function toJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null
  */
 export async function prepareProofImage(file: File): Promise<Blob | null> {
   if (canSendAsIs(file)) return file;
+  if (file.size > PROOF_SOURCE_MAX_BYTES) return null;
   let img: HTMLImageElement;
   try {
     img = await loadImage(file);

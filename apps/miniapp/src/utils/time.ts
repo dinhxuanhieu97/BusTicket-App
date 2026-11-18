@@ -47,5 +47,7 @@ export function secondsLeft(expiresAt: string | null, now: Date): number {
 /** "09:05" (phút:giây). */
 export function formatCountdown(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
+  // Giữ chỗ được gia hạn (khách báo đã chuyển khoản) có thể dài hơn 1 giờ: hiện h:mm:ss.
+  if (s >= 3600) return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
   return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
 }

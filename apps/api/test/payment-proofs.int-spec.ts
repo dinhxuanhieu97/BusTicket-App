@@ -79,6 +79,7 @@ it('first proof marks the transfer claim and extends the hold by two hours; the 
   const h = await hold(seed.limoTrip.id, 'A1');
   expect(h.booking).toMatchObject({ transferClaimedAt: null, paymentProofCount: 0 });
   const before = new Date(h.booking.holdExpiresAt!).getTime();
+  const graceMs = new Date(h.booking.releaseAt!).getTime() - before;
 
   const res = await submit(h.code, h.token, JPEG).expect(201);
   expect(res.headers['cache-control']).toBe('private, no-store');
@@ -86,7 +87,8 @@ it('first proof marks the transfer claim and extends the hold by two hours; the 
   expect(res.body.proof).toMatchObject({ mime: 'image/jpeg', bytes: JPEG.length });
   const expected = T0.getTime() + TRANSFER_CLAIM_EXTENSION_MS;
   expect(new Date(res.body.booking.holdExpiresAt).getTime()).toBe(expected);
-  expect(new Date(res.body.booking.releaseAt).getTime()).toBeGreaterThanOrEqual(expected);
+  // Ân hạn tiền về chậm giữ nguyên sau khi gia hạn.
+  expect(new Date(res.body.booking.releaseAt).getTime()).toBe(expected + graceMs);
   expect(expected).toBeGreaterThan(before);
   expect(res.body.booking).toMatchObject({ status: 'HOLDING', transferClaimedAt: T0.toISOString(), paymentProofCount: 1 });
 
@@ -128,13 +130,17 @@ it('rejects bad images, wrong tokens and bookings that are no longer held', asyn
     [svg, 'image/png'],
     [JPEG, 'image/png'],
     [Buffer.alloc(0), 'image/jpeg'],
-    [Buffer.concat([JPEG, Buffer.alloc(1_600_000)]), 'image/jpeg'],
   ] as const) {
     const res = await submit(h.code, h.token, data, type).expect(400);
     expect(res.body.error.code).toBe('VALIDATION_FAILED');
   }
   await http().post(`/api/v1/bookings/${h.code}/payment-proofs`).set('X-Booking-Token', h.token).send({ proof: 'x' }).expect(400);
   await submit(h.code, undefined, JPEG).expect(404);
+  // Thân quá lớn bị từ chối theo Content-Length trước khi đọc (máy chủ có thể đóng kết nối khi client còn gửi).
+  const big = await submit(h.code, h.token, Buffer.concat([JPEG, Buffer.alloc(1_600_000)])).then(
+    (r) => r.status, (e: NodeJS.ErrnoException) => e.code,
+  );
+  expect([400, 'EPIPE', 'ECONNRESET']).toContain(big);
   await submit(h.code, 'not-a-token', JPEG).expect(404);
   const otherBooking = await hold(seed.limoTrip.id, 'A5');
   await submit(h.code, otherBooking.token, JPEG).expect(404);
@@ -182,4 +188,23 @@ it('operator staff with payment.read list and view the images; others cannot', a
     passengers.body.bookings ?? passengers.body.items ?? passengers.body;
   const mine = (Array.isArray(items) ? items : []).find((b) => b.code === h.code);
   expect(mine).toMatchObject({ transferClaimedAt: T0.toISOString(), paymentProofCount: 1 });
+});
+
+it('opening an image is written to the audit log', async () => {
+  const h = await hold(seed.limoTrip.id, 'A7');
+  const up = await submit(h.code, h.token, jpeg(9)).expect(201);
+  await http().get(`/api/v1/admin/operators/${seed.op.id}/payment-proofs/${up.body.proof.id}`).set(bearer(ownerToken)).expect(200);
+  const { rows } = await s.db.query<{ data: { bookingCode: string } }>(
+    `SELECT data FROM audit_logs WHERE operator_id = $1 AND action = 'payment_proof.view' AND entity_id = $2`,
+    [seed.op.id, up.body.proof.id],
+  );
+  expect(rows).toEqual([{ data: { bookingCode: h.code } }]);
+});
+
+it('a public client is rate limited per booking before the image is read', async () => {
+  const h = await hold(seed.limoTrip.id, 'A8');
+  const codes: number[] = [];
+  for (let i = 0; i < 12; i++) codes.push((await submit(h.code, 'not-a-token', JPEG)).status);
+  expect(codes.slice(0, 10).every((c) => c === 404)).toBe(true);
+  expect(codes.slice(10)).toEqual([429, 429]);
 });

@@ -12,7 +12,13 @@ import { formatVnTime } from "@/utils/time";
  * "Tôi đã chuyển khoản": khách chọn ảnh chụp lệnh chuyển để nhà xe đối chiếu. Ảnh không tự xác nhận đơn;
  * lần gửi đầu, API gia hạn giữ chỗ (tối đa 2 giờ, không quá giờ đóng bán) trong lúc nhà xe kiểm tra.
  */
-export function TransferProof({ booking, accessToken }: { booking: BookingView; accessToken: string }) {
+export function TransferProof({
+  booking,
+  accessToken,
+}: {
+  booking: BookingView;
+  accessToken: string;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
   const { openSnackbar } = useSnackbar();
@@ -32,9 +38,18 @@ export function TransferProof({ booking, accessToken }: { booking: BookingView; 
         setError(copy.proof.unreadable);
         return;
       }
-      const result = await bookingService.submitPaymentProof(booking.code, accessToken, image);
+      const result = await bookingService.submitPaymentProof(
+        booking.code,
+        accessToken,
+        image,
+      );
+      // Lượt poll đơn đang chạy có thể về sau và ghi đè hạn giữ chỗ mới bằng dữ liệu cũ.
+      await qc.cancelQueries({ queryKey: bookingKeys.detail(booking.code) });
       qc.setQueryData(bookingKeys.detail(booking.code), result.booking);
-      openSnackbar({ text: result.duplicate ? copy.proof.duplicate : copy.proof.sent, type: "success" });
+      openSnackbar({
+        text: result.duplicate ? copy.proof.duplicate : copy.proof.sent,
+        type: "success",
+      });
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -51,7 +66,9 @@ export function TransferProof({ booking, accessToken }: { booking: BookingView; 
       {claimed ? (
         <p>
           {copy.proof.claimed(count)}
-          {booking.holdExpiresAt ? ` ${copy.proof.heldUntil(formatVnTime(booking.holdExpiresAt))}` : ""}
+          {booking.holdExpiresAt
+            ? ` ${copy.proof.heldUntil(formatVnTime(booking.holdExpiresAt))}`
+            : ""}
         </p>
       ) : (
         <p className="pn-meta">{copy.proof.hint}</p>
@@ -79,10 +96,16 @@ export function TransferProof({ booking, accessToken }: { booking: BookingView; 
           disabled={busy}
           onClick={() => input.current?.click()}
         >
-          {busy ? copy.proof.sending : claimed ? copy.proof.addMore : copy.proof.action}
+          {busy
+            ? copy.proof.sending
+            : claimed
+              ? copy.proof.addMore
+              : copy.proof.action}
         </Button>
       )}
-      {full && <p className="pn-meta mt-2">{copy.proof.limit(PROOF_MAX_COUNT)}</p>}
+      {full && (
+        <p className="pn-meta mt-2">{copy.proof.limit(PROOF_MAX_COUNT)}</p>
+      )}
     </section>
   );
 }

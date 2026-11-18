@@ -191,6 +191,11 @@ export class PublicController {
     if (!/^image\/(png|jpeg|webp)\b/i.test(type)) {
       throw new DomainError('VALIDATION_FAILED', PROOF_INVALID, { field: 'proof' });
     }
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > PROOF_MAX_BYTES) {
+      throw new DomainError('VALIDATION_FAILED', PROOF_INVALID, { field: 'proof' });
+    }
+    await this.proofs.precheck(code, token, req.ip ?? 'unknown');
     const data = await readLimited(req, PROOF_MAX_BYTES, PROOF_INVALID, 'proof');
     const { proof, duplicate } = await this.proofs.submit(code, token, data, type);
     return { proof, duplicate, booking: await this.bookings.getByCode(code, token) };

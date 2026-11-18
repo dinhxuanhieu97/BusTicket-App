@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Calendar, Sheet } from "zmp-ui";
 import { formatVnDate } from "@/utils/time";
 import {
@@ -30,16 +30,18 @@ export function TravelDateField({
   const [open, setOpen] = useState(false);
   // zmp-ui Calendar tự gọi onSelect khi vừa dựng (từ defaultValue/value); chỉ nhận lựa chọn sau khi khách chạm lịch.
   const touched = useRef(false);
+  const labelId = useId();
   const minDate = ymdToCalendarDate(min);
   const selected = value && value >= min ? ymdToCalendarDate(value) : minDate;
   return (
     <div className="pn-field">
-      <span id={`${label}-label`}>{label}</span>
+      <span id={labelId}>{label}</span>
       <button
         type="button"
         className="pn-date-display"
-        aria-labelledby={`${label}-label`}
+        aria-labelledby={labelId}
         aria-haspopup="dialog"
+        aria-expanded={open}
         onClick={() => {
           touched.current = false;
           setOpen(true);
@@ -61,7 +63,7 @@ export function TravelDateField({
       >
         <div
           className="px-4 pb-6"
-          onPointerDownCapture={() => {
+          onClickCapture={() => {
             touched.current = true;
           }}
         >
