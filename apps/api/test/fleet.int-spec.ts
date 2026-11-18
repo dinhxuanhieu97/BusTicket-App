@@ -250,3 +250,39 @@ describe('trips', () => {
     expect(await errorCode(s.trips.search('ZZ', '2027-02-01'))).toBe('NOT_FOUND');
   });
 });
+
+describe('deleting vehicles', () => {
+  it('deletes an unused vehicle; another operator cannot delete it', async () => {
+    const op = await s.operators.getByCode('AB');
+    const ca = await s.operators.getByCode('CA');
+    const seat = await s.layouts.latest(null, 'SEAT29');
+    const v = await s.vehicles.create(op.id, { code: 'AB09', name: 'Xe nhập nhầm', type: 'SEATER', seatLayoutId: seat!.id });
+    expect(await errorCode(s.vehicles.remove(ca.id, v.id))).toBe('NOT_FOUND');
+    expect(await errorCode(s.vehicles.remove(op.id, 'not-a-uuid'))).toBe('NOT_FOUND');
+    await s.vehicles.remove(op.id, v.id);
+    expect(await errorCode(s.vehicles.get(op.id, v.id))).toBe('NOT_FOUND');
+    // Mã xe dùng lại được sau khi xóa.
+    await s.vehicles.create(op.id, { code: 'AB09', name: 'Xe nhập nhầm', type: 'SEATER', seatLayoutId: seat!.id });
+  });
+
+  it('refuses to delete a vehicle that has trips and suggests retiring it', async () => {
+    const op = await s.operators.getByCode('PN');
+    const [limo] = await s.vehicles.list(op.id);
+    expect(await errorCode(s.vehicles.remove(op.id, limo!.id))).toBe('CONFLICT');
+    await expect(s.vehicles.remove(op.id, limo!.id)).rejects.toThrow('Ngừng chạy');
+    const retired = await s.vehicles.update(op.id, limo!.id, { status: 'RETIRED' });
+    expect(retired.status).toBe('RETIRED');
+    await s.vehicles.update(op.id, limo!.id, { status: 'ACTIVE' });
+  });
+
+  it('refuses to delete a vehicle used by a schedule', async () => {
+    const op = await s.operators.getByCode('AB');
+    const seat = await s.layouts.latest(null, 'SEAT29');
+    const v = await s.vehicles.create(op.id, { code: 'AB08', name: 'Xe lịch', type: 'SEATER', seatLayoutId: seat!.id });
+    await s.db.query(
+      `INSERT INTO trip_schedules (operator_id, name, config) VALUES ($1, 'Lịch thử', $2)`,
+      [op.id, JSON.stringify({ legs: [{ vehicles: [{ vehicleId: v.id }] }] })],
+    );
+    expect(await errorCode(s.vehicles.remove(op.id, v.id))).toBe('CONFLICT');
+  });
+});
