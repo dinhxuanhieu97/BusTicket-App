@@ -104,6 +104,17 @@ export interface BookingView {
   paymentStatus: "UNPAID" | "PARTIAL" | "DEPOSIT_PAID" | "PAID";
   amountDueNow: number;
   items: BookingItem[];
+  /** Lúc khách báo đã chuyển khoản (gửi ảnh lần đầu); API cũ không trả trường này. */
+  transferClaimedAt?: string | null;
+  /** Số ảnh lệnh chuyển khoản đã gửi. */
+  paymentProofCount?: number;
+}
+
+export interface PaymentProofResult {
+  proof: { id: string; mime: string; bytes: number; createdAt: string };
+  /** Ảnh này đã gửi trước đó (không lưu thêm). */
+  duplicate: boolean;
+  booking: BookingView;
 }
 
 export interface HoldResult {

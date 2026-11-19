@@ -37,6 +37,10 @@ export interface PassengerBooking {
   dropoffStop: StopPoint | null;
   /** Nhân viên tạo đơn tại quầy/nhập file; null với đơn online. */
   createdBy: string | null;
+  /** Lúc khách báo đã chuyển khoản (gửi ảnh lệnh chuyển); null nếu chưa. */
+  transferClaimedAt: string | null;
+  /** Số ảnh lệnh chuyển khoản khách đã gửi. */
+  paymentProofCount: number;
   /** Hạn nhả chỗ của đơn đang giữ; null với đơn khác. */
   holdUntil: string | null;
   createdAt: string;
@@ -76,12 +80,13 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
     payment_status: string; release_at: Date | null; created_at: Date;
     pickup_stop: StopPoint | null; dropoff_stop: StopPoint | null; created_by_name: string | null;
     seat_code: string; floor: string; occupancy: number; infant_count: number; boarded_at: Date | null;
-    onboard: number; cancel_reason: string | null;
+    onboard: number; cancel_reason: string | null; transfer_claimed_at: Date | null; proof_count: number;
   }>(
     `SELECT b.id, b.code, b.status, b.channel, b.contact_name, b.contact_phone, b.contact_erased_at, b.passenger_note,
             b.total_amount, b.paid_amount, b.payment_status, b.release_at, b.created_at,
             b.pickup_stop, b.dropoff_stop, u.full_name AS created_by_name,
-            bi.seat_code, ts.floor, bi.occupancy, bi.infant_count, bi.boarded_at, b.cancel_reason,
+            bi.seat_code, ts.floor, bi.occupancy, bi.infant_count, bi.boarded_at, b.cancel_reason, b.transfer_claimed_at,
+            (SELECT count(*) FROM booking_payment_proofs pp WHERE pp.booking_id = b.id)::int AS proof_count,
             COALESCE((SELECT sum(pa.amount) FROM payment_allocations pa JOIN payments p ON p.id = pa.payment_id
                       WHERE pa.booking_id = b.id AND p.collected_onboard), 0)::int AS onboard
      FROM booking_items bi
@@ -118,6 +123,8 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
         createdAt: r.created_at.toISOString(),
         onboardCollected: r.onboard,
         cancelReason: r.cancel_reason,
+        transferClaimedAt: r.transfer_claimed_at?.toISOString() ?? null,
+        paymentProofCount: r.proof_count,
         seats: [],
       };
       byBooking.set(r.id, b);

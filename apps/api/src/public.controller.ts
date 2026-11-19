@@ -5,6 +5,8 @@ import { ZaloPhoneService } from './abuse/zalo-phone.service';
 import { z } from 'zod';
 import { DomainError, notFound } from './common/errors';
 import { BookingsService } from './bookings/bookings.service';
+import { PaymentProofsService, PROOF_INVALID, PROOF_MAX_BYTES } from './bookings/payment-proofs.service';
+import { readLimited } from './common/read-limited';
 import { renderTicketVerification } from './bookings/ticket-verification-page';
 import { OperatorsService } from './operators/operators.service';
 import { PaymentsService } from './payments/payments.service';
@@ -27,6 +29,7 @@ export class PublicController {
     private readonly payments: PaymentsService,
     private readonly zaloPhone: ZaloPhoneService,
     private readonly operators: OperatorsService,
+    private readonly proofs: PaymentProofsService,
   ) {}
 
   /** Tên và phiên bản logo của nhà xe (dashboard hiển thị ở trang đăng nhập). Dữ liệu vốn công khai. */
@@ -173,6 +176,29 @@ export class PublicController {
   eraseBookingContact(@Param('code') code: string, @Headers('x-booking-token') token?: string) {
     if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
     return this.bookings.eraseContactByCode(code, token);
+  }
+
+  /**
+   * Khách báo "đã chuyển khoản" kèm một ảnh lệnh chuyển (thân request là ảnh PNG/JPEG/WebP, tối đa 1,5 MB).
+   * Lần đầu gia hạn giữ chỗ để nhà xe đối chiếu; gửi lại đúng ảnh cũ không tạo bản mới. Trả đơn sau khi cập nhật.
+   */
+  @Post('bookings/:code/payment-proofs')
+  @HttpCode(201)
+  @Header('Cache-Control', 'private, no-store')
+  async submitPaymentProof(@Param('code') code: string, @Req() req: Request, @Headers('x-booking-token') token?: string) {
+    if (!token || !/^[A-Z0-9]{4,12}$/.test(code)) throw notFound('đơn');
+    const type = String(req.headers['content-type'] ?? '');
+    if (!/^image\/(png|jpeg|webp)\b/i.test(type)) {
+      throw new DomainError('VALIDATION_FAILED', PROOF_INVALID, { field: 'proof' });
+    }
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > PROOF_MAX_BYTES) {
+      throw new DomainError('VALIDATION_FAILED', PROOF_INVALID, { field: 'proof' });
+    }
+    await this.proofs.precheck(code, token, req.ip ?? 'unknown');
+    const data = await readLimited(req, PROOF_MAX_BYTES, PROOF_INVALID, 'proof');
+    const { proof, duplicate } = await this.proofs.submit(code, token, data, type);
+    return { proof, duplicate, booking: await this.bookings.getByCode(code, token) };
   }
 
   /** Khách bỏ giữ chỗ để chọn lại: nhả chỗ ngay. Gọi lại nhiều lần an toàn (trả trạng thái hiện tại). */

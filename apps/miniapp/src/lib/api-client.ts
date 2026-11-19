@@ -4,6 +4,8 @@ import { APIError } from "./api-error";
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT";
   body?: unknown;
+  /** Thân nhị phân (ví dụ ảnh) gửi nguyên văn với Content-Type của Blob; không dùng cùng `body`. */
+  rawBody?: Blob;
   headers?: Record<string, string | undefined>;
   signal?: AbortSignal;
 }
@@ -20,6 +22,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const headers: Record<string, string> = { Accept: "application/json" };
   for (const [k, v] of Object.entries(options.headers ?? {})) if (v) headers[k] = v;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  else if (options.rawBody) headers["Content-Type"] = options.rawBody.type || "application/octet-stream";
 
   let res: Response;
   let text: string;
@@ -27,7 +30,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     res = await fetch(`${config.apiBaseUrl}/api/v1${path}`, {
       method: options.method ?? "GET",
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.body === undefined ? options.rawBody : JSON.stringify(options.body),
       signal: options.signal,
     });
     text = await res.text();

@@ -6,6 +6,7 @@ import type {
   CreateHoldRequest,
   HoldResult,
   PaymentInstructions,
+  PaymentProofResult,
   PhoneVerificationStarted,
   PhoneVerified,
   ZaloPhone,
@@ -39,6 +40,14 @@ export const bookingService = {
   eraseContact: (code: string, accessToken: string) =>
     apiRequest<{ code: string; erasedAt: string }>(`/bookings/${encodeURIComponent(code)}/erase-contact`, {
       method: "POST",
+      headers: { "X-Booking-Token": accessToken },
+    }),
+
+  /** Gửi ảnh lệnh chuyển khoản (PNG/JPEG/WebP ≤ 1,5 MB); lần đầu gia hạn giữ chỗ để nhà xe đối chiếu. */
+  submitPaymentProof: (code: string, accessToken: string, image: Blob) =>
+    apiRequest<PaymentProofResult>(`/bookings/${encodeURIComponent(code)}/payment-proofs`, {
+      method: "POST",
+      rawBody: image,
       headers: { "X-Booking-Token": accessToken },
     }),
 
