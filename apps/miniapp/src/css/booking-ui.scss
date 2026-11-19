@@ -765,6 +765,23 @@
 .pn-select-options button:hover {
   background: var(--pn-hover);
 }
+.pn-select-options button.pn-select-stop {
+  padding-left: 28px;
+  font-size: 13px;
+  color: var(--pn-muted, inherit);
+}
+.pn-select-options button.pn-select-stop::before {
+  content: "•";
+  margin-left: -14px;
+  margin-right: 8px;
+}
+.pn-select-place {
+  display: block;
+  margin-top: 2px;
+  color: var(--pn-muted, inherit);
+  font-size: 12px;
+  font-weight: 400;
+}
 .pn-select-options button[aria-selected="true"] {
   color: var(--pn-primary);
   background: var(--pn-primary-soft);

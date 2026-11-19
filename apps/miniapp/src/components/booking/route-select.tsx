@@ -1,26 +1,37 @@
 import { useEffect, useId, useRef, useState } from "react";
+import type { PlaceOption } from "@/utils/search-places";
 
-/** Small, keyboard-accessible listbox. Long destination names wrap instead of clipping. */
+/**
+ * Small, keyboard-accessible listbox. Long destination names wrap instead of clipping.
+ * Options with a `stop` are pickup/drop-off points shown indented under their place.
+ */
 export function RouteSelect({
   label,
   value,
   options,
   placeholder,
   onChange,
+  stopLabel,
+  fallbackLabel,
   alignEnd = false,
 }: {
   label: string;
   value: string;
-  options: string[];
+  options: PlaceOption[];
   placeholder: string;
-  onChange: (value: string) => void;
+  onChange: (option: PlaceOption | null) => void;
+  /** "Điểm đón" / "Điểm trả": đọc kèm tên điểm cho trình đọc màn hình. */
+  stopLabel: string;
+  /** Tên hiển thị khi `value` chưa có trong `options`. */
+  fallbackLabel?: string;
   alignEnd?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const values = ["", ...options];
+  const values: (PlaceOption | null)[] = [null, ...options];
+  const selected = options.find((o) => o.value === value);
   useEffect(() => {
     if (!open) return;
     root.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
@@ -56,7 +67,19 @@ export function RouteSelect({
           }
         }}
       >
-        <span id={`${id}-value`}>{value || placeholder}</span>
+        <span id={`${id}-value`}>
+          {selected ? (
+            <>
+              {selected.label}
+              {selected.stop && (
+                <small className="pn-select-place">{selected.place}</small>
+              )}
+            </>
+          ) : (
+            // Danh sách chưa tải xong hoặc điểm không còn bán: vẫn hiện tên đã chọn.
+            fallbackLabel || placeholder
+          )}
+        </span>
         <svg
           width="16"
           height="16"
@@ -102,22 +125,31 @@ export function RouteSelect({
             }
           }}
         >
-          {values.map((option) => (
-            <button
-              role="option"
-              type="button"
-              tabIndex={option === value ? 0 : -1}
-              aria-selected={option === value}
-              key={option}
-              onClick={() => {
-                onChange(option);
-                setOpen(false);
-                trigger.current?.focus();
-              }}
-            >
-              {option || placeholder}
-            </button>
-          ))}
+          {values.map((option) => {
+            const current = (option?.value ?? "") === (selected?.value ?? "");
+            return (
+              <button
+                role="option"
+                type="button"
+                tabIndex={current ? 0 : -1}
+                aria-selected={current}
+                aria-label={
+                  option?.stop
+                    ? `${stopLabel} ${option.label}, ${option.place}`
+                    : undefined
+                }
+                className={option?.stop ? "pn-select-stop" : undefined}
+                key={option?.value ?? ""}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                  trigger.current?.focus();
+                }}
+              >
+                {option?.label ?? placeholder}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

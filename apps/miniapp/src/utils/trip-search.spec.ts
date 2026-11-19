@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { TripSummary } from "@/types/api.types";
 import type { TripSearch } from "@/stores/trip-search.store";
-import { matchingTrips, validRoundTrip } from "./trip-search";
+import {
+  matchingTrips,
+  readTripSearch,
+  tripResultsUrl,
+  validRoundTrip,
+} from "./trip-search";
 const search: TripSearch = {
   date: "2026-11-06",
   returnDate: "2026-11-08",
@@ -31,5 +36,32 @@ describe("round trip search", () => {
     expect(
       validRoundTrip({ ...search, roundTrip: false, returnDate: "" }),
     ).toBe(true);
+  });
+});
+
+describe("pickup and drop-off in the results URL", () => {
+  it("round-trips stops chosen in the search form and ignores a stop without its place", () => {
+    const search = {
+      date: "2026-11-20",
+      origin: "Hoài Ân",
+      destination: "TP.HCM",
+      pickup: "Bưu điện Ân Nghĩa",
+      dropoff: "Suối Tiên",
+      roundTrip: false,
+      returnDate: "",
+      adults: 1,
+      infants: 0,
+    };
+    const url = tripResultsUrl(search);
+    expect(readTripSearch(new URLSearchParams(url.split("?")[1]))).toEqual(
+      search,
+    );
+    expect(
+      tripResultsUrl({ ...search, origin: "", destination: "" }),
+    ).not.toMatch(/pickup|dropoff/);
+    // Điểm đón/trả không kèm điểm đi/đến (link sửa tay) bị bỏ qua.
+    expect(
+      readTripSearch(new URLSearchParams("date=2026-11-20&pickup=X&dropoff=Y")),
+    ).toMatchObject({ pickup: "", dropoff: "" });
   });
 });

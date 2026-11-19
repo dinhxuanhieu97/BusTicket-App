@@ -24,6 +24,9 @@ interface BookingDraftState {
   pickupStop: string;
   dropoffStop: string;
   setStops: (stops: { pickupStop?: string; dropoffStop?: string }) => void;
+  /** Chuyến đã điền sẵn điểm đón/trả từ form tìm (chỉ một lần, để khách bỏ chọn không bị điền lại). */
+  stopsPrefilledFor: string | null;
+  markStopsPrefilled: (tripId: string) => void;
   contactName: string;
   contactPhone: string;
   /** Token "đã xác thực SĐT" (chế độ cao điểm), gắn với đúng số đã xác thực. */
@@ -57,6 +60,7 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
       note: "",
       pickupStop: "",
       dropoffStop: "",
+      stopsPrefilledFor: null,
     }),
   tripId: null,
   trip: null,
@@ -65,6 +69,8 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
   setNote: (note) => set((s) => ({ note, holdAttempt: note.trim() === s.note.trim() ? s.holdAttempt : null })),
   pickupStop: "",
   dropoffStop: "",
+  stopsPrefilledFor: null,
+  markStopsPrefilled: (tripId) => set({ stopsPrefilledFor: tripId }),
   setStops: (stops) =>
     set((s) => {
       const next = { pickupStop: stops.pickupStop ?? s.pickupStop, dropoffStop: stops.dropoffStop ?? s.dropoffStop };
@@ -91,7 +97,7 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
         : {},
       note: "",
       // Điểm đón/trả theo chuyến đi: giữ khi chỉ chuyển giữa chiều đi/về của cùng hành trình.
-      ...(s.pair?.some((t) => t.id === tripId) ? {} : { pickupStop: "", dropoffStop: "" }),
+      ...(s.pair?.some((t) => t.id === tripId) ? {} : { pickupStop: "", dropoffStop: "", stopsPrefilledFor: null }),
       holdAttempt: null,
     });
   },
@@ -130,6 +136,7 @@ export const useBookingDraft = create<BookingDraftState>((set, get) => ({
       note: "",
       pickupStop: "",
       dropoffStop: "",
+      stopsPrefilledFor: null,
       holdAttempt: null,
     }),
 }));

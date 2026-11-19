@@ -28,6 +28,9 @@ export function tripResultsUrl(search: TripSearch): string {
   const params = new URLSearchParams({ date: search.date });
   if (search.origin) params.set("from", search.origin);
   if (search.destination) params.set("to", search.destination);
+  if (search.origin && search.pickup) params.set("pickup", search.pickup);
+  if (search.destination && search.dropoff)
+    params.set("dropoff", search.dropoff);
   if (search.roundTrip) params.set("return", search.returnDate);
   params.set("adults", String(search.adults ?? 1));
   params.set("infants", String(search.infants ?? 0));
@@ -50,6 +53,8 @@ export function readTripSearch(params: URLSearchParams): TripSearch | null {
     date,
     origin: params.get("from") ?? "",
     destination: params.get("to") ?? "",
+    pickup: params.get("from") ? stopParam(params.get("pickup")) : "",
+    dropoff: params.get("to") ? stopParam(params.get("dropoff")) : "",
     roundTrip: !!returnDate,
     returnDate,
     adults: count("adults", 1),
@@ -57,3 +62,8 @@ export function readTripSearch(params: URLSearchParams): TripSearch | null {
   };
   return validRoundTrip(search) ? search : null;
 }
+
+const stopParam = (value: string | null) => {
+  const v = value?.trim() ?? "";
+  return v.length <= 160 ? v : "";
+};
