@@ -57,7 +57,9 @@ export function useCancelBooking() {
       await qc.cancelQueries({ queryKey: bookingKeys.detail(saved.code) });
       qc.setQueryData(bookingKeys.detail(saved.code), booking);
     },
-    onSettled: (_r, _e, saved) => {
+    onSettled: (_r, error, saved) => {
+      // Lỗi (ví dụ 409 vì tiền vừa về): tải lại đơn ngay để ẩn nút "Hủy vé" đã cũ.
+      if (error) void qc.invalidateQueries({ queryKey: bookingKeys.detail(saved.code) });
       void qc.invalidateQueries({ queryKey: tripKeys.seatMap(saved.tripId) });
       if (saved.inbound) void qc.invalidateQueries({ queryKey: tripKeys.seatMap(saved.inbound.tripId) });
       void qc.invalidateQueries({ queryKey: ["trips"] });

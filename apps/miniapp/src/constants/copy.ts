@@ -196,6 +196,8 @@ export const copy = {
     removeTitle: "Xóa vé khỏi danh sách?",
     removeBody:
       "Vé chỉ bị xóa khỏi danh sách trên máy này; thông tin ở nhà xe không thay đổi.",
+    removePaid: (code: string) =>
+      `Đơn này đã có tiền thanh toán. Hãy lưu lại mã ${code} để liên hệ nhà xe khi cần hoàn tiền.`,
     removeConfirm: "Xóa",
     removed: (code: string) => `Đã xóa đơn ${code} khỏi danh sách.`,
   },

@@ -277,6 +277,11 @@ function BookingRow({
         ]}
       >
         <p className="pn-meta">{copy.myBookings.removeBody}</p>
+        {(booking?.paidAmount ?? 0) > 0 && (
+          <p className="pn-meta pn-text-warning" role="note">
+            {copy.myBookings.removePaid(saved.code)}
+          </p>
+        )}
       </Modal>
     </article>
   );
