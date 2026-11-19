@@ -287,6 +287,15 @@ export class AdminController {
     return v;
   }
 
+  /** Xóa xe chưa từng có chuyến/lịch chạy (409 kèm hướng dẫn chuyển "Ngừng chạy" nếu đã dùng). */
+  @Delete('operators/:operatorId/vehicles/:vehicleId')
+  @Perm('fleet.write')
+  async deleteVehicle(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Param('vehicleId') vehicleId: string) {
+    const v = await this.vehicles.remove(operatorId, vehicleId);
+    await this.log(req, operatorId, 'vehicle.delete', 'vehicle', v.id, { code: v.code, name: v.name, type: v.type });
+    return { ok: true };
+  }
+
   // ---- Tuyến, chuyến -------------------------------------------------------
 
   @Get('operators/:operatorId/routes')

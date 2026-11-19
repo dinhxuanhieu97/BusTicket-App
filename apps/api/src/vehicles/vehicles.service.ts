@@ -129,4 +129,38 @@ export class VehiclesService {
       throw e;
     }
   }
+
+  /**
+   * Xóa xe nhập nhầm. Chỉ xóa được khi chưa có chuyến nào (kể cả chuyến cũ/đã hủy) và chưa lịch chạy nào dùng xe;
+   * xe đã chạy thì chuyển sang "Ngừng chạy" (RETIRED) để giữ lịch sử chuyến/đơn.
+   * Khóa hàng xe FOR UPDATE: tạo chuyến (FOR UPDATE) và tạo lịch chạy (FOR KEY SHARE) đều khóa xe trước khi ghi, nên không thể chen vào giữa lúc kiểm tra và xóa.
+   */
+  async remove(operatorId: string, vehicleId: string): Promise<VehicleRow> {
+    if (!isUuid(operatorId) || !isUuid(vehicleId)) throw notFound('xe');
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<VehicleRow>('SELECT * FROM vehicles WHERE id = $1 AND operator_id = $2 FOR UPDATE', [
+        vehicleId, operatorId,
+      ]);
+      const v = rows[0];
+      if (!v) throw notFound('xe');
+      const { rows: used } = await c.query<{ trips: number; schedules: number }>(
+        `SELECT (SELECT count(*) FROM trips WHERE vehicle_id = $1)::int AS trips,
+                (SELECT count(*) FROM trip_schedules WHERE operator_id = $2 AND position(lower($3) IN lower(config::text)) > 0)::int AS schedules`,
+        // So bằng id đã lưu, không phân biệt hoa thường (lịch có thể lưu UUID viết hoa).
+        [vehicleId, operatorId, v.id],
+      );
+      const { trips, schedules } = used[0]!;
+      if (trips > 0 || schedules > 0) {
+        throw new DomainError(
+          'CONFLICT',
+          trips > 0
+            ? `Xe ${v.code} đã có ${trips} chuyến nên không xóa được. Chuyển trạng thái sang "Ngừng chạy" để ẩn khỏi tạo chuyến.`
+            : `Xe ${v.code} đang được dùng trong ${schedules} lịch chạy. Đổi xe trong lịch trước khi xóa.`,
+          { trips, schedules },
+        );
+      }
+      await c.query('DELETE FROM vehicles WHERE id = $1 AND operator_id = $2', [vehicleId, operatorId]);
+      return v;
+    });
+  }
 }

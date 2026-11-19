@@ -147,7 +147,8 @@ export class TripSchedulesService {
         throw new DomainError('VALIDATION_FAILED', 'Hai tuyến phải ngược chiều nhau.');
       const ids = config.legs[0]!.vehicles.map((v) => v.vehicleId);
       const vehicles = (
-        await c.query("SELECT id FROM vehicles WHERE operator_id=$1 AND status='ACTIVE' AND id=ANY($2::uuid[])", [
+        // FOR KEY SHARE: chặn xóa xe (FOR UPDATE) chen giữa lúc kiểm tra và lưu lịch (config jsonb không có FK).
+        await c.query("SELECT id FROM vehicles WHERE operator_id=$1 AND status='ACTIVE' AND id=ANY($2::uuid[]) ORDER BY id FOR KEY SHARE", [
           operatorId,
           ids,
         ])
