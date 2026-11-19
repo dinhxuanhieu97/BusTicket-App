@@ -81,6 +81,13 @@ pnpm --filter api migrate
 pnpm --filter api seed
 ```
 
+Dữ liệu demo để thử trước khi phát hành (xe, tuyến Sài Gòn ↔ Quy Nhơn có điểm đón/trả, chuyến 7 ngày tới, đơn tại quầy đủ trạng thái; khách không nhận tin nào, SĐT dạng `0999xxxxxx`). Cần nhà xe đã có tài khoản OWNER. Chạy lại an toàn; `--remove` xóa sạch phần demo. DB không ở máy local phải thêm `--yes`:
+
+```bash
+pnpm --filter api seed:demo -- --days=7
+pnpm --filter api seed:demo -- --remove
+```
+
 Tạo tài khoản quản trị nền tảng đầu tiên (dùng mật khẩu của riêng bạn):
 
 ```bash
