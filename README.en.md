@@ -46,6 +46,7 @@ createdb pnticket_dev
 export DATABASE_URL="postgres://localhost/pnticket_dev" BOOKING_TOKEN_SECRET=dev-only-booking-secret-0123456789abcdef AUTH_TOKEN_SECRET=dev-only-auth-secret-0123456789abcdefgh
 pnpm --filter api migrate
 pnpm --filter api seed
+pnpm --filter api seed:demo -- --days=7   # optional demo data (add --yes for a non-local DB, --remove to delete it)
 pnpm --filter api build && PORT=3001 pnpm --filter api start
 ```
 
