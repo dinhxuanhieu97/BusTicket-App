@@ -305,6 +305,26 @@ export class AdminController {
     return { routes: await this.trips.listRoutes(operatorId) };
   }
 
+  /** Đổi tên điểm đi/đến trên mọi tuyến của nhà xe. */
+  @Put('operators/:operatorId/places')
+  @Perm('route.write')
+  async renamePlace(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
+    await this.operators.getById(operatorId);
+    const result = await this.trips.renamePlace(operatorId, body);
+    if (result.updated > 0)
+      await this.log(req, operatorId, 'route.place.rename', 'route', undefined, result);
+    return result;
+  }
+
+  /** Xóa tuyến chưa có chuyến/lịch chạy (409 nếu đã dùng). */
+  @Delete('operators/:operatorId/routes/:routeId')
+  @Perm('route.write')
+  async deleteRoute(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Param('routeId') routeId: string) {
+    const r = await this.trips.deleteRoute(operatorId, routeId);
+    await this.log(req, operatorId, 'route.delete', 'route', r.id, { code: r.code, origin: r.origin, destination: r.destination });
+    return { ok: true };
+  }
+
   @Put('operators/:operatorId/routes/:routeId/stops')
   @Perm('route.write')
   async saveStops(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string,

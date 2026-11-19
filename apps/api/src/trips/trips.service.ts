@@ -195,7 +195,8 @@ export class TripsService {
           if (existing) return this.replayTrip(existing, requestHash!);
         }
         const { rows: routes } = await c.query<{ id: string; code: string; stops: z.output<typeof stopsSchema> | null }>(
-          'SELECT id, code, stops FROM routes WHERE id = $1 AND operator_id = $2',
+          // FOR KEY SHARE: xóa tuyến chen vào trả NOT_FOUND thay vì lỗi FK 500.
+          'SELECT id, code, stops FROM routes WHERE id = $1 AND operator_id = $2 FOR KEY SHARE',
           [data.routeId, operatorId],
         );
         if (!routes[0]) throw notFound('tuyến');
@@ -286,7 +287,7 @@ export class TripsService {
       throw new DomainError('VALIDATION_FAILED','Hai chiều cần hai xe và hai tuyến riêng.');
     return this.db.tx(async c=>{
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[operatorId+':trip-batch:'+key]);
-      const routes=(await c.query('SELECT origin,destination FROM routes WHERE operator_id=$1 AND id=ANY($2::uuid[])',[operatorId,data.trips.map(t=>t.routeId)])).rows;
+      const routes=(await c.query('SELECT origin,destination FROM routes WHERE operator_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR KEY SHARE',[operatorId,data.trips.map(t=>t.routeId)])).rows;
       if(routes.length!==2) throw notFound('tuyến');
       const normalize=(v:string)=>v.trim().toLocaleLowerCase('vi');
       if(normalize(routes[0]!.origin)!==normalize(routes[1]!.destination)||normalize(routes[0]!.destination)!==normalize(routes[1]!.origin))
@@ -338,6 +339,70 @@ export class TripsService {
         routes.push(row);
       }
       return {routes};
+    });
+  }
+
+  /**
+   * Đổi tên một điểm đi/đến trên mọi tuyến của nhà xe (cả hai chiều cùng lúc để cặp tuyến vẫn ngược chiều nhau).
+   * Đổi sang tên điểm đã có là gộp hai điểm. Tên tuyến hiển thị ở chuyến/đơn cũ đổi theo; tên chuyến sinh từ lịch
+   * ("Chuyến A → B") và điểm đón/trả đã chụp trong chuyến giữ tên cũ.
+   */
+  async renamePlace(operatorId: string, input: unknown) {
+    const name = z.string().transform((v) => v.normalize('NFC').trim().replace(/\s+/g, ' ')).pipe(z.string().min(1).max(80));
+    const data = z.object({ from: z.string().trim().min(1).max(200), to: name }).strict().parse(input);
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    if (data.from === data.to) return { updated: 0, from: data.from, to: data.to };
+    return this.db.tx(async (c) => {
+      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [operatorId + ':route-pair']);
+      const { rows } = await c.query<{ id: string; origin: string; destination: string }>(
+        'SELECT id, origin, destination FROM routes WHERE operator_id = $1 AND (origin = $2 OR destination = $2) FOR NO KEY UPDATE',
+        [operatorId, data.from],
+      );
+      if (!rows.length) throw notFound('điểm đi/đến');
+      // So như ghép cặp tuyến/lịch (bỏ hoa thường, NFC) để không tạo tuyến "Sài Gòn → sài gòn".
+      const same = (a: string, b: string) => a.normalize('NFC').trim().toLocaleLowerCase('vi') === b.normalize('NFC').trim().toLocaleLowerCase('vi');
+      const rename = (x: string) => (x === data.from ? data.to : x);
+      if (rows.some((r) => same(rename(r.origin), rename(r.destination))))
+        throw new DomainError('VALIDATION_FAILED', `Đổi thành "${data.to}" sẽ tạo tuyến có điểm đi trùng điểm đến.`);
+      const res = await c.query(
+        `UPDATE routes SET origin = CASE WHEN origin = $2 THEN $3 ELSE origin END,
+                           destination = CASE WHEN destination = $2 THEN $3 ELSE destination END
+          WHERE operator_id = $1 AND (origin = $2 OR destination = $2)`,
+        [operatorId, data.from, data.to],
+      );
+      return { updated: res.rowCount ?? 0, from: data.from, to: data.to };
+    });
+  }
+
+  /**
+   * Xóa tuyến tạo nhầm. Chỉ khi chưa có chuyến nào (FK trips.route_id) và không lịch chạy nào dùng tuyến;
+   * khóa hàng tuyến FOR UPDATE: tạo chuyến (FK, KEY SHARE) và tạo lịch (FOR KEY SHARE) không chen vào được.
+   */
+  async deleteRoute(operatorId: string, routeId: string) {
+    if (!isUuid(operatorId) || !isUuid(routeId)) throw notFound('tuyến');
+    return this.db.tx(async (c) => {
+      const { rows } = await c.query<{ id: string; code: string; origin: string; destination: string }>(
+        'SELECT id, code, origin, destination FROM routes WHERE id = $1 AND operator_id = $2 FOR UPDATE',
+        [routeId, operatorId],
+      );
+      const r = rows[0];
+      if (!r) throw notFound('tuyến');
+      const { rows: used } = await c.query<{ trips: number; schedules: number }>(
+        `SELECT (SELECT count(*) FROM trips WHERE route_id = $1)::int AS trips,
+                (SELECT count(*) FROM trip_schedules WHERE operator_id = $2 AND position(lower($1::text) IN lower(config::text)) > 0)::int AS schedules`,
+        [r.id, operatorId],
+      );
+      const { trips, schedules } = used[0]!;
+      if (trips > 0 || schedules > 0)
+        throw new DomainError(
+          'CONFLICT',
+          trips > 0
+            ? `Tuyến ${r.code} đã có ${trips} chuyến nên không xóa được.`
+            : `Tuyến ${r.code} đang được dùng trong ${schedules} lịch chạy. Xóa lịch trước khi xóa tuyến.`,
+          { trips, schedules },
+        );
+      await c.query('DELETE FROM routes WHERE id = $1 AND operator_id = $2', [r.id, operatorId]);
+      return r;
     });
   }
 

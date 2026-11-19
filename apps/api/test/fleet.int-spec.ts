@@ -293,3 +293,47 @@ describe('deleting vehicles', () => {
     expect(await errorCode(s.vehicles.remove(op.id, v.id.toUpperCase()))).toBe('CONFLICT');
   });
 });
+
+describe('managing places and routes', () => {
+  it('renames a place on both directions, refuses origin = destination, and merges into an existing name', async () => {
+    const op = await s.operators.getByCode('AB');
+    await s.trips.createRoutePair(op.id, { origin: 'Sài Gòn', destination: 'Ðà Lạt', code: 'SG-DL', reverseCode: 'DL-SG' });
+    await s.trips.createRoutePair(op.id, { origin: 'Sài Gòn', destination: 'Nha Trang', code: 'SG-NT', reverseCode: 'NT-SG' });
+    expect(await s.trips.renamePlace(op.id, { from: 'Ðà Lạt', to: ' Đà  Lạt ' })).toMatchObject({ updated: 2, to: 'Đà Lạt' });
+    const names = async () =>
+      (await s.trips.listRoutes(op.id)).filter((r) => r.code.includes('-')).map((r) => `${r.code}:${r.origin}>${r.destination}`);
+    expect(await names()).toEqual(['DL-SG:Đà Lạt>Sài Gòn', 'NT-SG:Nha Trang>Sài Gòn', 'SG-DL:Sài Gòn>Đà Lạt', 'SG-NT:Sài Gòn>Nha Trang']);
+    expect(await errorCode(s.trips.renamePlace(op.id, { from: 'Đà Lạt', to: 'Sài Gòn' }))).toBe('VALIDATION_FAILED');
+    expect(await errorCode(s.trips.renamePlace(op.id, { from: 'Đà Lạt', to: 'sài gòn' }))).toBe('VALIDATION_FAILED');
+    // NFD (bàn phím macOS) được chuẩn về NFC nên gộp đúng vào điểm có sẵn.
+    expect((await s.trips.renamePlace(op.id, { from: 'Đà Lạt', to: 'Đà Lạt'.normalize('NFD') })).updated).toBe(0);
+    expect(await errorCode(s.trips.renamePlace(op.id, { from: 'Không có', to: 'X' }))).toBe('NOT_FOUND');
+    // Gộp: Nha Trang → Đà Lạt (đã có) được phép vì không tạo tuyến trùng điểm.
+    expect(await s.trips.renamePlace(op.id, { from: 'Nha Trang', to: 'Đà Lạt' })).toMatchObject({ updated: 2 });
+    expect((await names()).filter((n) => n.includes('Nha Trang'))).toEqual([]);
+    // Nhà xe khác không đổi được điểm của AB.
+    const ca = await s.operators.getByCode('CA');
+    expect(await errorCode(s.trips.renamePlace(ca.id, { from: 'Sài Gòn', to: 'X' }))).toBe('NOT_FOUND');
+  });
+
+  it('deletes an unused route but not one with trips or a schedule', async () => {
+    const op = await s.operators.getByCode('AB');
+    const ca = await s.operators.getByCode('CA');
+    const routes = await s.trips.listRoutes(op.id);
+    const nt = routes.find((r) => r.code === 'SG-NT')!;
+    expect(await errorCode(s.trips.deleteRoute(ca.id, nt.id))).toBe('NOT_FOUND');
+    await s.trips.deleteRoute(op.id, nt.id);
+    expect((await s.trips.listRoutes(op.id)).some((r) => r.id === nt.id)).toBe(false);
+
+    const dl = routes.find((r) => r.code === 'SG-DL')!;
+    await s.db.query(`INSERT INTO trip_schedules (operator_id, name, config) VALUES ($1, 'Lịch tuyến', $2)`, [
+      op.id,
+      JSON.stringify({ legs: [{ routeId: dl.id.toUpperCase() }] }),
+    ]);
+    expect(await errorCode(s.trips.deleteRoute(op.id, dl.id))).toBe('CONFLICT');
+
+    const pn = await s.operators.getByCode('PN');
+    const used = (await s.trips.listRoutes(pn.id))[0]!;
+    expect(await errorCode(s.trips.deleteRoute(pn.id, used.id))).toBe('CONFLICT');
+  });
+});
