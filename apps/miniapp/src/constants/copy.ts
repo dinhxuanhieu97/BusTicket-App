@@ -182,6 +182,24 @@ export const copy = {
     statusError: "Chưa tải được trạng thái đơn. Mở chi tiết để thử lại.",
     statusUnavailable: "Không tìm thấy đơn để cập nhật trạng thái.",
     seats: (n: number) => `${n} chỗ đã chọn`,
+    cancel: "Hủy vé",
+    cancelTitle: "Hủy đơn đang giữ chỗ?",
+    cancelBody: (code: string) =>
+      `Đơn ${code} sẽ bị hủy và chỗ được nhả ngay cho khách khác. Không hoàn tác được.`,
+    cancelClaimed:
+      "Bạn đã báo chuyển khoản cho đơn này. Nếu đã chuyển tiền, đừng hủy — hãy liên hệ nhà xe.",
+    cancelConfirm: "Hủy vé",
+    cancelling: "Đang hủy…",
+    keep: "Giữ lại",
+    cancelled: (code: string) => `Đã hủy đơn ${code}.`,
+    remove: "Xóa khỏi danh sách",
+    removeTitle: "Xóa vé khỏi danh sách?",
+    removeBody:
+      "Vé chỉ bị xóa khỏi danh sách trên máy này; thông tin ở nhà xe không thay đổi.",
+    removePaid: (code: string) =>
+      `Đơn này đã có tiền thanh toán. Hãy lưu lại mã ${code} để liên hệ nhà xe khi cần hoàn tiền.`,
+    removeConfirm: "Xóa",
+    removed: (code: string) => `Đã xóa đơn ${code} khỏi danh sách.`,
   },
   offers: {
     title: "Ưu đãi",

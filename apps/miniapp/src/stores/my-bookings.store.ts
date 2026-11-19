@@ -21,6 +21,8 @@ interface MyBookingsState {
   bookings: SavedBooking[];
   save: (booking: SavedBooking) => void;
   find: (code: string) => SavedBooking | undefined;
+  /** Bỏ đơn khỏi danh sách trên máy này (không đổi gì ở nhà xe). */
+  remove: (code: string) => void;
 }
 
 /** localStorage có thể bị chặn hoặc ném lỗi (chế độ riêng tư, webview hạn chế): khi đó chỉ giữ trong bộ nhớ. */
@@ -61,6 +63,7 @@ export const useMyBookings = create<MyBookingsState>()(
       bookings: [],
       save: (booking) => set((s) => ({ bookings: upsertBooking(s.bookings, booking) })),
       find: (code) => get().bookings.find((b) => b.code === code),
+      remove: (code) => set((s) => ({ bookings: s.bookings.filter((b) => b.code !== code) })),
     }),
     { name: "pnticket.my-bookings.v1", storage: createJSONStorage(() => safeStorage) },
   ),

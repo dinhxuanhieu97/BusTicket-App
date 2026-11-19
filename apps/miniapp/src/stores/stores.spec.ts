@@ -109,3 +109,13 @@ describe("saved bookings", () => {
     expect(list[0].code).toBe(`PN${MAX_SAVED_BOOKINGS + 4}`);
   });
 });
+
+describe("removing a saved booking", () => {
+  it("removes only that code from this device", async () => {
+    const { useMyBookings } = await import("./my-bookings.store");
+    const b = (code: string) => ({ code, accessToken: "t", tripId: "x", tripName: "", departAt: "", route: "", seatCodes: [], createdAt: "" });
+    useMyBookings.setState({ bookings: [b("AAAA1111"), b("BBBB2222")] });
+    useMyBookings.getState().remove("AAAA1111");
+    expect(useMyBookings.getState().bookings.map((x) => x.code)).toEqual(["BBBB2222"]);
+  });
+});
