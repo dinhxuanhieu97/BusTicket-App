@@ -88,7 +88,7 @@ export const SCENARIOS: Scenario[] = [
   { pay: 'none', cancel: 'unpaid' },
   { pay: 'full', occupancy: 2, board: true },
   { pay: 'none', seats: 3, note: 'Nhóm đi công tác' },
-  { pay: 'deposit', hold: true, note: 'Đã cọc qua quầy, chờ chuyển phần còn lại' },
+  { pay: 'none', hold: true, note: 'Giữ chỗ, khách hẹn chuyển khoản tối nay' },
 ];
 
 const DEMO_STOPS = (origin: string) => ({
@@ -150,6 +150,28 @@ export function saigonSide(routes: { code: string; origin: string; destination: 
   return 'TP.HCM';
 }
 
+/** A stop only the demo routes use; together with the demo place it tells demo routes from real ones. */
+const DEMO_STOP_MARK = 'Ngã ba Phú Tài';
+
+function isDemoRoute(r: { origin: string; destination: string; stops?: unknown }): boolean {
+  return (r.origin === DEMO_PLACE || r.destination === DEMO_PLACE) && JSON.stringify(r.stops ?? null).includes(DEMO_STOP_MARK);
+}
+
+/**
+ * The outbox has no consumer yet, but when one ships it must not message anyone about demo data:
+ * mark every pending event of demo bookings (and of their payments) as already processed.
+ */
+async function markOutboxProcessed(db: Db, operatorId: string): Promise<void> {
+  await db.query(
+    `UPDATE outbox_events e SET processed_at = now()
+      WHERE e.operator_id = $1 AND e.processed_at IS NULL
+        AND (e.aggregate_id IN (SELECT id FROM bookings WHERE operator_id = $1 AND idempotency_key LIKE $2)
+          OR e.aggregate_id IN (SELECT a.payment_id FROM payment_allocations a JOIN bookings b ON b.id = a.booking_id
+                                 WHERE b.operator_id = $1 AND b.idempotency_key LIKE $2))`,
+    [operatorId, `${DEMO_KEY_PREFIX}%`],
+  );
+}
+
 /** `YYYY-MM-DD` of a date in VN time (UTC+7, no DST). */
 function vnDate(d: Date): string {
   return new Date(d.getTime() + 7 * 3600_000).toISOString().slice(0, 10);
@@ -168,7 +190,8 @@ function spread<T>(list: T[], seed: number): T[] {
 }
 
 function demoPhone(tripIdx: number, i: number): string {
-  // 0999 xxx xxx: recognisably fake; customers are never notified (notifyCustomer: false).
+  // 0999 xxx xxx may belong to real subscribers, so nobody must ever be messaged: every outbox event the seed
+  // causes is marked processed right away (see markOutboxProcessed), on top of notifyCustomer: false.
   return `0999${String((tripIdx * 37 + i * 11) % 1_000_000).padStart(6, '0')}`;
 }
 
@@ -220,6 +243,9 @@ export class DemoSeeder {
     for (const w of wanted) {
       const code = op.code + w.suffix;
       let v = existing.find((x) => x.code === code);
+      if (v && !v.name.endsWith('(demo)')) {
+        throw new Error(`Vehicle ${code} already exists and is not demo data; refusing to put demo trips on it.`);
+      }
       if (!v) {
         const layoutId = layoutOf(w.type);
         if (!layoutId) throw new Error('The operator has no vehicle to copy a seat layout from.');
@@ -232,15 +258,21 @@ export class DemoSeeder {
     }
 
     // ---- Demo route pair ----
-    const routes = await this.trips.listRoutes(op.id);
-    const basePlace = saigonSide((routes as { code: string; origin: string; destination: string }[]).filter((r) => !DEMO_ROUTE_CODES.includes(r.code as never)));
+    const routes = (await this.trips.listRoutes(op.id)) as { id: string; code: string; origin: string; destination: string; stops: unknown }[];
+    const basePlace = saigonSide(routes.filter((r) => !DEMO_ROUTE_CODES.includes(r.code as never)));
     let forward = routes.find((r) => r.code === DEMO_ROUTE_CODES[0]);
     let reverse = routes.find((r) => r.code === DEMO_ROUTE_CODES[1]);
+    for (const r of [forward, reverse]) {
+      if (r && !isDemoRoute(r)) {
+        throw new Error(`Route ${r.code} already exists and is not demo data; refusing to use or change it.`);
+      }
+    }
+    if (!forward !== !reverse) throw new Error(`Only one of ${DEMO_ROUTE_CODES.join(' / ')} exists; fix the routes first.`);
     if (!forward || !reverse) {
       const pair = await this.trips.createRoutePair(op.id, {
         origin: basePlace, destination: DEMO_PLACE, code: DEMO_ROUTE_CODES[0], reverseCode: DEMO_ROUTE_CODES[1],
       });
-      const stops = DEMO_STOPS(basePlace);
+      const stops = DEMO_STOPS(basePlace); // reverse/forward both contain DEMO_STOP_MARK
       const [f, r] = pair.routes as { id: string; code: string; origin: string; destination: string }[];
       await this.trips.saveStops(op.id, f!.id, stops.forward);
       await this.trips.saveStops(op.id, r!.id, stops.reverse);
@@ -253,17 +285,22 @@ export class DemoSeeder {
     // ---- Demo trips on the demo pair: one each way per evening ----
     const now = this.clock.now();
     const today = vnDate(now);
-    const plan = [
-      { route: forward!, vehicle: demoVehicles['51']!, label: `${basePlace} → ${DEMO_PLACE}` },
-      { route: reverse!, vehicle: demoVehicles['52']!, label: `${DEMO_PLACE} → ${basePlace}` },
-    ];
     for (let d = 0; d < opts.days; d++) {
+      // Each bus ends the night at the other end, so it drives back the next evening.
+      const [a, b] = d % 2 === 0 ? [demoVehicles['51']!, demoVehicles['52']!] : [demoVehicles['52']!, demoVehicles['51']!];
+      const plan = [
+        { route: forward!, vehicle: a, label: `${basePlace} → ${DEMO_PLACE}` },
+        { route: reverse!, vehicle: b, label: `${DEMO_PLACE} → ${basePlace}` },
+      ];
       const date = vnDate(new Date(vnAt(today, '12:00').getTime() + d * 86_400_000));
       const departAt = vnAt(date, '19:00');
       if (departAt.getTime() - now.getTime() < 60 * 60_000) continue; // too late to sell today
       for (const p of plan) {
         const fares = await faresFor(this.db, p.vehicle.seat_layout_id, p.vehicle.type);
         const key = `${DEMO_KEY_PREFIX}trip-${p.route.code}-${date}`;
+        // Already created by an earlier run (its request hash includes the sales start, so a replay would conflict).
+        const known = await this.db.query('SELECT 1 FROM trips WHERE operator_id = $1 AND idempotency_key = $2', [op.id, key]);
+        if (known.rowCount) continue;
         try {
           const res = await this.trips.createTrip(op.id, {
             routeId: p.route.id, vehicleId: p.vehicle.id, name: `${p.label} 19:00`,
@@ -296,6 +333,7 @@ export class DemoSeeder {
       summary.boarded += made.boarded;
       summary.skipped += made.skipped;
     }
+    await markOutboxProcessed(this.db, op.id);
     log(`bookings: ${summary.bookings} on ${trips.length} trips (${summary.cancelled} cancelled, ${summary.boarded} boarded)`);
     return summary;
   }
@@ -348,7 +386,7 @@ export class DemoSeeder {
           : Math.max(10_000, Math.round(totalAmount / 2 / 10_000) * 10_000);
         const paidAmount = sc.pay === 'full' ? totalAmount : sc.pay === 'deposit' ? Math.min(deposit, totalAmount) : 0;
         const res = (await this.staff.createAtCounter(actor, operatorId, trip.id, { ...body, paidAmount }, {
-          dryRun: false, idempotencyKey: `${DEMO_KEY_PREFIX}${trip.id.slice(0, 8)}-${i}`,
+          dryRun: false, idempotencyKey: `${DEMO_KEY_PREFIX}${trip.id}-${i}`,
         })) as { booking: { code: string; status: string } };
         made.bookings++;
         const code = res.booking.code;
@@ -383,13 +421,22 @@ export class DemoSeeder {
       )).rows.map((r) => r.id);
       let payments = 0;
       if (ids.length) {
-        // Only payments that went exclusively to demo bookings (counter cash recorded by the seed).
-        const pay = (await c.query<{ id: string }>(
-          `SELECT DISTINCT a.payment_id AS id FROM payment_allocations a
-            WHERE a.booking_id = ANY($1::uuid[])
-              AND NOT EXISTS (SELECT 1 FROM payment_allocations o WHERE o.payment_id = a.payment_id AND NOT (o.booking_id = ANY($1::uuid[])))`,
+        // Only counter cash recorded for demo bookings is deleted. Any other money (a real transfer to a demo code,
+        // a payment shared with a real booking) stops the removal so a person can look at it first.
+        const all = (await c.query<{ id: string; method: string; shared: boolean; code: string }>(
+          `SELECT DISTINCT p.id, p.method, b.code,
+                  EXISTS (SELECT 1 FROM payment_allocations o WHERE o.payment_id = p.id AND NOT (o.booking_id = ANY($1::uuid[]))) AS shared
+             FROM payments p
+             LEFT JOIN payment_allocations a ON a.payment_id = p.id
+             JOIN bookings b ON b.id = COALESCE(a.booking_id, p.matched_booking_id)
+            WHERE a.booking_id = ANY($1::uuid[]) OR p.matched_booking_id = ANY($1::uuid[])`,
           [ids],
-        )).rows.map((r) => r.id);
+        )).rows;
+        const blocked = all.filter((p) => p.method !== 'CASH' || p.shared);
+        if (blocked.length) {
+          throw new Error(`Demo bookings have money that is not demo counter cash: ${[...new Set(blocked.map((p) => p.code))].join(', ')}. Resolve these first.`);
+        }
+        const pay = [...new Set(all.map((p) => p.id))];
         await c.query('UPDATE trip_seats SET booking_id = NULL WHERE booking_id = ANY($1::uuid[])', [ids]);
         await c.query('DELETE FROM payment_allocations WHERE booking_id = ANY($1::uuid[])', [ids]);
         await c.query('UPDATE payments SET matched_booking_id = NULL WHERE matched_booking_id = ANY($1::uuid[])', [ids]);
@@ -397,7 +444,7 @@ export class DemoSeeder {
         await c.query('DELETE FROM refund_obligations WHERE booking_id = ANY($1::uuid[])', [ids]);
         await c.query('DELETE FROM booking_previous_payment_accounts WHERE booking_id = ANY($1::uuid[])', [ids]);
         await c.query('DELETE FROM booking_items WHERE booking_id = ANY($1::uuid[])', [ids]);
-        await c.query('DELETE FROM outbox_events WHERE aggregate_id = ANY($1::uuid[])', [ids]);
+        await c.query('DELETE FROM outbox_events WHERE aggregate_id = ANY($1::uuid[])', [[...ids, ...pay]]);
         await c.query('DELETE FROM bookings WHERE id = ANY($1::uuid[])', [ids]);
       }
       const trips = (await c.query(
@@ -417,10 +464,11 @@ export class DemoSeeder {
       )).rowCount ?? 0;
       const routes = (await c.query(
         `DELETE FROM routes r WHERE r.operator_id = $1 AND r.code = ANY($2::text[])
+           AND (r.origin = $3 OR r.destination = $3) AND position($4 IN coalesce(r.stops::text, '')) > 0
            AND NOT EXISTS (SELECT 1 FROM trips t WHERE t.route_id = r.id)
            AND NOT EXISTS (SELECT 1 FROM trip_schedules s WHERE s.operator_id = r.operator_id
                              AND position(lower(r.id::text) IN lower(s.config::text)) > 0)`,
-        [op.id, [...DEMO_ROUTE_CODES]],
+        [op.id, [...DEMO_ROUTE_CODES], DEMO_PLACE, DEMO_STOP_MARK],
       )).rowCount ?? 0;
       return { bookings: ids.length, payments, trips, vehicles, routes };
     });

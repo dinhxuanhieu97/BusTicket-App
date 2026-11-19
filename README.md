@@ -81,7 +81,7 @@ pnpm --filter api migrate
 pnpm --filter api seed
 ```
 
-Dữ liệu demo để thử trước khi phát hành (xe, tuyến Sài Gòn ↔ Quy Nhơn có điểm đón/trả, chuyến 7 ngày tới, đơn tại quầy đủ trạng thái; khách không nhận tin nào, SĐT dạng `0999xxxxxx`). Cần nhà xe đã có tài khoản OWNER. Chạy lại an toàn; `--remove` xóa sạch phần demo. DB không ở máy local phải thêm `--yes`:
+Dữ liệu demo để thử trước khi phát hành (xe, tuyến Sài Gòn ↔ Quy Nhơn có điểm đón/trả, chuyến 7 ngày tới, đơn tại quầy đủ trạng thái; khách không nhận tin nào: sự kiện thông báo của dữ liệu demo được đánh dấu đã xử lý). Cần nhà xe đã có tài khoản OWNER. Chạy lại an toàn; `--remove` xóa sạch phần demo (dừng lại nếu đơn demo có tiền không phải tiền mặt demo). Không đụng tuyến/xe thật trùng mã `SG-QN`/`QN-SG`/`PN51–53`. DB không ở máy local phải thêm `--yes`:
 
 ```bash
 pnpm --filter api seed:demo -- --days=7
