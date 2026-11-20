@@ -285,3 +285,26 @@ describe('review findings', () => {
     expect(r.unallocated).toBe(0);
   });
 });
+
+describe('authentication and authorization', () => {
+  const urls = ['/reports/revenue?from=2027-01-20&to=2027-01-21', '/reports/bookings?from=2027-01-20&to=2027-01-21', '/counters', '/search?q=PN'];
+
+  it('rejects requests without a valid bearer token', async () => {
+    for (const url of urls) {
+      await http().get(`${opBase()}${url}`).expect(401);
+      await http().get(`${opBase()}${url}`).set({ Authorization: 'Bearer not-a-token' }).expect(401);
+    }
+  });
+
+  it('gives the platform admin no money or customer data on any operator', async () => {
+    ACCOUNTS.platform = '0908100010';
+    await new UsersService(s.db, s.clock).createPlatformAdmin({ fullName: 'Quản trị nền tảng', phone: ACCOUNTS.platform, password: PASSWORD });
+    await login('platform');
+    await http().get(`${opBase()}${urls[0]}`).set(bearer('platform')).expect(403);
+    await http().get(`${opBase()}${urls[1]}`).set(bearer('platform')).expect(403);
+    const c = await http().get(`${opBase()}/counters`).set(bearer('platform')).expect(200);
+    expect(c.body).toMatchObject({ payments: null, refundsOpen: null });
+    const r = await http().get(`${opBase()}/search`).query({ q: paidCode }).set(bearer('platform')).expect(200);
+    expect(r.body.bookings).toBeNull();
+  });
+});
