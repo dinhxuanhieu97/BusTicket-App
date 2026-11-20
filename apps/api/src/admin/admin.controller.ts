@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { z } from 'zod';
+import { AbuseConfig } from '../abuse/abuse-config';
+import { RateLimiter } from '../abuse/rate-limiter';
 import { AuditService } from '../audit/audit.service';
 import { AuthedRequest, AuthGuard, Perm } from '../auth/auth.guard';
 import { readLimited } from '../common/read-limited';
@@ -59,6 +61,8 @@ export class AdminController {
     private readonly clock: Clock,
     private readonly proofs: PaymentProofsService,
     private readonly reports: ReportsService,
+    private readonly limiter: RateLimiter,
+    private readonly abuse: AbuseConfig,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
@@ -91,12 +95,18 @@ export class AdminController {
   }
 
   /**
-   * Tìm nhanh chuyến (`trip.read`) và đơn (`booking.read`). Có dữ liệu khách nên lần tìm trả về đơn được ghi
-   * nhật ký — chỉ ghi số kết quả, không ghi chuỗi tìm (có thể là SĐT).
+   * Tìm nhanh chuyến (`trip.read`) và đơn (`booking.read`). Giới hạn số lần theo người dùng mỗi phút (GB8).
+   * Lần tìm trả về đơn được ghi nhật ký — chỉ ghi số kết quả, không ghi chuỗi tìm (có thể là SĐT).
    */
   @Get('operators/:operatorId/search')
   @Perm('trip.read')
   async search(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    const rate = await this.limiter.hit(`search-user:${req.auth.id}`, this.abuse.searchesPerUserPerMinute, 60);
+    if (!rate.allowed) {
+      throw new DomainError('TOO_MANY_ATTEMPTS', 'Tìm kiếm quá nhiều lần. Vui lòng thử lại sau ít phút.', {
+        retryAfterSeconds: rate.retryAfterSeconds,
+      });
+    }
     const r = await this.reports.search(op, req.auth.role, query);
     if (r.bookings && r.bookings.length > 0) await this.log(req, op, 'booking.search', 'operator', op, { bookings: r.bookings.length });
     return r;

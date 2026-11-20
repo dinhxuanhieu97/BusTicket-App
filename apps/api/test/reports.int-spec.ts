@@ -231,6 +231,16 @@ describe('quick search', () => {
     expect(rows[0]!.data).toEqual({ bookings: 1 });
   });
 
+  it('limits searches per user per minute and lets other users search (GB8)', async () => {
+    s.clock.set(new Date('2027-01-20T06:00:00.000Z'));
+    for (let i = 0; i < 60; i++) await search(`PN${i}`, 'seller').expect(200);
+    const blocked = await search('PN', 'seller').expect(429);
+    expect(blocked.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    await search('PN', 'owner').expect(200);
+    s.clock.set(new Date('2027-01-20T06:01:00.000Z'));
+    await search('PN', 'seller').expect(200);
+  });
+
   it('treats LIKE wildcards literally and hides erased contacts except by code', async () => {
     const wild = await search('%%').expect(200);
     expect(wild.body).toMatchObject({ trips: [], bookings: [] });
