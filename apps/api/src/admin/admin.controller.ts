@@ -96,7 +96,8 @@ export class AdminController {
 
   /**
    * Tìm nhanh chuyến (`trip.read`) và đơn (`booking.read`). Giới hạn số lần theo người dùng mỗi phút (GB8).
-   * Lần tìm trả về đơn được ghi nhật ký — chỉ ghi số kết quả, không ghi chuỗi tìm (có thể là SĐT).
+   * Vai trò xem được khách thì ghi nhật ký `booking.search` lần tìm đầu tiên của mỗi phút, kể cả khi không ra kết quả
+   * (GB8: dò SĐT không ra vẫn để lại dấu; GB6: không ghi mỗi lần gõ). Chỉ ghi số kết quả, không ghi chuỗi tìm.
    */
   @Get('operators/:operatorId/search')
   @Perm('trip.read')
@@ -108,7 +109,10 @@ export class AdminController {
       });
     }
     const r = await this.reports.search(op, req.auth.role, query);
-    if (r.bookings && r.bookings.length > 0) await this.log(req, op, 'booking.search', 'operator', op, { bookings: r.bookings.length });
+    // Bộ đếm riêng: chỉ tính lần tìm thành công, để lần đầu bị 400 không làm mất nhật ký của cả phút.
+    if (r.bookings && (await this.limiter.hit(`search-audit:${req.auth.id}`, 1, 60)).count === 1) {
+      await this.log(req, op, 'booking.search', 'operator', op, { bookings: r.bookings.length });
+    }
     return r;
   }
 

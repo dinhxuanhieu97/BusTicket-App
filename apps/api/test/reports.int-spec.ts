@@ -223,12 +223,24 @@ describe('quick search', () => {
     expect(byTripName.body.trips.map((t: { id: string }) => t.id)).toEqual([seed.bedTrip.id]);
   });
 
-  it('logs searches that return customers without storing the query', async () => {
-    await search('Trần Thị').expect(200);
-    const { rows } = await s.db.query<{ data: Record<string, unknown> }>(
-      `SELECT data FROM audit_logs WHERE action = 'booking.search' ORDER BY id DESC LIMIT 1`,
-    );
-    expect(rows[0]!.data).toEqual({ bookings: 1 });
+  it('logs the first customer search of each minute, even with no result, without storing the query (GB6, GB8)', async () => {
+    const minute = new Date('2027-01-20T05:00:00.000Z');
+    s.clock.set(minute);
+    // `audit_logs.at` là giờ thật của DB (không theo đồng hồ giả): lấy mốc theo id.
+    const { rows: [mark] } = await s.db.query<{ id: string }>('SELECT COALESCE(MAX(id), 0)::text AS id FROM audit_logs');
+    const logs = async (who: keyof typeof STAFF) =>
+      (await s.db.query<{ data: Record<string, unknown> }>(
+        `SELECT a.data FROM audit_logs a JOIN users u ON u.id = a.actor_user_id
+         WHERE a.action = 'booking.search' AND u.phone = $1 AND a.id > $2::bigint ORDER BY a.id`,
+        [`+84${STAFF[who].phone.slice(1)}`, mark!.id],
+      )).rows.map((r) => r.data);
+    await search('a', 'owner').expect(400); // lần lỗi không chiếm lượt ghi nhật ký
+    await search('0999 000', 'owner').expect(200); // dò SĐT không ra vẫn để lại dấu
+    await search('Trần Thị', 'owner').expect(200);
+    expect(await logs('owner')).toEqual([{ bookings: 0 }]);
+    s.clock.set(new Date(minute.getTime() + 60_000));
+    await search('Trần Thị', 'owner').expect(200);
+    expect(await logs('owner')).toEqual([{ bookings: 0 }, { bookings: 1 }]);
   });
 
   it('limits searches per user per minute and lets other users search (GB8)', async () => {
@@ -316,5 +328,11 @@ describe('authentication and authorization', () => {
     expect(c.body).toMatchObject({ payments: null, refundsOpen: null });
     const r = await http().get(`${opBase()}/search`).query({ q: paidCode }).set(bearer('platform')).expect(200);
     expect(r.body.bookings).toBeNull();
+    // Không xem được khách thì không có gì để ghi `booking.search`.
+    const { rowCount } = await s.db.query(
+      `SELECT 1 FROM audit_logs a JOIN users u ON u.id = a.actor_user_id WHERE a.action = 'booking.search' AND u.phone = $1`,
+      [`+84${ACCOUNTS.platform.slice(1)}`],
+    );
+    expect(rowCount).toBe(0);
   });
 });
