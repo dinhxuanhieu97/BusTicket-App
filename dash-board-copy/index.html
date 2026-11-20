@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PNTicket Quản trị</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <div class="scrim" data-close-nav></div>
+
+    <aside class="sidebar glass">
+      <div class="brand">
+        <div class="brand-logo" data-icon="bus"></div>
+        <div class="brand-text">
+          <div class="brand-name">Phong Nhung</div>
+          <div class="brand-sub">PNTicket · Quản trị</div>
+        </div>
+        <button class="collapse-btn" id="collapseBtn" aria-label="Thu gọn menu" data-icon="chevronLeft"></button>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-foot">
+        <div class="dot-icon" data-icon="radio"></div>
+        <div class="side-foot-text">
+          <b>3 chuyến đang chạy</b>
+          <span>Đồng bộ thanh toán · 1 phút trước</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar glass">
+        <button class="icon-btn menu-btn" data-open-nav aria-label="Mở menu" data-icon="menu"></button>
+        <div>
+          <h1 id="pageTitle">Tổng quan</h1>
+          <div class="sub" id="nowText"></div>
+        </div>
+        <div class="grow"></div>
+        <label class="search top-search">
+          <span data-icon="search"></span>
+          <input id="globalSearch" placeholder="Tìm mã vé, chuyến, SĐT…">
+          <span class="kbd">⌘K</span>
+        </label>
+        <button class="icon-btn theme-btn" id="themeBtn" aria-label="Đổi giao diện sáng/tối" data-icon="sun"></button>
+        <button class="icon-btn" aria-label="Thông báo" data-toast="3 thông báo mới: 1 khoản tiền chưa khớp đơn, 2 chuyến sắp đóng bán">
+          <span data-icon="bell"></span><span class="count">3</span>
+        </button>
+        <button class="btn primary" data-toast="Mở form tạo chuyến mới"><span data-icon="plus"></span><span class="btn-new-label">Tạo chuyến</span></button>
+        <div class="avatar">XH</div>
+      </header>
+
+      <div id="view"></div>
+    </main>
+
+    <nav class="bottom-nav glass" id="bottomNav"></nav>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
