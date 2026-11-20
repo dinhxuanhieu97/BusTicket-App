@@ -562,7 +562,8 @@ export class TripsService {
    * Đổi trạng thái bán: DRAFT → OPEN, OPEN ↔ CLOSED. Hủy chuyến (CANCELLED) cần xử lý khách
    * và tiền nên làm ở task sau.
    */
-  async setStatus(operatorId: string, tripId: string, status: 'OPEN' | 'CLOSED'): Promise<TripRow> {
+  /** `inTx` chỉ chạy khi trạng thái thật sự đổi (F09: đặt lại trạng thái cũ không ghi nhật ký). */
+  async setStatus(operatorId: string, tripId: string, status: 'OPEN' | 'CLOSED', inTx?: TxHook<TripRow>): Promise<TripRow> {
     if (!isUuid(operatorId) || !isUuid(tripId)) throw notFound('chuyến');
     const allowed: Record<string, string[]> = { DRAFT: ['OPEN'], OPEN: ['CLOSED'], CLOSED: ['OPEN'], CANCELLED: [] };
     return this.db.tx(async (c) => {
@@ -577,7 +578,9 @@ export class TripsService {
         throw new DomainError('CONFLICT', `Không thể chuyển chuyến từ ${t.status} sang ${status}.`);
       }
       const { rows: updated } = await c.query<TripRow>('UPDATE trips SET status = $2 WHERE id = $1 RETURNING *', [tripId, status]);
-      return publicTrip(updated[0]!);
+      const t2 = publicTrip(updated[0]!);
+      await inTx?.(c, t2);
+      return t2;
     });
   }
 

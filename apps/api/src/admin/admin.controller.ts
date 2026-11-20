@@ -609,9 +609,9 @@ export class AdminController {
     @Body() body: unknown,
   ) {
     const { status } = tripStatusBody.parse(body);
-    const t = await this.trips.setStatus(operatorId, tripId, status);
-    await this.log(req, operatorId, 'trip.status', 'trip', t.id, { status });
-    return t;
+    return this.trips.setStatus(operatorId, tripId, status, (q, t) =>
+      this.log(req, operatorId, 'trip.status', 'trip', t.id, { status }, q),
+    );
   }
 
   // ---- Thanh toán (nhật ký ghi trong cùng transaction ở PaymentsService) ----

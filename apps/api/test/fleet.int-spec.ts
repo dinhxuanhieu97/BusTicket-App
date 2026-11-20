@@ -338,7 +338,7 @@ describe('managing places and routes', () => {
   });
 });
 
-describe('audit hooks run inside the write transaction (F60)', () => {
+describe('audit hooks run inside the write transaction (F60, F09)', () => {
   const failingAudit = async () => {
     throw new Error('audit insert failed');
   };
@@ -371,4 +371,20 @@ describe('audit hooks run inside the write transaction (F60)', () => {
     expect(hook).not.toHaveBeenCalled();
   });
 
+  it('trip status: logs only a real change, and a failing audit keeps the old status', async () => {
+    const pn = await s.operators.getByCode('PN');
+    const { rows: [trip] } = await s.db.query<{ id: string; status: string }>(
+      `SELECT id, status FROM trips WHERE operator_id = $1 AND status = 'OPEN' LIMIT 1`, [pn.id],
+    );
+    const hook = jest.fn(async () => undefined);
+    await s.trips.setStatus(pn.id, trip!.id, 'OPEN', hook);
+    expect(hook).not.toHaveBeenCalled();
+    await expect(s.trips.setStatus(pn.id, trip!.id, 'CLOSED', failingAudit)).rejects.toThrow('audit insert failed');
+    const status = async () => (await s.db.query<{ status: string }>('SELECT status FROM trips WHERE id = $1', [trip!.id])).rows[0]!.status;
+    expect(await status()).toBe('OPEN');
+    await s.trips.setStatus(pn.id, trip!.id, 'CLOSED', hook);
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(await status()).toBe('CLOSED');
+    await s.trips.setStatus(pn.id, trip!.id, 'OPEN');
+  });
 });
