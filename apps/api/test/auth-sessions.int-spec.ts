@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { AbuseConfig } from '../src/abuse/abuse-config';
+import { signJwt } from '../src/auth/jwt';
 import { base32Decode, hotp } from '../src/auth/totp';
 import { UsersService } from '../src/auth/users.service';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
@@ -237,6 +238,20 @@ describe('logout', () => {
     const b = (await refresh(a.refreshToken).expect(200)).body;
     await http().post('/api/v1/auth/logout').send({ refreshToken: a.refreshToken }).expect(200);
     await refresh(b.refreshToken).expect(401);
+  });
+
+  it('rejects a full-scope access token that is not bound to a session (F33), but keeps 2FA setup tokens working', async () => {
+    const { rows: [u] } = await s.db.query<{ id: string; token_version: number }>(
+      'SELECT id, token_version FROM users WHERE phone = $1', ['+84903000001'],
+    );
+    const iat = Math.floor(s.clock.now().getTime() / 1000);
+    const claims = { sub: u!.id, ver: u!.token_version, iat, exp: iat + 600 };
+    await me(signJwt({ ...claims, scope: 'full' }, AUTH_SECRET)).expect(401);
+    await me(signJwt({ ...claims, scope: 'mfa_setup' }, AUTH_SECRET)).expect(200);
+    // Cùng token nhưng gắn phiên thật thì vẫn hợp lệ.
+    const a = (await login(SELLER).expect(200)).body;
+    const [sid] = (a.refreshToken as string).split('.');
+    await me(signJwt({ ...claims, scope: 'full', sid }, AUTH_SECRET)).expect(200);
   });
 
   it('always answers 200 for unknown or missing tokens', async () => {
