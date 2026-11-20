@@ -65,3 +65,20 @@ describe('GF2 — ReportsService.counters', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('GF12 — payment tab counts cover the whole ledger', () => {
+  it('counts every payment of the operator with no LIMIT and no date filter', async () => {
+    const { db, calls } = fakeDb({ payments: { none: 150_000, needs_review: 7, resolved: 3 } });
+    const r = await new ReportsService(db, new FixedClock(NOW)).counters(OP, 'SELLER');
+    expect(r.payments).toEqual({ total: 150_010, NONE: 150_000, NEEDS_REVIEW: 7, RESOLVED: 3 });
+    const pay = calls.find((c) => /FROM payments/.test(c.sql))!;
+    expect(pay.sql).not.toMatch(/LIMIT|received_at/);
+    expect(pay.params).toEqual([OP]);
+  });
+
+  it('total is exactly the sum of the three statuses', async () => {
+    const { db } = fakeDb({ payments: { none: 0, needs_review: 0, resolved: 0 } });
+    const r = await new ReportsService(db, new FixedClock(NOW)).counters(OP, 'OWNER');
+    expect(r.payments).toEqual({ total: 0, NONE: 0, NEEDS_REVIEW: 0, RESOLVED: 0 });
+  });
+});
