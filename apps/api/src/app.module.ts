@@ -5,6 +5,7 @@ import { RateLimiter } from './abuse/rate-limiter';
 import { NotConfiguredSmsSender, SmsSender } from './abuse/sms-sender';
 import { HttpZaloPhoneResolver, ZaloPhoneResolver } from './abuse/zalo-phone';
 import { ZaloPhoneService } from './abuse/zalo-phone.service';
+import { ReportsService } from './reports/reports.service';
 import { AdminController } from './admin/admin.controller';
 import { PaymentsService } from './payments/payments.service';
 import { HttpSepayTransactionsClient, SepayTransactionsClient } from './payments/sepay';
@@ -86,6 +87,7 @@ export class AppModule {
         StaffBookingsService,
         PassengerOpsService,
         PaymentProofsService,
+        ReportsService,
         { provide: HoldSweepConfig, useValue: new HoldSweepConfig(opts.holdSweepIntervalMs ?? 0) },
         HoldSweeper,
         AuditService,

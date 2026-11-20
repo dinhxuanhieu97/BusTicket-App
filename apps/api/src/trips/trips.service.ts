@@ -442,6 +442,7 @@ export class TripsService {
       `WITH page AS MATERIALIZED (
          SELECT * FROM trips WHERE operator_id = $1 AND depart_at >= $3 AND depart_at < $4
            AND ($5::timestamptz IS NULL OR (depart_at, id) > ($5::timestamptz, $6::uuid))
+           AND ($8::text IS NULL OR route_id IN (SELECT id FROM routes WHERE operator_id = $1 AND code = $8))
          ORDER BY depart_at, id LIMIT $7
        )
        SELECT t.id, t.code, t.name, t.status, t.depart_at,
@@ -452,7 +453,7 @@ export class TripsService {
          (SELECT COUNT(*)::int FROM trip_seats ts WHERE ts.trip_id = t.id) AS capacity
        FROM page t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
        ORDER BY t.depart_at, t.id`,
-      [operatorId, this.clock.now(), q.start, q.end, q.after?.at ?? null, q.after?.id ?? null, q.limit + 1],
+      [operatorId, this.clock.now(), q.start, q.end, q.after?.at ?? null, q.after?.id ?? null, q.limit + 1, q.route ?? null],
     );
     const last = rows[q.limit - 1];
     const trips = rows.slice(0,q.limit).map(({cursor_at: _cursor, ...trip}) => trip);

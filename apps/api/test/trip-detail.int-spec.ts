@@ -316,6 +316,40 @@ describe('admin range pagination', () => {
     expect((await s.trips.listAdminRange(other.op.id, query)).trips).toHaveLength(0);
     expect(first.trips[0]).toMatchObject({available:40,capacity:40});
   });
+  it('filters by route code inside the operator only', async () => {
+    const departAt = new Date('2027-06-05T10:30:00Z');
+    const qn = await s.trips.createRoute(seed.op.id, { code: 'HCM-QN', origin: 'TP.HCM', destination: 'Quy Nhơn' });
+    const onQn = await s.trips.createTrip(seed.op.id, tripInput({ routeId: qn.id, name: 'QN', departAt, salesCloseAt: departAt }), newKey());
+    await s.trips.createTrip(seed.op.id, tripInput({ name: 'HA', departAt, salesCloseAt: departAt }), newKey());
+    const range = { from: '2027-06-05', to: '2027-06-06' };
+    expect((await s.trips.listAdminRange(seed.op.id, range)).trips).toHaveLength(2);
+    const filtered = await s.trips.listAdminRange(seed.op.id, { ...range, route: 'HCM-QN' });
+    expect(filtered.trips.map((t) => t.id)).toEqual([onQn.id]);
+    expect(filtered.trips[0]).toMatchObject({ route_code: 'HCM-QN' });
+    // Mã tuyến của nhà xe khác (AB cũng có HCM-HA) không làm lộ chuyến của nhà xe đó.
+    await s.trips.createTrip(other.op.id, { ...tripInput({ departAt, salesCloseAt: departAt }), routeId: other.route.id, vehicleId: other.bed.id }, newKey());
+    expect((await s.trips.listAdminRange(seed.op.id, { ...range, route: 'HCM-HA' })).trips).toHaveLength(1);
+    expect((await s.trips.listAdminRange(seed.op.id, { ...range, route: 'NOPE-1' })).trips).toHaveLength(0);
+    expect(await errorCode(s.trips.listAdminRange(seed.op.id, { ...range, route: 'bad code' }))).toBe('VALIDATION_FAILED');
+  });
+  it('pages a route-filtered range with the cursor without skipping tied rows', async () => {
+    const departAt = new Date('2027-07-05T10:30:00Z');
+    const qb = await s.trips.createRoute(seed.op.id, { code: 'HCM-QB', origin: 'TP.HCM', destination: 'Quảng Bình' });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push((await s.trips.createTrip(seed.op.id, tripInput({ routeId: qb.id, name: `QB ${i}`, departAt, salesCloseAt: departAt }), newKey())).id);
+      await s.trips.createTrip(seed.op.id, tripInput({ name: `HA ${i}`, departAt, salesCloseAt: departAt }), newKey());
+    }
+    const q = { from: '2027-07-05', to: '2027-07-06', route: 'HCM-QB', limit: 1 };
+    const seen: string[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const page = await s.trips.listAdminRange(seed.op.id, cursor ? { ...q, cursor } : q);
+      seen.push(...page.trips.map((t) => t.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(seen.sort()).toEqual(ids.sort());
+  });
   it('uses an exclusive end date at the Vietnam midnight boundary', async () => {
     await s.trips.createTrip(seed.op.id, tripInput({departAt: new Date('2027-03-01T17:00:00Z'), salesCloseAt:new Date('2027-03-01T17:00:00Z')}), newKey());
     const before = await s.trips.listAdminRange(seed.op.id, {from:'2027-03-01',to:'2027-03-02'});

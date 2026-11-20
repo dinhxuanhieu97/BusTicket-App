@@ -12,6 +12,7 @@ import { DomainError } from '../common/errors';
 import { configureAccountSchema, PaymentsService } from '../payments/payments.service';
 import { StaffBookingsService } from '../bookings/staff-bookings.service';
 import { PassengerOpsService } from '../bookings/passenger-ops.service';
+import { ReportsService } from '../reports/reports.service';
 import { LOGO_MAX_BYTES, OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
@@ -57,12 +58,48 @@ export class AdminController {
     private readonly passengerOps: PassengerOpsService,
     private readonly clock: Clock,
     private readonly proofs: PaymentProofsService,
+    private readonly reports: ReportsService,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
     return this.audit.record({
       operatorId, actorUserId: req.auth.id, action, entity, entityId: entityId ?? null, data: data as Record<string, unknown>,
     });
+  }
+
+  // ---- Báo cáo & số đếm cho dashboard -----------------------------------------------------------
+
+  /** Doanh thu thuần trong kỳ `[from, to)` (giờ VN): theo ngày, phương thức, giờ, tuyến. */
+  @Get('operators/:operatorId/reports/revenue')
+  @Perm('payment.read')
+  revenueReport(@Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    return this.reports.revenue(op, query);
+  }
+
+  /** Đơn tạo trong kỳ: số đơn, đơn hủy, tỷ lệ hủy, số chỗ đã bán theo ngày. */
+  @Get('operators/:operatorId/reports/bookings')
+  @Perm('booking.read')
+  bookingsReport(@Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    return this.reports.bookings(op, query);
+  }
+
+  /** Số đếm chuông thông báo + tab Sổ thu; nhóm tiền chỉ có khi vai trò có `payment.read`. */
+  @Get('operators/:operatorId/counters')
+  @Perm('trip.read')
+  counters(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
+    return this.reports.counters(op, req.auth.role);
+  }
+
+  /**
+   * Tìm nhanh chuyến (`trip.read`) và đơn (`booking.read`). Có dữ liệu khách nên lần tìm trả về đơn được ghi
+   * nhật ký — chỉ ghi số kết quả, không ghi chuỗi tìm (có thể là SĐT).
+   */
+  @Get('operators/:operatorId/search')
+  @Perm('trip.read')
+  async search(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    const r = await this.reports.search(op, req.auth.role, query);
+    if (r.bookings && r.bookings.length > 0) await this.log(req, op, 'booking.search', 'operator', op, { bookings: r.bookings.length });
+    return r;
   }
 
   @Get('operators/:operatorId/trip-schedules')
