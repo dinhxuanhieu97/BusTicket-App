@@ -8,7 +8,7 @@ import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
 import { normalizeVnPhone } from '../common/phone';
 import { vnDayRange } from '../common/vn-time';
-import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable, TxHook } from '../db/db';
 import { MAX_UNIT_PRICE } from '../bookings/pricing';
 import { OperatorsService } from '../operators/operators.service';
 import { pickTripCode, tripCodeBase } from './trip-code';
@@ -347,7 +347,7 @@ export class TripsService {
    * Đổi sang tên điểm đã có là gộp hai điểm. Tên tuyến hiển thị ở chuyến/đơn cũ đổi theo; tên chuyến sinh từ lịch
    * ("Chuyến A → B") và điểm đón/trả đã chụp trong chuyến giữ tên cũ.
    */
-  async renamePlace(operatorId: string, input: unknown) {
+  async renamePlace(operatorId: string, input: unknown, inTx?: TxHook<{ updated: number; from: string; to: string }>) {
     const name = z.string().transform((v) => v.normalize('NFC').trim().replace(/\s+/g, ' ')).pipe(z.string().min(1).max(80));
     const data = z.object({ from: z.string().trim().min(1).max(200), to: name }).strict().parse(input);
     if (!isUuid(operatorId)) throw notFound('nhà xe');
@@ -370,7 +370,9 @@ export class TripsService {
           WHERE operator_id = $1 AND (origin = $2 OR destination = $2)`,
         [operatorId, data.from, data.to],
       );
-      return { updated: res.rowCount ?? 0, from: data.from, to: data.to };
+      const result = { updated: res.rowCount ?? 0, from: data.from, to: data.to };
+      if (result.updated > 0) await inTx?.(c, result);
+      return result;
     });
   }
 
@@ -378,7 +380,11 @@ export class TripsService {
    * Xóa tuyến tạo nhầm. Chỉ khi chưa có chuyến nào (FK trips.route_id) và không lịch chạy nào dùng tuyến;
    * khóa hàng tuyến FOR UPDATE: tạo chuyến (FK, KEY SHARE) và tạo lịch (FOR KEY SHARE) không chen vào được.
    */
-  async deleteRoute(operatorId: string, routeId: string) {
+  async deleteRoute(
+    operatorId: string,
+    routeId: string,
+    inTx?: TxHook<{ id: string; code: string; origin: string; destination: string }>,
+  ) {
     if (!isUuid(operatorId) || !isUuid(routeId)) throw notFound('tuyến');
     return this.db.tx(async (c) => {
       const { rows } = await c.query<{ id: string; code: string; origin: string; destination: string }>(
@@ -402,6 +408,7 @@ export class TripsService {
           { trips, schedules },
         );
       await c.query('DELETE FROM routes WHERE id = $1 AND operator_id = $2', [r.id, operatorId]);
+      await inTx?.(c, r);
       return r;
     });
   }

@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, P
 import type { Response } from 'express';
 import { z } from 'zod';
 import { AuditService } from '../audit/audit.service';
+import type { Queryable } from '../db/db';
 import { AuthedRequest, AuthGuard, Perm } from '../auth/auth.guard';
 import { readLimited } from '../common/read-limited';
 import { PaymentProofsService } from '../bookings/payment-proofs.service';
@@ -59,10 +60,14 @@ export class AdminController {
     private readonly proofs: PaymentProofsService,
   ) {}
 
-  private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
-    return this.audit.record({
-      operatorId, actorUserId: req.auth.id, action, entity, entityId: entityId ?? null, data: data as Record<string, unknown>,
-    });
+  /** `q` = transaction của thao tác ghi: nhật ký lỗi thì thao tác rollback (F60). Không có `q` thì ghi sau khi commit. */
+  private log(
+    req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object, q?: Queryable,
+  ) {
+    return this.audit.record(
+      { operatorId, actorUserId: req.auth.id, action, entity, entityId: entityId ?? null, data: data as Record<string, unknown> },
+      q,
+    );
   }
 
   @Get('operators/:operatorId/trip-schedules')
@@ -291,8 +296,9 @@ export class AdminController {
   @Delete('operators/:operatorId/vehicles/:vehicleId')
   @Perm('fleet.write')
   async deleteVehicle(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Param('vehicleId') vehicleId: string) {
-    const v = await this.vehicles.remove(operatorId, vehicleId);
-    await this.log(req, operatorId, 'vehicle.delete', 'vehicle', v.id, { code: v.code, name: v.name, type: v.type });
+    await this.vehicles.remove(operatorId, vehicleId, (q, v) =>
+      this.log(req, operatorId, 'vehicle.delete', 'vehicle', v.id, { code: v.code, name: v.name, type: v.type }, q),
+    );
     return { ok: true };
   }
 
@@ -310,18 +316,18 @@ export class AdminController {
   @Perm('route.write')
   async renamePlace(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
     await this.operators.getById(operatorId);
-    const result = await this.trips.renamePlace(operatorId, body);
-    if (result.updated > 0)
-      await this.log(req, operatorId, 'route.place.rename', 'route', undefined, result);
-    return result;
+    return this.trips.renamePlace(operatorId, body, (q, result) =>
+      this.log(req, operatorId, 'route.place.rename', 'route', undefined, result, q),
+    );
   }
 
   /** Xóa tuyến chưa có chuyến/lịch chạy (409 nếu đã dùng). */
   @Delete('operators/:operatorId/routes/:routeId')
   @Perm('route.write')
   async deleteRoute(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Param('routeId') routeId: string) {
-    const r = await this.trips.deleteRoute(operatorId, routeId);
-    await this.log(req, operatorId, 'route.delete', 'route', r.id, { code: r.code, origin: r.origin, destination: r.destination });
+    await this.trips.deleteRoute(operatorId, routeId, (q, r) =>
+      this.log(req, operatorId, 'route.delete', 'route', r.id, { code: r.code, origin: r.origin, destination: r.destination }, q),
+    );
     return { ok: true };
   }
 

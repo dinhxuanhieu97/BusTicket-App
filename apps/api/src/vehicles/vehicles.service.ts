@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
-import { Db, isPgError, PG_UNIQUE_VIOLATION } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, TxHook } from '../db/db';
 import { VEHICLE_TYPE_KIND } from '../seat-layouts/library';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 
@@ -135,7 +135,7 @@ export class VehiclesService {
    * xe đã chạy thì chuyển sang "Ngừng chạy" (RETIRED) để giữ lịch sử chuyến/đơn.
    * Khóa hàng xe FOR UPDATE: tạo chuyến (FOR UPDATE) và tạo lịch chạy (FOR KEY SHARE) đều khóa xe trước khi ghi, nên không thể chen vào giữa lúc kiểm tra và xóa.
    */
-  async remove(operatorId: string, vehicleId: string): Promise<VehicleRow> {
+  async remove(operatorId: string, vehicleId: string, inTx?: TxHook<VehicleRow>): Promise<VehicleRow> {
     if (!isUuid(operatorId) || !isUuid(vehicleId)) throw notFound('xe');
     return this.db.tx(async (c) => {
       const { rows } = await c.query<VehicleRow>('SELECT * FROM vehicles WHERE id = $1 AND operator_id = $2 FOR UPDATE', [
@@ -160,6 +160,7 @@ export class VehiclesService {
         );
       }
       await c.query('DELETE FROM vehicles WHERE id = $1 AND operator_id = $2', [vehicleId, operatorId]);
+      await inTx?.(c, v);
       return v;
     });
   }
