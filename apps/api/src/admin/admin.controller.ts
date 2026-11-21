@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { z } from 'zod';
+import { AbuseConfig } from '../abuse/abuse-config';
+import { RateLimiter } from '../abuse/rate-limiter';
 import { AuditService } from '../audit/audit.service';
 import { AuthedRequest, AuthGuard, Perm } from '../auth/auth.guard';
 import { readLimited } from '../common/read-limited';
@@ -12,6 +14,7 @@ import { DomainError } from '../common/errors';
 import { configureAccountSchema, PaymentsService } from '../payments/payments.service';
 import { StaffBookingsService } from '../bookings/staff-bookings.service';
 import { PassengerOpsService } from '../bookings/passenger-ops.service';
+import { ReportsService } from '../reports/reports.service';
 import { LOGO_MAX_BYTES, OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { TripsService } from '../trips/trips.service';
@@ -57,12 +60,60 @@ export class AdminController {
     private readonly passengerOps: PassengerOpsService,
     private readonly clock: Clock,
     private readonly proofs: PaymentProofsService,
+    private readonly reports: ReportsService,
+    private readonly limiter: RateLimiter,
+    private readonly abuse: AbuseConfig,
   ) {}
 
   private log(req: AuthedRequest, operatorId: string | null, action: string, entity: string, entityId?: string, data?: object) {
     return this.audit.record({
       operatorId, actorUserId: req.auth.id, action, entity, entityId: entityId ?? null, data: data as Record<string, unknown>,
     });
+  }
+
+  // ---- Báo cáo & số đếm cho dashboard -----------------------------------------------------------
+
+  /** Doanh thu thuần trong kỳ `[from, to)` (giờ VN): theo ngày, phương thức, giờ, tuyến. */
+  @Get('operators/:operatorId/reports/revenue')
+  @Perm('payment.read')
+  revenueReport(@Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    return this.reports.revenue(op, query);
+  }
+
+  /** Đơn tạo trong kỳ: số đơn, đơn hủy, tỷ lệ hủy, số chỗ đã bán theo ngày. */
+  @Get('operators/:operatorId/reports/bookings')
+  @Perm('booking.read')
+  bookingsReport(@Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    return this.reports.bookings(op, query);
+  }
+
+  /** Số đếm chuông thông báo + tab Sổ thu; nhóm tiền chỉ có khi vai trò có `payment.read`. */
+  @Get('operators/:operatorId/counters')
+  @Perm('trip.read')
+  counters(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
+    return this.reports.counters(op, req.auth.role);
+  }
+
+  /**
+   * Tìm nhanh chuyến (`trip.read`) và đơn (`booking.read`). Giới hạn số lần theo người dùng mỗi phút (GB8).
+   * Vai trò xem được khách thì ghi nhật ký `booking.search` lần tìm đầu tiên của mỗi phút, kể cả khi không ra kết quả
+   * (GB8: dò SĐT không ra vẫn để lại dấu; GB6: không ghi mỗi lần gõ). Chỉ ghi số kết quả, không ghi chuỗi tìm.
+   */
+  @Get('operators/:operatorId/search')
+  @Perm('trip.read')
+  async search(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Query() query: Record<string, unknown>) {
+    const rate = await this.limiter.hit(`search-user:${req.auth.id}`, this.abuse.searchesPerUserPerMinute, 60);
+    if (!rate.allowed) {
+      throw new DomainError('TOO_MANY_ATTEMPTS', 'Tìm kiếm quá nhiều lần. Vui lòng thử lại sau ít phút.', {
+        retryAfterSeconds: rate.retryAfterSeconds,
+      });
+    }
+    const r = await this.reports.search(op, req.auth.role, query);
+    // Bộ đếm riêng: chỉ tính lần tìm thành công, để lần đầu bị 400 không làm mất nhật ký của cả phút.
+    if (r.bookings && (await this.limiter.hit(`search-audit:${req.auth.id}`, 1, 60)).count === 1) {
+      await this.log(req, op, 'booking.search', 'operator', op, { bookings: r.bookings.length });
+    }
+    return r;
   }
 
   @Get('operators/:operatorId/trip-schedules')

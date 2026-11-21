@@ -8,6 +8,8 @@ export const adminTripQuerySchema = z
     to: z.string(),
     limit: z.coerce.number().int().min(1).max(100).default(25),
     cursor: z.string().max(150).optional(),
+    /** Mã tuyến (routes.code) để lọc; tuyến không thuộc nhà xe → danh sách rỗng. */
+    route: z.string().regex(/^[A-Z0-9-]{2,32}$/).optional(),
   })
   .strict();
 export function adminTripRange(input: unknown) {
