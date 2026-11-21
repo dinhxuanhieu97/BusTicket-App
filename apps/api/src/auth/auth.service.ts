@@ -327,6 +327,8 @@ export class AuthService {
   async authenticate(token: string): Promise<AuthUser> {
     const claims = verifyJwt(token, this.config.tokenSecret, this.nowSeconds());
     if (!claims || !isUuid(claims.sub) || (claims.sid !== undefined && !isUuid(claims.sid))) throw unauthenticated();
+    // F33: mọi token `full` đều được cấp kèm phiên từ F30; token thiếu `sid` không thu hồi được khi đăng xuất.
+    if (claims.scope === 'full' && claims.sid === undefined) throw unauthenticated();
     const { rows } = await this.db.query<UserRow & { session_ok: boolean | null }>(
       `SELECT u.*, (s.id IS NOT NULL AND s.revoked_at IS NULL AND s.expires_at > $3) AS session_ok
        FROM users u LEFT JOIN auth_sessions s ON s.id = $2 AND s.user_id = u.id

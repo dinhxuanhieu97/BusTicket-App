@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
-import { Db, Queryable } from '../db/db';
+import { Db, Queryable, TxHook } from '../db/db';
 import { loadTripPassengers } from './trip-passengers';
 
 /** Tối đa phụ xe trên một chuyến. */
@@ -70,7 +70,10 @@ export class TripAssistantsService {
    * Đặt lại toàn bộ danh sách phụ xe của chuyến (thay thế). Khóa dòng chuyến để hai yêu cầu đồng thời chạy lần lượt;
    * chỉ nhận phụ xe đang hoạt động cùng nhà xe. Trả về danh sách mới và phần thêm/bớt để ghi nhật ký.
    */
-  async setForTrip(operatorId: string, tripId: string, input: unknown, actorId: string | null) {
+  async setForTrip(
+    operatorId: string, tripId: string, input: unknown, actorId: string | null,
+    inTx?: TxHook<{ added: string[]; removed: string[] }>,
+  ) {
     const { userIds } = assignSchema.parse(input);
     const wanted = userIds.map((x) => x.toLowerCase());
     const diff = await this.db.tx(async (c) => {
@@ -100,6 +103,7 @@ export class TripAssistantsService {
            VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
           [operatorId, tripId, id, actorId, this.clock.now()],
         );
+      if (inTx) await inTx(c, { added, removed });
       return { added, removed };
     });
     return { assistants: await this.listForTrip(operatorId, tripId), ...diff };
