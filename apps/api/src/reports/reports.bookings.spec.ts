@@ -2,7 +2,7 @@ import { FixedClock } from '../common/clock';
 import type { Db } from '../db/db';
 import { ReportsService } from './reports.service';
 
-type Row = { date: string; bookings: number; cancelled: number; abandoned: number; holding: number; seats: number };
+type Row = { date: string; bookings: number; cancelled: number; abandoned: number; holding: number; seats: number; roundTrips: number };
 
 function fakeDb(rows: Row[]) {
   const calls: { sql: string; params: unknown[] }[] = [];
@@ -17,17 +17,17 @@ function fakeDb(rows: Row[]) {
 
 const OP = '11111111-1111-4111-8111-111111111111';
 const NOW = new Date('2027-01-21T09:00:00Z');
-const row = (date: string, v: Partial<Row>): Row => ({ date, bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0, ...v });
+const row = (date: string, v: Partial<Row>): Row => ({ date, bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0, roundTrips: 0, ...v });
 
 describe('GF7 — ReportsService.bookings', () => {
   it('fills every Vietnam day of the range and sums totals with the cancel rate', async () => {
     const { db } = fakeDb([
-      row('2027-01-20', { bookings: 4, cancelled: 1, abandoned: 2, holding: 1, seats: 6 }),
+      row('2027-01-20', { bookings: 4, cancelled: 1, abandoned: 2, holding: 1, seats: 6, roundTrips: 2 }),
       row('2027-01-22', { bookings: 4, cancelled: 0, seats: 4 }),
     ]);
     const r = await new ReportsService(db, new FixedClock(NOW)).bookings(OP, { from: '2027-01-20', to: '2027-01-23' });
     expect(r.byDay.map((d) => [d.date, d.seats])).toEqual([['2027-01-20', 6], ['2027-01-21', 0], ['2027-01-22', 4]]);
-    expect(r.totals).toEqual({ bookings: 8, cancelled: 1, abandoned: 2, holding: 1, seats: 10, cancelRate: 0.125 });
+    expect(r.totals).toEqual({ bookings: 8, cancelled: 1, abandoned: 2, holding: 1, seats: 10, roundTrips: 2, cancelRate: 0.125 });
     expect(r).toMatchObject({ from: '2027-01-20', to: '2027-01-23' });
   });
 
@@ -63,7 +63,7 @@ describe('GF7 — ReportsService.bookings', () => {
     const r = await new ReportsService(db, new FixedClock(NOW)).bookings('nope', { from: '2027-01-20', to: '2027-01-22' });
     expect(calls).toHaveLength(0);
     expect(r.byDay).toHaveLength(2);
-    expect(r.totals).toEqual({ bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0, cancelRate: null });
+    expect(r.totals).toEqual({ bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0, roundTrips: 0, cancelRate: null });
   });
 
   it.each([{ from: '2027-01-21', to: '2027-01-21' }, { from: '2027-01-20' }, { from: '2027-01-20', to: '2028-01-22' }])(

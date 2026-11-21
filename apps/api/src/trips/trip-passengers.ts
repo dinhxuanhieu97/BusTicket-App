@@ -19,6 +19,13 @@ export interface PassengerSeat {
   boardedAt: string | null;
 }
 
+/** Một lượt của vé khứ hồi. */
+export interface PassengerLeg {
+  tripId: string;
+  departAt: string;
+  routeCode: string;
+}
+
 export interface PassengerBooking {
   code: string;
   status: string;
@@ -48,6 +55,8 @@ export interface PassengerBooking {
   onboardCollected: number;
   /** Lý do nhân viên hủy đơn; null nếu không phải nhân viên hủy. */
   cancelReason: string | null;
+  /** Vé khứ hồi (tính 1 vé, GB4): ngày giờ lượt đi và lượt về; null với vé một chiều. */
+  roundTrip: { outbound: PassengerLeg; return: PassengerLeg } | null;
   seats: PassengerSeat[];
 }
 
@@ -125,6 +134,7 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
         cancelReason: r.cancel_reason,
         transferClaimedAt: r.transfer_claimed_at?.toISOString() ?? null,
         paymentProofCount: r.proof_count,
+        roundTrip: null,
         seats: [],
       };
       byBooking.set(r.id, b);
@@ -133,6 +143,7 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
       code: r.seat_code, floor: r.floor, occupancy: r.occupancy, infantCount: r.infant_count, boardedAt: r.boarded_at?.toISOString() ?? null,
     });
   }
+  await attachRoundTrips(q, byBooking);
   const bookings = [...byBooking.values()];
   const confirmed = bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'COMPLETED');
   const holding = bookings.filter((b) => b.status === 'HOLDING');
@@ -143,6 +154,28 @@ export async function loadTripPassengers(q: Queryable, operatorId: string, tripI
     holding: { bookings: holding.length, seats: holding.reduce((n, b) => n + b.seats.length, 0) },
     fetchedAt: now.toISOString(),
   };
+}
+
+/** Gắn hai lượt đi/về cho đơn có chỗ trên chuyến khác (chuyến của đơn `bookings.trip_id` là lượt đi). */
+async function attachRoundTrips(q: Queryable, byBooking: Map<string, PassengerBooking>) {
+  if (!byBooking.size) return;
+  const { rows } = await q.query<{ booking_id: string; outbound: boolean; trip_id: string; depart_at: Date; route_code: string }>(
+    `SELECT DISTINCT bi.booking_id, bi.trip_id = b.trip_id AS outbound, t.id AS trip_id, t.depart_at, r.code AS route_code
+     FROM booking_items bi JOIN bookings b ON b.id = bi.booking_id
+     JOIN trips t ON t.id = bi.trip_id JOIN routes r ON r.id = t.route_id
+     WHERE bi.booking_id = ANY($1::uuid[])`,
+    [[...byBooking.keys()]],
+  );
+  const legs = new Map<string, { outbound?: PassengerLeg; return?: PassengerLeg }>();
+  for (const r of rows) {
+    const entry = legs.get(r.booking_id) ?? {};
+    entry[r.outbound ? 'outbound' : 'return'] = { tripId: r.trip_id, departAt: r.depart_at.toISOString(), routeCode: r.route_code };
+    legs.set(r.booking_id, entry);
+  }
+  for (const [id, b] of byBooking) {
+    const l = legs.get(id);
+    if (l?.outbound && l.return) b.roundTrip = { outbound: l.outbound, return: l.return };
+  }
 }
 
 function summarize(bookings: PassengerBooking[]): PassengerSummary {

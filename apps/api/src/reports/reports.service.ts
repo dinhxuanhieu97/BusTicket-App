@@ -155,12 +155,13 @@ export class ReportsService {
   /**
    * Đơn theo ngày tạo (giờ VN). `bookings` = đơn đã xác nhận/đã đi + đơn nhân viên hủy; `cancelled` = đơn nhân viên
    * hủy (`cancelled_at`); `abandoned` = giữ chỗ hết hạn (kể cả chưa được quét) hoặc khách tự bỏ khi chưa trả tiền
-   * (không tính vào tỷ lệ hủy); `seats` = số chỗ (mỗi chặng một chỗ, đơn khứ hồi tính 2) của đơn đã xác nhận/đã đi.
+   * (không tính vào tỷ lệ hủy); `seats` = số vé của đơn đã xác nhận/đã đi, đếm chỗ ở chặng đi nên vé khứ hồi tính 1 (GB4);
+   * `roundTrips` = số vé khứ hồi trong `seats`.
    */
   async bookings(operatorId: string, input: unknown) {
     const r = reportRange(input);
     const dates = vnDates(r.from, r.days);
-    const zero = { bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0 };
+    const zero = { bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0, roundTrips: 0 };
     const rows = isUuid(operatorId)
       ? (
           await this.db.query<{ date: string } & typeof zero>(
@@ -170,9 +171,14 @@ export class ReportsService {
                COUNT(*) FILTER (WHERE b.status = 'EXPIRED' OR (b.status = 'CANCELLED' AND b.cancelled_at IS NULL)
                  OR (b.status = 'HOLDING' AND COALESCE(b.release_at, b.hold_expires_at) <= $4))::int AS abandoned,
                COUNT(*) FILTER (WHERE b.status = 'HOLDING' AND COALESCE(b.release_at, b.hold_expires_at) > $4)::int AS holding,
-               COALESCE(SUM((SELECT COUNT(*) FROM booking_items bi WHERE bi.booking_id = b.id))
-                 FILTER (WHERE b.status IN ('CONFIRMED', 'COMPLETED')), 0)::int AS seats
-             FROM bookings b WHERE b.operator_id = $1 AND b.created_at >= $2 AND b.created_at < $3 GROUP BY 1`,
+               COALESCE(SUM(o.n) FILTER (WHERE b.status IN ('CONFIRMED', 'COMPLETED')), 0)::int AS seats,
+               COALESCE(SUM(o.n) FILTER (WHERE b.status IN ('CONFIRMED', 'COMPLETED') AND o.round_trip), 0)::int AS "roundTrips"
+             FROM bookings b
+             CROSS JOIN LATERAL (
+               SELECT COUNT(*) FILTER (WHERE bi.trip_id = b.trip_id) AS n, bool_or(bi.trip_id <> b.trip_id) AS round_trip
+               FROM booking_items bi WHERE bi.booking_id = b.id
+             ) o
+             WHERE b.operator_id = $1 AND b.created_at >= $2 AND b.created_at < $3 GROUP BY 1`,
             [operatorId, r.start, r.end, this.clock.now()],
           )
         ).rows
@@ -185,7 +191,7 @@ export class ReportsService {
     const totals = byDay.reduce(
       (t, d) => ({
         bookings: t.bookings + d.bookings, cancelled: t.cancelled + d.cancelled, abandoned: t.abandoned + d.abandoned,
-        holding: t.holding + d.holding, seats: t.seats + d.seats,
+        holding: t.holding + d.holding, seats: t.seats + d.seats, roundTrips: t.roundTrips + d.roundTrips,
       }),
       zero,
     );

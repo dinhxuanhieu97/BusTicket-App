@@ -5,6 +5,7 @@ import { AppModule } from '../src/app.module';
 import { UsersService } from '../src/auth/users.service';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
 import { foldVn } from '../src/reports/report-query';
+import { loadTripPassengers } from '../src/trips/trip-passengers';
 import { ReportsService } from '../src/reports/reports.service';
 import {
   AUTH_SECRET, RELAXED_ABUSE, Services, T0, TEST_DB_URL, TOKEN_SECRET,
@@ -164,10 +165,10 @@ describe('revenue report', () => {
 describe('bookings report', () => {
   it('counts bookings created in the period and the staff cancel rate', async () => {
     const r = await http().get(`${opBase()}/reports/bookings?from=2027-01-20&to=2027-01-22`).set(bearer('dispatcher')).expect(200);
-    expect(r.body.totals).toEqual({ bookings: 4, cancelled: 2, abandoned: 1, holding: 1, seats: 3, cancelRate: 0.5 });
+    expect(r.body.totals).toEqual({ bookings: 4, cancelled: 2, abandoned: 1, holding: 1, seats: 3, roundTrips: 0, cancelRate: 0.5 });
     expect(r.body.byDay).toEqual([
-      { date: '2027-01-20', bookings: 4, cancelled: 2, abandoned: 1, holding: 1, seats: 3 },
-      { date: '2027-01-21', bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0 },
+      { date: '2027-01-20', bookings: 4, cancelled: 2, abandoned: 1, holding: 1, seats: 3, roundTrips: 0 },
+      { date: '2027-01-21', bookings: 0, cancelled: 0, abandoned: 0, holding: 0, seats: 0, roundTrips: 0 },
     ]);
     const empty = await http().get(`${opBase()}/reports/bookings?from=2027-01-10&to=2027-01-11`).set(bearer('owner')).expect(200);
     expect(empty.body.totals.cancelRate).toBeNull();
@@ -333,6 +334,20 @@ describe('review findings', () => {
     const r = await reports.revenue(seed.op.id, { from: '2027-01-23', to: '2027-01-24' });
     expect(r.byRoute.map((x) => [x.code, x.received])).toEqual([['HA-HCM', 50_000], ['HCM-HA', 50_000]]);
     expect(r.unallocated).toBe(0);
+    // GB4: vé khứ hồi tính 1 vé, ghi rõ ngày giờ hai lượt ở danh sách khách của cả hai chuyến.
+    const sales = await reports.bookings(seed.op.id, { from: '2027-01-23', to: '2027-01-24' });
+    expect(sales.totals).toMatchObject({ bookings: 1, seats: 1, roundTrips: 1 });
+    const legs = {
+      outbound: { tripId: seed.bedTrip.id, departAt: '2027-02-01T12:30:00.000Z', routeCode: 'HCM-HA' },
+      return: { tripId: ret.id, departAt: '2027-02-03T10:30:00.000Z', routeCode: 'HA-HCM' },
+    };
+    for (const tripId of [seed.bedTrip.id, ret.id]) {
+      const list = await loadTripPassengers(s.db, seed.op.id, tripId, 'all', s.clock.now());
+      expect(list.bookings.find((x) => x.code === b.code)!.roundTrip).toEqual(legs);
+    }
+    const oneWay = await loadTripPassengers(s.db, seed.op.id, seed.limoTrip.id, 'all', s.clock.now());
+    expect(oneWay.bookings.map((x) => x.roundTrip)).toEqual(oneWay.bookings.map(() => null));
+    expect(oneWay.bookings.length).toBeGreaterThan(0);
   });
 });
 
