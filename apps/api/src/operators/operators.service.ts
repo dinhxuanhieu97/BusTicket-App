@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { OPERATOR_CODE } from '../common/codes';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
-import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable, TxHook } from '../db/db';
 import { SmsSender } from '../abuse/sms-sender';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 import { DEFAULT_POLICY, OperatorPolicy, PolicyInput, policyInputSchema } from './policy';
@@ -207,7 +207,7 @@ export class OperatorsService {
   }
 
   /** Cập nhật chính sách = thêm phiên bản mới; đơn cũ giữ bản đã chụp. */
-  async updatePolicy(operatorId: string, input: z.input<typeof policyInputSchema>): Promise<OperatorPolicy> {
+  async updatePolicy(operatorId: string, input: z.input<typeof policyInputSchema>, inTx?: TxHook<OperatorPolicy>): Promise<OperatorPolicy> {
     const data = policyInputSchema.parse(input);
     if (!isUuid(operatorId)) throw notFound('nhà xe');
     return this.db.tx(async (c) => {
@@ -236,7 +236,9 @@ export class OperatorsService {
         );
       }
       await this.insertPolicy(c, operatorId, current.version + 1, next);
-      return this.currentPolicy(operatorId, c);
+      const policy = await this.currentPolicy(operatorId, c);
+      await inTx?.(c, policy);
+      return policy;
     });
   }
 

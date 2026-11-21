@@ -200,3 +200,58 @@ it('rejects already authenticated staff writes after the acting owner has been a
   expect(body.users).toContainEqual(first);
   expect(body.users).toHaveLength(2);
 });
+
+describe('staff and policy audits run inside the write transaction (GE3)', () => {
+  const failingAudit = async () => {
+    throw new Error('audit insert failed');
+  };
+  const POLICY = { holdMinutes: 10, maxUnitsPerBooking: 5, childPolicy: { freeUnderAge: 2, price: 0, maxPerUnit: 1, countsTowardCapacity: false } };
+
+  it('a failing audit leaves no new staff account behind', async () => {
+    const users = app.get(UsersService);
+    const actor = await app.get(AuthService).authenticate(ownerToken);
+    const input = { fullName: 'Nhân viên không ghi được nhật ký', role: 'SELLER' as const, phone: '0906000070', password: OWNER.password };
+    await expect(users.createStaff(operatorId, input, actor, failingAudit)).rejects.toThrow('audit insert failed');
+    const { rowCount } = await s.db.query(`SELECT 1 FROM users WHERE phone = '+84906000070'`);
+    expect(rowCount).toBe(0);
+    // Hook thấy tài khoản mới trong cùng transaction.
+    const seen: number[] = [];
+    await users.createStaff(operatorId, input, actor, async (q, u) => {
+      seen.push((await q.query('SELECT 1 FROM users WHERE id = $1', [u.id])).rowCount ?? 0);
+    });
+    expect(seen).toEqual([1]);
+  });
+
+  it('a failing audit keeps the old role and does not sign the user out', async () => {
+    const users = app.get(UsersService);
+    const actor = await app.get(AuthService).authenticate(ownerToken);
+    const { user, credentials } = await createSeller('0906000071');
+    const sellerToken = (await login(credentials).expect(200)).body.accessToken;
+    await expect(users.update(actor, operatorId, user.id, { role: 'ACCOUNTANT' }, failingAudit)).rejects.toThrow('audit insert failed');
+    const { rows: [row] } = await s.db.query<{ role: string }>('SELECT role FROM users WHERE id = $1', [user.id]);
+    expect(row!.role).toBe('SELLER');
+    await me(sellerToken).expect(200);
+  });
+
+  it('a role change over HTTP is logged exactly once with the new role', async () => {
+    const { user, path } = await createSeller('0906000072');
+    const { rows: [mark] } = await s.db.query<{ id: string }>('SELECT COALESCE(MAX(id), 0)::text AS id FROM audit_logs');
+    await http().patch(path).set(bearer(ownerToken)).send({ role: 'ACCOUNTANT' }).expect(200);
+    const { rows } = await s.db.query<{ action: string; data: { role: string; changed: string[] } }>(
+      `SELECT action, data FROM audit_logs WHERE entity_id = $1 AND id > $2::bigint ORDER BY id`, [user.id, mark!.id],
+    );
+    expect(rows).toEqual([{ action: 'user.update', data: { role: 'ACCOUNTANT', changed: ['role'] } }]);
+  });
+
+  it('a failing audit keeps the previous policy version', async () => {
+    const before = await s.operators.currentPolicy(operatorId);
+    await expect(s.operators.updatePolicy(operatorId, { ...POLICY, holdMinutes: 25 }, failingAudit)).rejects.toThrow('audit insert failed');
+    const after = await s.operators.currentPolicy(operatorId);
+    expect(after.version).toBe(before.version);
+    expect(after.holdMinutes).toBe(before.holdMinutes);
+    const hook = jest.fn(async () => undefined);
+    const saved = await s.operators.updatePolicy(operatorId, { ...POLICY, holdMinutes: 25 }, hook);
+    expect(saved.version).toBe(before.version + 1);
+    expect(hook).toHaveBeenCalledWith(expect.anything(), saved);
+  });
+});

@@ -190,9 +190,9 @@ export class AdminController {
   @Post('operators/:operatorId/users')
   @Perm('user.manage')
   async createUser(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    const user = await this.users.createStaff(operatorId, body as never, req.auth);
-    await this.log(req, operatorId, 'user.create', 'user', user.id, { role: user.role, fullName: user.fullName });
-    return user;
+    return this.users.createStaff(operatorId, body as never, req.auth, (q, user) =>
+      this.log(req, operatorId, 'user.create', 'user', user.id, { role: user.role, fullName: user.fullName }, q),
+    );
   }
 
   @Patch('operators/:operatorId/users/:userId')
@@ -203,10 +203,10 @@ export class AdminController {
     @Param('userId') userId: string,
     @Body() body: unknown,
   ) {
-    const user = await this.users.update(req.auth, operatorId, userId, body as never);
     const changed = Object.keys((body ?? {}) as object);
-    await this.log(req, operatorId, 'user.update', 'user', user.id, { changed, role: user.role });
-    return user;
+    return this.users.update(req.auth, operatorId, userId, body as never, (q, user) =>
+      this.log(req, operatorId, 'user.update', 'user', user.id, { changed, role: user.role }, q),
+    );
   }
 
   @Delete('operators/:operatorId/users/:userId')
@@ -231,10 +231,10 @@ export class AdminController {
   @Put('operators/:operatorId/policy')
   @Perm('policy.write')
   async updatePolicy(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    const p = await this.operators.updatePolicy(operatorId, body as never);
-    // Ghi chính sách sau khi gộp (thấy rõ cả các trường được giữ nguyên).
-    await this.log(req, operatorId, 'policy.update', 'operator_policy', String(p.version), { ...p });
-    return p;
+    // Ghi chính sách sau khi gộp (thấy rõ cả các trường được giữ nguyên), cùng transaction (GE3).
+    return this.operators.updatePolicy(operatorId, body as never, (q, p) =>
+      this.log(req, operatorId, 'policy.update', 'operator_policy', String(p.version), { ...p }, q),
+    );
   }
 
   // ---- Sơ đồ, xe -----------------------------------------------------------
