@@ -45,7 +45,17 @@ export function searchTerms(input: unknown) {
   return { q, code: q.toUpperCase().replace(/\s+/g, ''), phone, fold: foldVn(q) };
 }
 
-/** Bỏ dấu tiếng Việt và viết thường — khớp hàm SQL `vn_fold` (migration 025) để "nguyen" tìm ra "Nguyễn". */
+/** Bảng chữ có dấu → không dấu, giống hệt `translate` của hàm SQL `vn_fold` (migration 025, test kiểm tra). */
+export const VN_FOLD_FROM =
+  'àÀáÁảẢãÃạẠằẰắẮẳẲẵẴặẶăĂầẦấẤẩẨẫẪậẬâÂèÈéÉẻẺẽẼẹẸềỀếẾểỂễỄệỆêÊìÌíÍỉỈĩĨịỊòÒóÓỏỎõÕọỌồỒốỐổỔỗỖộỘôÔờỜớỚởỞỡỠợỢơƠùÙúÚủỦũŨụỤừỪứỨửỬữỮựỰưƯỳỲýÝỷỶỹỸỵỴđĐ';
+export const VN_FOLD_TO =
+  'aAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAeEeEeEeEeEeEeEeEeEeEeEiIiIiIiIiIoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOuUuUuUuUuUuUuUuUuUuUuUyYyYyYyYyYdD';
+const VN_FOLD = new Map([...VN_FOLD_FROM].map((c, i) => [c, VN_FOLD_TO[i]!]));
+
+/**
+ * Bỏ dấu tiếng Việt và viết thường, khớp hàm SQL `vn_fold` để "nguyen" tìm ra "Nguyễn".
+ * Chỉ bỏ dấu chữ tiếng Việt như SQL (GB9): "ç", "ñ"… giữ nguyên nên gõ đúng tên vẫn khớp chính nó.
+ */
 export function foldVn(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
+  return [...s.normalize('NFC')].map((c) => VN_FOLD.get(c) ?? c).join('').toLowerCase();
 }

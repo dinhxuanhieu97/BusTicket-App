@@ -244,6 +244,11 @@ describe('quick search', () => {
     // Tên gõ dạng tổ hợp (NFD) vẫn khớp.
     const { rows: [nfd] } = await s.db.query<{ f: string }>('SELECT vn_fold($1) AS f', ['Nguyễn Đức'.normalize('NFD')]);
     expect(nfd!.f).toBe('nguyen duc');
+    // Dấu không phải tiếng Việt: hai bên cùng giữ nguyên (GB9), kể cả khi gõ dạng tổ hợp.
+    for (const name of ['François Muñoz Müller', 'François'.normalize('NFD')]) {
+      const { rows: [r] } = await s.db.query<{ f: string }>('SELECT vn_fold($1) AS f', [name]);
+      expect(r!.f).toBe(foldVn(name));
+    }
   });
 
   it('logs the first customer search of each minute, even with no result, without storing the query (GB6, GB8)', async () => {

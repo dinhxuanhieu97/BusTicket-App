@@ -1,4 +1,6 @@
-import { foldVn, likeEscape, reportRange, searchTerms, vnDates } from './report-query';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { foldVn, likeEscape, reportRange, searchTerms, VN_FOLD_FROM, VN_FOLD_TO, vnDates } from './report-query';
 
 describe('report range', () => {
   it('uses Vietnam midnight bounds with an exclusive end and lists every day', () => {
@@ -52,5 +54,15 @@ describe('foldVn (GB3)', () => {
     expect(foldVn('Nguyễn'.normalize('NFD'))).toBe('nguyen');
     expect(foldVn('50%_off')).toBe('50%_off');
     expect(searchTerms({ q: '  Đỗ Mạnh ' }).fold).toBe('do manh');
+  });
+  it('keeps non-Vietnamese accents like SQL vn_fold does, so such names still match themselves (GB9)', () => {
+    expect(foldVn('François Muñoz Müller')).toBe('françois muñoz müller');
+    expect(foldVn('François'.normalize('NFD'))).toBe('françois');
+  });
+  it('uses exactly the translate table of migration 025', () => {
+    const sql = readFileSync(join(__dirname, '../db/migrations/025_search_fold.sql'), 'utf8');
+    expect(sql).toContain(`'${VN_FOLD_FROM}'`);
+    expect(sql).toContain(`'${VN_FOLD_TO}'`);
+    expect([...VN_FOLD_FROM]).toHaveLength([...VN_FOLD_TO].length);
   });
 });
