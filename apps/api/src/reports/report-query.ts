@@ -42,5 +42,10 @@ export function searchTerms(input: unknown) {
     else if (digits.startsWith('0')) digits = digits.slice(1);
     if (digits.length >= 4) phone = digits;
   }
-  return { q, code: q.toUpperCase().replace(/\s+/g, ''), phone };
+  return { q, code: q.toUpperCase().replace(/\s+/g, ''), phone, fold: foldVn(q) };
+}
+
+/** Bỏ dấu tiếng Việt và viết thường — khớp hàm SQL `vn_fold` (migration 025) để "nguyen" tìm ra "Nguyễn". */
+export function foldVn(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
 }

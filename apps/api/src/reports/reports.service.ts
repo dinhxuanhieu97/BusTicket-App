@@ -223,19 +223,19 @@ export class ReportsService {
   }
 
   /**
-   * Tìm nhanh: chuyến (mã/tên) cho mọi vai trò có `trip.read`; đơn (mã vé, SĐT, tên khách) chỉ khi có `booking.read`
+   * Tìm nhanh (tên không phân biệt dấu, GB3): chuyến (mã/tên) cho mọi vai trò có `trip.read`; đơn (mã vé, SĐT, tên khách) chỉ khi có `booking.read`
    * — ngược lại `bookings: null`. Đơn đã xóa thông tin liên hệ chỉ tìm được theo mã vé.
    */
   async search(operatorId: string, role: Role, input: unknown) {
     const t = searchTerms(input);
     const withBookings = can(role, 'booking.read');
     if (!isUuid(operatorId)) return { q: t.q, trips: [], bookings: withBookings ? [] : null };
-    const contains = `%${likeEscape(t.q)}%`;
+    const contains = `%${likeEscape(t.fold)}%`;
     const codePrefix = `${likeEscape(t.code)}%`;
     const tripsQ = this.db.query<{ id: string; code: string; name: string; status: string; depart_at: Date; route_code: string }>(
       `SELECT t.id, t.code, t.name, t.status, t.depart_at, r.code AS route_code
        FROM trips t JOIN routes r ON r.id = t.route_id
-       WHERE t.operator_id = $1 AND (t.code LIKE $2 ESCAPE '\\' OR t.name ILIKE $3 ESCAPE '\\')
+       WHERE t.operator_id = $1 AND (t.code LIKE $2 ESCAPE '\\' OR vn_fold(t.name) LIKE $3 ESCAPE '\\')
        ORDER BY abs(extract(epoch FROM t.depart_at - $4::timestamptz)), t.id LIMIT ${SEARCH_LIMIT}`,
       [operatorId, codePrefix, contains, this.clock.now()],
     );
@@ -249,7 +249,7 @@ export class ReportsService {
            FROM bookings b JOIN trips t ON t.id = b.trip_id
            WHERE b.operator_id = $1 AND (
              b.code LIKE $2 ESCAPE '\\'
-             OR (b.contact_erased_at IS NULL AND b.contact_name ILIKE $3 ESCAPE '\\')
+             OR (b.contact_erased_at IS NULL AND vn_fold(b.contact_name) LIKE $3 ESCAPE '\\')
              OR ($4::text IS NOT NULL AND b.contact_erased_at IS NULL AND b.contact_phone LIKE '%' || $4 || '%'))
            ORDER BY (b.code LIKE $2 ESCAPE '\\') DESC, b.created_at DESC, b.id LIMIT ${SEARCH_LIMIT}`,
           [operatorId, codePrefix, contains, t.phone],

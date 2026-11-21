@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { UsersService } from '../src/auth/users.service';
 import { HttpErrorFilter } from '../src/common/http-error.filter';
+import { foldVn } from '../src/reports/report-query';
 import { ReportsService } from '../src/reports/reports.service';
 import {
   AUTH_SECRET, RELAXED_ABUSE, Services, T0, TEST_DB_URL, TOKEN_SECRET,
@@ -221,6 +222,28 @@ describe('quick search', () => {
     expect(trips.body.trips.map((t: { id: string }) => t.id)).toContain(seed.limoTrip.id);
     const byTripName = await search('19:30').expect(200);
     expect(byTripName.body.trips.map((t: { id: string }) => t.id)).toEqual([seed.bedTrip.id]);
+  });
+
+  it('matches names without Vietnamese diacritics (GB3)', async () => {
+    s.clock.set(new Date('2027-01-20T04:00:00.000Z'));
+    for (const q of ['tran thi mai', 'TRAN THI MAI', 'Tran Thi Mai', 'trần thi mai']) {
+      const res = await search(q).expect(200);
+      expect(res.body.bookings.map((b: Hit) => b.code)).toEqual([paidCode]);
+    }
+    const { rows: [trip] } = await s.db.query<{ name: string }>('SELECT name FROM trips WHERE id = $1', [seed.bedTrip.id]);
+    const res = await search(foldVn(trip!.name).slice(0, 20)).expect(200);
+    expect(res.body.trips.map((t: { id: string }) => t.id)).toContain(seed.bedTrip.id);
+  });
+
+  it('folds every Vietnamese letter the same way in SQL and in the API (GB3)', async () => {
+    const letters =
+      'àáảãạằắẳẵặăầấẩẫậâèéẻẽẹềếểễệêìíỉĩịòóỏõọồốổỗộôờớởỡợơùúủũụừứửữựưỳýỷỹỵđ';
+    const all = letters + letters.toUpperCase() + ' Nguyễn Văn Đức';
+    const { rows: [nfc] } = await s.db.query<{ f: string }>('SELECT vn_fold($1) AS f', [all]);
+    expect(nfc!.f).toBe(foldVn(all));
+    // Tên gõ dạng tổ hợp (NFD) vẫn khớp.
+    const { rows: [nfd] } = await s.db.query<{ f: string }>('SELECT vn_fold($1) AS f', ['Nguyễn Đức'.normalize('NFD')]);
+    expect(nfd!.f).toBe('nguyen duc');
   });
 
   it('logs the first customer search of each minute, even with no result, without storing the query (GB6, GB8)', async () => {
