@@ -350,6 +350,48 @@ describe('admin range pagination', () => {
     } while (cursor);
     expect(seen.sort()).toEqual(ids.sort());
   });
+  it('sorts the whole range by a column and pages it by position (T2)', async () => {
+    const at = (h: number) => new Date(`2027-08-05T0${h}:30:00Z`);
+    const qn = await s.trips.createRoute(seed.op.id, { code: 'HCM-QT', origin: 'TP.HCM', destination: 'Quảng Trị' });
+    const c = await s.trips.createTrip(seed.op.id, tripInput({ name: 'Cà Mau', departAt: at(1), salesCloseAt: at(1) }), newKey());
+    const a = await s.trips.createTrip(seed.op.id, tripInput({ name: 'An Giang', departAt: at(2), salesCloseAt: at(2), status: 'OPEN', vehicleId: seed.limo.id, fares: LIMO_FARES }), newKey());
+    const d = await s.trips.createTrip(seed.op.id, tripInput({ name: 'Đà Lạt', departAt: at(3), salesCloseAt: at(3), routeId: qn.id }), newKey());
+    const b = await s.trips.createTrip(seed.op.id, tripInput({ name: 'Bến Tre', departAt: at(4), salesCloseAt: at(4) }), newKey());
+    await s.db.query(`UPDATE trips SET status = 'CANCELLED' WHERE id = $1`, [b.id]);
+    // Chuyến cùng ngày của nhà xe khác không lọt vào.
+    await s.trips.createTrip(other.op.id, { ...tripInput({ name: 'Ấp khác', departAt: at(1), salesCloseAt: at(1) }), routeId: other.route.id, vehicleId: other.bed.id }, newKey());
+    const range = { from: '2027-08-05', to: '2027-08-06' };
+    const names = async (q: Record<string, unknown>) => (await s.trips.listAdminRange(seed.op.id, { ...range, ...q })).trips.map((t) => t.name);
+
+    expect(await names({})).toEqual(['Cà Mau', 'An Giang', 'Đà Lạt', 'Bến Tre']);
+    expect(await names({ sort: 'depart', order: 'desc' })).toEqual(['Bến Tre', 'Đà Lạt', 'An Giang', 'Cà Mau']);
+    const byName = await names({ sort: 'name' });
+    expect(byName.indexOf('An Giang')).toBeLessThan(byName.indexOf('Bến Tre'));
+    expect(byName.indexOf('Bến Tre')).toBeLessThan(byName.indexOf('Cà Mau'));
+    expect(await names({ sort: 'name', order: 'desc' })).toEqual([...byName].reverse());
+    // Trạng thái theo vòng đời: nháp → mở bán → đã hủy; cùng trạng thái thì theo giờ khởi hành.
+    expect(await names({ sort: 'status' })).toEqual(['Cà Mau', 'Đà Lạt', 'An Giang', 'Bến Tre']);
+    expect(await names({ sort: 'route', order: 'desc' })).toEqual(['Đà Lạt', 'Cà Mau', 'An Giang', 'Bến Tre']);
+    const cap = (await s.trips.listAdminRange(seed.op.id, { ...range, sort: 'capacity', order: 'desc' })).trips.map((t) => t.capacity as number);
+    expect(cap).toEqual([...cap].sort((x, y) => y - x));
+    expect(cap[0]).toBeGreaterThan(cap[cap.length - 1]!);
+    expect(await names({ sort: 'name', route: 'HCM-QT' })).toEqual(['Đà Lạt']);
+
+    // Lật trang theo vị trí không sót, không lặp, giữ đúng thứ tự.
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { trips: { [key: string]: unknown }[]; nextCursor: string | null } = await s.trips.listAdminRange(
+        seed.op.id, { ...range, sort: 'name', order: 'desc', limit: 1, ...(cursor ? { cursor } : {}) },
+      );
+      seen.push(...page.trips.map((t) => t.name as string));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(seen).toEqual([...byName].reverse());
+    expect(await errorCode(s.trips.listAdminRange(seed.op.id, { ...range, sort: 'name', cursor: 'o:code:asc:1' }))).toBe('VALIDATION_FAILED');
+    expect(await errorCode(s.trips.listAdminRange(seed.op.id, { ...range, sort: 'price' }))).toBe('VALIDATION_FAILED');
+    expect([a.id, c.id, d.id].length).toBe(3);
+  });
   it('uses an exclusive end date at the Vietnam midnight boundary', async () => {
     await s.trips.createTrip(seed.op.id, tripInput({departAt: new Date('2027-03-01T17:00:00Z'), salesCloseAt:new Date('2027-03-01T17:00:00Z')}), newKey());
     const before = await s.trips.listAdminRange(seed.op.id, {from:'2027-03-01',to:'2027-03-02'});
