@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
-import { Db, Queryable } from '../db/db';
+import { Db, Queryable, TxHook } from '../db/db';
 import { LayoutKind, parseLayout } from './layout-parser';
 import { LIBRARY_LAYOUTS } from './library';
 
@@ -46,7 +46,9 @@ export class SeatLayoutsService {
   constructor(private readonly db: Db) {}
 
   /** Tạo mẫu sơ đồ (operatorId = null: thư viện dùng chung). Mỗi lần tạo cùng `code` là một phiên bản mới. */
-  async create(operatorId: string | null, input: CreateLayoutInput, q: Queryable = this.db): Promise<SeatLayoutRow> {
+  async create(
+    operatorId: string | null, input: CreateLayoutInput, q: Queryable = this.db, inTx?: TxHook<SeatLayoutRow>,
+  ): Promise<SeatLayoutRow> {
     const data = createLayoutSchema.parse(input);
     const parsed = parseLayout(data.definition, data.kind);
     const exec = async (c: Queryable) => {
@@ -82,6 +84,7 @@ export class SeatLayoutsService {
           ),
         ],
       );
+      if (inTx) await inTx(c, layout);
       return layout;
     };
     return q === this.db ? this.db.tx(exec) : exec(q);

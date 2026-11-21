@@ -47,7 +47,7 @@ export class OperatorsService {
   ) {}
 
   /** Tạo nhà xe + chính sách mặc định (phiên bản 1) + 2 xe mặc định, trong một transaction. */
-  async create(input: CreateOperatorInput): Promise<OperatorRow> {
+  async create(input: CreateOperatorInput, inTx?: TxHook<OperatorRow>): Promise<OperatorRow> {
     const data = createOperatorSchema.parse(input);
     try {
       return await this.db.tx(async (c) => {
@@ -64,6 +64,7 @@ export class OperatorsService {
             [op.id, op.code + v.suffix, v.name, v.type, library.get(v.layout)!.id],
           );
         }
+        if (inTx) await inTx(c, op);
         return op;
       });
     } catch (e) {
@@ -105,7 +106,7 @@ export class OperatorsService {
   }
 
   /** Đặt logo (PNG/JPEG/WebP ≤ 200 KB). Kiểm tra chữ ký tệp thật, không tin Content-Type; không nhận SVG. */
-  async setLogo(operatorId: string, data: Buffer, declaredMime: string, now: Date): Promise<string> {
+  async setLogo(operatorId: string, data: Buffer, declaredMime: string, now: Date, inTx?: TxHook<string>): Promise<string> {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
     if (data.length === 0 || data.length > LOGO_MAX_BYTES) {
       throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
@@ -114,21 +115,27 @@ export class OperatorsService {
     if (!mime || mime !== declaredMime.split(';')[0]!.trim().toLowerCase()) {
       throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
     }
-    const { rowCount } = await this.db.query(
-      'UPDATE operators SET logo_data = $2, logo_mime = $3, logo_updated_at = $4 WHERE id = $1',
-      [operatorId, data, mime, now],
-    );
-    if (!rowCount) throw notFound('nhà xe');
-    return mime;
+    return this.db.tx(async (c) => {
+      const { rowCount } = await c.query(
+        'UPDATE operators SET logo_data = $2, logo_mime = $3, logo_updated_at = $4 WHERE id = $1',
+        [operatorId, data, mime, now],
+      );
+      if (!rowCount) throw notFound('nhà xe');
+      if (inTx) await inTx(c, mime);
+      return mime;
+    });
   }
 
-  async removeLogo(operatorId: string): Promise<void> {
+  async removeLogo(operatorId: string, inTx?: TxHook<void>): Promise<void> {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
-    const { rowCount } = await this.db.query(
-      'UPDATE operators SET logo_data = NULL, logo_mime = NULL, logo_updated_at = NULL WHERE id = $1',
-      [operatorId],
-    );
-    if (!rowCount) throw notFound('nhà xe');
+    await this.db.tx(async (c) => {
+      const { rowCount } = await c.query(
+        'UPDATE operators SET logo_data = NULL, logo_mime = NULL, logo_updated_at = NULL WHERE id = $1',
+        [operatorId],
+      );
+      if (!rowCount) throw notFound('nhà xe');
+      if (inTx) await inTx(c, undefined);
+    });
   }
 
   /** Thông tin thương hiệu công khai (tên, phiên bản logo) theo mã nhà xe. */
@@ -151,17 +158,20 @@ export class OperatorsService {
     return { data: rows[0].logo_data, mime: rows[0].logo_mime };
   }
 
-  async updateProfile(operatorId: string, input: unknown) {
+  async updateProfile(operatorId: string, input: unknown, inTx?: TxHook<{ name: string; defaultDepartureTime: string }>) {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
     const data = z.object({
       name: z.string().trim().min(1).max(120).refine(v => !v.includes('\0')),
       defaultDepartureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     }).strict().parse(input);
-    const result = await this.db.query<{ id: string; code: string; name: string; defaultDepartureTime: string }>(
-      'UPDATE operators SET name=$2,default_departure_time=$3 WHERE id=$1 RETURNING id,code,name,default_departure_time AS "defaultDepartureTime"',
-      [operatorId, data.name, data.defaultDepartureTime],
-    );
-    if (!result.rows[0]) throw notFound('nhà xe');
+    await this.db.tx(async (c) => {
+      const result = await c.query<{ id: string; code: string; name: string; defaultDepartureTime: string }>(
+        'UPDATE operators SET name=$2,default_departure_time=$3 WHERE id=$1 RETURNING id,code,name,default_departure_time AS "defaultDepartureTime"',
+        [operatorId, data.name, data.defaultDepartureTime],
+      );
+      if (!result.rows[0]) throw notFound('nhà xe');
+      if (inTx) await inTx(c, result.rows[0]);
+    });
     return this.profile(operatorId);
   }
 

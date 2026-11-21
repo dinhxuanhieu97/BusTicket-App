@@ -102,9 +102,9 @@ export class AdminController {
   @Put('operators/:operatorId/profile')
   @Perm('policy.write')
   async updateProfile(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown) {
-    const result=await this.operators.updateProfile(op,body);
-    await this.log(req,op,'operator.profile','operator',op,{name:result.name,defaultDepartureTime:result.defaultDepartureTime});
-    return result;
+    return this.operators.updateProfile(op, body, (q, r) =>
+      this.log(req, op, 'operator.profile', 'operator', op, { name: r.name, defaultDepartureTime: r.defaultDepartureTime }, q),
+    );
   }
 
   /**
@@ -119,16 +119,16 @@ export class AdminController {
       throw new DomainError('VALIDATION_FAILED', 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', { field: 'logo' });
     }
     const data = await readLimited(req, LOGO_MAX_BYTES, 'Logo phải là ảnh PNG, JPEG hoặc WebP, tối đa 200 KB.', 'logo');
-    const mime = await this.operators.setLogo(op, data, type, this.clock.now());
-    await this.log(req, op, 'operator.logo.update', 'operator', op, { mime, bytes: data.length });
+    await this.operators.setLogo(op, data, type, this.clock.now(), (q, mime) =>
+      this.log(req, op, 'operator.logo.update', 'operator', op, { mime, bytes: data.length }, q),
+    );
     return this.operators.profile(op);
   }
 
   @Delete('operators/:operatorId/logo')
   @Perm('policy.write')
   async deleteLogo(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
-    await this.operators.removeLogo(op);
-    await this.log(req, op, 'operator.logo.delete', 'operator', op);
+    await this.operators.removeLogo(op, (q) => this.log(req, op, 'operator.logo.delete', 'operator', op, undefined, q));
     return this.operators.profile(op);
   }
 
@@ -143,9 +143,9 @@ export class AdminController {
   @Post('operators')
   @Perm('operator.create')
   async createOperator(@Req() req: AuthedRequest, @Body() body: unknown) {
-    const op = await this.operators.create(body as never);
-    await this.log(req, op.id, 'operator.create', 'operator', op.id, { code: op.code, name: op.name });
-    return op;
+    return this.operators.create(body as never, (q, op) =>
+      this.log(req, op.id, 'operator.create', 'operator', op.id, { code: op.code, name: op.name }, q),
+    );
   }
 
   @Get('operators/:operatorId/owners')
@@ -173,9 +173,9 @@ export class AdminController {
   @Post('seat-layouts/library')
   @Perm('layout.library.write')
   async createLibraryLayout(@Req() req: AuthedRequest, @Body() body: unknown) {
-    const layout = await this.layouts.create(null, body as never);
-    await this.log(req, null, 'layout.library.create', 'seat_layout', layout.id, { code: layout.code, version: layout.version });
-    return layout;
+    return this.layouts.create(null, body as never, undefined, (q, layout) =>
+      this.log(req, null, 'layout.library.create', 'seat_layout', layout.id, { code: layout.code, version: layout.version }, q),
+    );
   }
 
   // ---- Nhân viên -----------------------------------------------------------
@@ -259,9 +259,9 @@ export class AdminController {
   @Perm('fleet.write')
   async createLayout(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
     await this.operators.getById(operatorId);
-    const layout = await this.layouts.create(operatorId, body as never);
-    await this.log(req, operatorId, 'layout.create', 'seat_layout', layout.id, { code: layout.code, version: layout.version });
-    return layout;
+    return this.layouts.create(operatorId, body as never, undefined, (q, layout) =>
+      this.log(req, operatorId, 'layout.create', 'seat_layout', layout.id, { code: layout.code, version: layout.version }, q),
+    );
   }
 
   @Get('operators/:operatorId/vehicles')
@@ -274,9 +274,9 @@ export class AdminController {
   @Post('operators/:operatorId/vehicles')
   @Perm('fleet.write')
   async createVehicle(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    const v = await this.vehicles.create(operatorId, body as never);
-    await this.log(req, operatorId, 'vehicle.create', 'vehicle', v.id, { code: v.code, type: v.type });
-    return v;
+    return this.vehicles.create(operatorId, body as never, (q, v) =>
+      this.log(req, operatorId, 'vehicle.create', 'vehicle', v.id, { code: v.code, type: v.type }, q),
+    );
   }
 
   @Patch('operators/:operatorId/vehicles/:vehicleId')
@@ -287,9 +287,9 @@ export class AdminController {
     @Param('vehicleId') vehicleId: string,
     @Body() body: unknown,
   ) {
-    const v = await this.vehicles.update(operatorId, vehicleId, body as never);
-    await this.log(req, operatorId, 'vehicle.update', 'vehicle', v.id, body as object);
-    return v;
+    return this.vehicles.update(operatorId, vehicleId, body as never, (q, v) =>
+      this.log(req, operatorId, 'vehicle.update', 'vehicle', v.id, body as object, q),
+    );
   }
 
   /** Xóa xe chưa từng có chuyến/lịch chạy (409 kèm hướng dẫn chuyển "Ngừng chạy" nếu đã dùng). */
@@ -335,25 +335,25 @@ export class AdminController {
   @Perm('route.write')
   async saveStops(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string,
     @Param('routeId') routeId: string, @Body() body: unknown) {
-    const stops = await this.trips.saveStops(operatorId, routeId, body);
-    await this.log(req, operatorId, 'route.stops.update', 'route', routeId);
-    return stops;
+    return this.trips.saveStops(operatorId, routeId, body, (q) =>
+      this.log(req, operatorId, 'route.stops.update', 'route', routeId, undefined, q),
+    );
   }
 
   @Post('operators/:operatorId/route-pairs')
   @Perm('route.write')
   async routePair(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown) {
-    const result=await this.trips.createRoutePair(op,body);
-    await this.log(req,op,'route.pair.create','route',undefined,{count:result.routes.length});
-    return result;
+    return this.trips.createRoutePair(op, body, (q, r) =>
+      this.log(req, op, 'route.pair.create', 'route', undefined, { count: r.routes.length }, q),
+    );
   }
 
   @Post('operators/:operatorId/routes')
   @Perm('route.write')
   async createRoute(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string, @Body() body: unknown) {
-    const r = await this.trips.createRoute(operatorId, body as never);
-    await this.log(req, operatorId, 'route.create', 'route', r.id, { code: r.code });
-    return r;
+    return this.trips.createRoute(operatorId, body as never, (q, r) =>
+      this.log(req, operatorId, 'route.create', 'route', r.id, { code: r.code }, q),
+    );
   }
 
   @Get('operators/:operatorId/trips')
@@ -369,9 +369,9 @@ export class AdminController {
   @Post('operators/:operatorId/trips/batch')
   @Perm('trip.write')
   async batchTrips(@Req() req:AuthedRequest,@Param('operatorId') op:string,@Body() body:unknown,@Headers('idempotency-key') key?:string) {
-    const result=await this.trips.createBatch(op,body,key??'');
-    for(const trip of result.trips) if(!trip.replayed) await this.log(req,op,'trip.create','trip',trip.id,{name:trip.name});
-    return result;
+    return this.trips.createBatch(op, body, key ?? '', async (q, r) => {
+      for (const trip of r.trips) if (!trip.replayed) await this.log(req, op, 'trip.create', 'trip', trip.id, { name: trip.name }, q);
+    });
   }
 
   /** Phụ xe đang hoạt động của nhà xe, để chọn khi phân công. */
@@ -396,9 +396,10 @@ export class AdminController {
     @Param('tripId') tripId: string,
     @Body() body: unknown,
   ) {
-    const r = await this.assistants.setForTrip(op, tripId, body, req.auth.id);
-    for (const userId of r.added) await this.log(req, op, 'trip.assistant.assign', 'trip', tripId, { userId });
-    for (const userId of r.removed) await this.log(req, op, 'trip.assistant.unassign', 'trip', tripId, { userId });
+    const r = await this.assistants.setForTrip(op, tripId, body, req.auth.id, async (q, diff) => {
+      for (const userId of diff.added) await this.log(req, op, 'trip.assistant.assign', 'trip', tripId, { userId }, q);
+      for (const userId of diff.removed) await this.log(req, op, 'trip.assistant.unassign', 'trip', tripId, { userId }, q);
+    });
     return { assistants: r.assistants };
   }
 
@@ -594,9 +595,9 @@ export class AdminController {
     @Body() body: unknown,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    const t = await this.trips.createTrip(operatorId, body as never, idempotencyKey);
-    if (!t.replayed) await this.log(req, operatorId, 'trip.create', 'trip', t.id, { name: t.name, status: t.status });
-    return t;
+    return this.trips.createTrip(operatorId, body as never, idempotencyKey, undefined, undefined, async (q, t) => {
+      if (!t.replayed) await this.log(req, operatorId, 'trip.create', 'trip', t.id, { name: t.name, status: t.status }, q);
+    });
   }
 
   @Patch('operators/:operatorId/trips/:tripId/status')
@@ -654,6 +655,7 @@ export class AdminController {
   @HttpCode(200)
   @Perm('payment.manage')
   async reconcilePayments(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string) {
+    // Đối soát gọi ngân hàng và xử lý từng giao dịch trong transaction riêng: nhật ký tóm tắt ghi sau cùng là có chủ ý.
     const result = await this.payments.reconcile(operatorId);
     await this.log(req, operatorId, 'payment.reconcile', 'operator', operatorId, result);
     return result;
