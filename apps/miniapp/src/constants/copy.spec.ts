@@ -24,3 +24,11 @@ describe("customer-facing errors", () => {
     );
   });
 });
+
+describe("pickup and drop-off times", () => {
+  it("says the times are estimates and that the operator calls ahead", () => {
+    expect(copy.stops.estimated).toContain("dự kiến");
+    expect(copy.stops.callAhead).toContain("gọi cho bạn trước vài giờ");
+    expect(copy.checkout.stopUnset).toContain("nhà xe gọi xác nhận");
+  });
+});

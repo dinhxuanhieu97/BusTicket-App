@@ -250,8 +250,7 @@ export default function SeatMapPage() {
             <details className="pn-card">
               <summary className="pn-link">Xem điểm đón, điểm trả</summary>
               <p className="pn-meta my-3">
-                Giờ đón và trả khách là dự kiến, có thể thay đổi do thời tiết,
-                tình hình giao thông hoặc sự cố trên đường.
+                {copy.stops.estimated} {copy.stops.callAhead}
               </p>
               {(["pickup", "dropoff"] as const).map((kind) => (
                 <div key={kind}>
