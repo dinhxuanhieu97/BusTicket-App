@@ -155,8 +155,8 @@ export class ReportsService {
   /**
    * Đơn theo ngày tạo (giờ VN). `bookings` = đơn đã xác nhận/đã đi + đơn nhân viên hủy; `cancelled` = đơn nhân viên
    * hủy (`cancelled_at`); `abandoned` = giữ chỗ hết hạn (kể cả chưa được quét) hoặc khách tự bỏ khi chưa trả tiền
-   * (không tính vào tỷ lệ hủy); `seats` = số vé của đơn đã xác nhận/đã đi, đếm chỗ ở chặng đi nên vé khứ hồi tính 1 (GB4);
-   * `roundTrips` = số vé khứ hồi trong `seats`.
+   * (không tính vào tỷ lệ hủy); `seats` = số vé của đơn đã xác nhận/đã đi, mỗi chặng một vé nên khứ hồi tính 2 (lượt đi
+   * và lượt về, quyết định GB4 ngày 21/11 để dễ đối chiếu với từng chuyến); `roundTrips` = số vé trong `seats` thuộc đơn khứ hồi.
    */
   async bookings(operatorId: string, input: unknown) {
     const r = reportRange(input);
@@ -175,7 +175,7 @@ export class ReportsService {
                COALESCE(SUM(o.n) FILTER (WHERE b.status IN ('CONFIRMED', 'COMPLETED') AND o.round_trip), 0)::int AS "roundTrips"
              FROM bookings b
              CROSS JOIN LATERAL (
-               SELECT COUNT(*) FILTER (WHERE bi.trip_id = b.trip_id) AS n, bool_or(bi.trip_id <> b.trip_id) AS round_trip
+               SELECT COUNT(*) AS n, bool_or(bi.trip_id <> b.trip_id) AS round_trip
                FROM booking_items bi WHERE bi.booking_id = b.id
              ) o
              WHERE b.operator_id = $1 AND b.created_at >= $2 AND b.created_at < $3 GROUP BY 1`,

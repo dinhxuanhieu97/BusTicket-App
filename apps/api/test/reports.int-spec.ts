@@ -334,9 +334,9 @@ describe('review findings', () => {
     const r = await reports.revenue(seed.op.id, { from: '2027-01-23', to: '2027-01-24' });
     expect(r.byRoute.map((x) => [x.code, x.received])).toEqual([['HA-HCM', 50_000], ['HCM-HA', 50_000]]);
     expect(r.unallocated).toBe(0);
-    // GB4: vé khứ hồi tính 1 vé, ghi rõ ngày giờ hai lượt ở danh sách khách của cả hai chuyến.
+    // GB4: vé khứ hồi tính 2 vé (lượt đi, lượt về), ghi rõ ngày giờ hai lượt ở danh sách khách của cả hai chuyến.
     const sales = await reports.bookings(seed.op.id, { from: '2027-01-23', to: '2027-01-24' });
-    expect(sales.totals).toMatchObject({ bookings: 1, seats: 1, roundTrips: 1 });
+    expect(sales.totals).toMatchObject({ bookings: 1, seats: 2, roundTrips: 2 });
     const legs = {
       outbound: { tripId: seed.bedTrip.id, departAt: '2027-02-01T12:30:00.000Z', routeCode: 'HCM-HA' },
       return: { tripId: ret.id, departAt: '2027-02-03T10:30:00.000Z', routeCode: 'HA-HCM' },
