@@ -18,6 +18,8 @@ export class AbuseConfig {
   zaloPhonePerIpPerHour = 120;
   /** Đăng nhập nội bộ: tối đa theo IP trong 15 phút (mọi tài khoản cộng lại). */
   loginsPerIpPer15Min = 30;
+  /** Tìm nhanh trên dashboard: tối đa theo người dùng mỗi phút (chặn dò hàng loạt SĐT, GB8). */
+  searchesPerUserPerMinute = 60;
 
   constructor(overrides: Partial<AbuseConfig> = {}) {
     Object.assign(this, overrides);

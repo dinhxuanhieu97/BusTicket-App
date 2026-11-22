@@ -348,3 +348,116 @@ it('prevents scheduled occurrences with incomplete metadata or another operator'
     code: '23503',
   });
 });
+
+describe('saveRouteStops (RT5a): new pickup points reach trips the schedule already created', () => {
+  const tripOn = async (scheduleId: string, date: string, leg: number) =>
+    (
+      await s.db.query<{ id: string }>(
+        'SELECT id FROM trips WHERE schedule_id=$1 AND service_date=$2 AND schedule_leg=$3',
+        [scheduleId, date, leg],
+      )
+    ).rows[0]!.id;
+  const NEW_STOPS = {
+    pickup: [
+      { name: 'Bưu điện Ân Nghĩa', time: '16:30', day: 0 },
+      { name: 'Hoài Nhơn', time: '17:00', day: 0 },
+      { name: 'Phù Mỹ', time: '17:20', day: 0 },
+    ],
+    dropoff: [{ name: 'Bx. An Sương', time: '07:30', day: 1 }],
+  };
+
+  it('copies the points into future trips, shifted by each trip’s own departure, and leaves departed trips alone', async () => {
+    await s.trips.saveStops(seed.op.id, seed.route.id, {
+      pickup: [{ name: 'Bưu điện Ân Nghĩa', time: '16:30', day: 0 }],
+      dropoff: [],
+    });
+    const row = await enabled();
+    await schedules.generate(seed.op.id, row.id);
+    await schedules.saveException(
+      seed.op.id,
+      row.id,
+      { date: '2027-02-06', leg: 0, skipped: false, departTime: '18:30' },
+      null,
+    );
+    // Hai chuyến tạo tay của seed đọc thẳng điểm của tuyến; hủy để chỉ còn chuyến từ lịch.
+    await s.db.query("UPDATE trips SET status='CANCELLED' WHERE id = ANY($1::uuid[])", [
+      [seed.limoTrip.id, seed.bedTrip.id],
+    ]);
+    s.clock.set(new Date('2027-02-05T11:00:00Z')); // 18:00 giờ VN: chuyến 17:30 ngày 05/02 đã chạy.
+    const departed = await tripOn(row.id, '2027-02-05', 0);
+    const shifted = await tripOn(row.id, '2027-02-06', 0);
+    const normal = await tripOn(row.id, '2027-02-07', 0);
+    const reverseTrip = await tripOn(row.id, '2027-02-07', 1);
+    expect((await s.trips.discover(seed.op.code)).find((r) => r.code === 'HCM-HA')!.pickupStops).toEqual([
+      'Bưu điện Ân Nghĩa',
+    ]);
+
+    const result = await schedules.saveRouteStops(seed.op.id, seed.route.id, NEW_STOPS);
+
+    expect(result.stops).toEqual(NEW_STOPS);
+    expect(result.updatedTrips).toBe(29); // 30 ngày chiều đi, trừ chuyến đã chạy.
+    expect((await s.trips.seatMap(normal)).stops).toEqual(NEW_STOPS);
+    expect((await s.trips.seatMap(shifted)).stops).toEqual({
+      pickup: [
+        { name: 'Bưu điện Ân Nghĩa', time: '17:30', day: 0 },
+        { name: 'Hoài Nhơn', time: '18:00', day: 0 },
+        { name: 'Phù Mỹ', time: '18:20', day: 0 },
+      ],
+      dropoff: [{ name: 'Bx. An Sương', time: '08:30', day: 1 }],
+    });
+    const old = await s.db.query('SELECT stops_snapshot FROM trips WHERE id=$1', [departed]);
+    expect(old.rows[0]!.stops_snapshot.pickup).toEqual([{ name: 'Bưu điện Ân Nghĩa', time: '16:30', day: 0 }]);
+    expect((await s.trips.seatMap(reverseTrip)).stops).toEqual({ pickup: [], dropoff: [] });
+    // Form tìm của Mini App lấy điểm từ chuyến đang bán: điểm mới hiện ngay.
+    expect((await s.trips.discover(seed.op.code)).find((r) => r.code === 'HCM-HA')!.pickupStops).toEqual([
+      'Bưu điện Ân Nghĩa',
+      'Hoài Nhơn',
+      'Phù Mỹ',
+    ]);
+    // Chuyến sinh sau đó cũng theo điểm mới.
+    s.clock.set(new Date('2027-02-06T00:00:00Z'));
+    await schedules.generate(seed.op.id, row.id);
+    expect((await s.trips.seatMap(await tripOn(row.id, '2027-03-07', 0))).stops).toEqual(NEW_STOPS);
+  });
+
+  it('saves nothing when a point is out of order or a shifted trip would leave its days', async () => {
+    const row = await enabled();
+    await schedules.generate(seed.op.id, row.id);
+    await schedules.saveException(
+      seed.op.id,
+      row.id,
+      { date: '2027-02-06', leg: 0, skipped: false, departTime: '18:30' },
+      null,
+    );
+    const before = (await s.trips.listRoutes(seed.op.id)).find((r) => r.id === seed.route.id)!.stops;
+    expect(
+      await errorCode(
+        schedules.saveRouteStops(seed.op.id, seed.route.id, {
+          pickup: [NEW_STOPS.pickup[1], NEW_STOPS.pickup[0]],
+          dropoff: [],
+        }),
+      ),
+    ).toBe('VALIDATION_FAILED');
+    // 23:30 ngày 7 + 1 giờ của chuyến dời giờ = ngày 8: cả tuyến lẫn chuyến không đổi.
+    expect(
+      await errorCode(
+        schedules.saveRouteStops(seed.op.id, seed.route.id, {
+          pickup: [],
+          dropoff: [{ name: 'Rất xa', time: '23:30', day: 7 }],
+        }),
+      ),
+    ).toBe('VALIDATION_FAILED');
+    expect((await s.trips.listRoutes(seed.op.id)).find((r) => r.id === seed.route.id)!.stops).toEqual(before);
+    const snapshots = await s.db.query(
+      "SELECT count(*)::int AS n FROM trips WHERE schedule_id=$1 AND stops_snapshot::text LIKE '%Rất xa%'",
+      [row.id],
+    );
+    expect(snapshots.rows[0]!.n).toBe(0);
+  });
+
+  it('only touches the operator’s own route', async () => {
+    const other = await s.operators.create({ code: 'Z' + String.fromCharCode(65 + n), name: 'Khác' });
+    expect(await errorCode(schedules.saveRouteStops(other.id, seed.route.id, NEW_STOPS))).toBe('NOT_FOUND');
+    expect(await errorCode(schedules.saveRouteStops(seed.op.id, 'not-a-uuid', NEW_STOPS))).toBe('NOT_FOUND');
+  });
+});

@@ -1,5 +1,7 @@
 import { Queryable } from '../src/db/db';
+import { AuditService } from '../src/audit/audit.service';
 import { TripAssistantsService } from '../src/trips/trip-assistants.service';
+import { TripSchedulesService } from '../src/trips/trip-schedules.service';
 import { LIMO_FARES, Services, buildServices, newKey, resetDatabase, seedOperatorWithTrips } from './helpers';
 
 /**
@@ -105,7 +107,9 @@ describe('route and trip writes', () => {
     const stopsOf = async () => (await s.db.query('SELECT stops FROM routes WHERE id = $1', [seed.route.id])).rows[0]!.stops;
     const before = await stopsOf();
     const stops = { pickup: [{ name: 'Bến xe Miền Đông', time: '17:30', day: 0 }], dropoff: [{ name: 'Hoài Ân', time: '07:00', day: 1 }] };
-    await expect(s.trips.saveStops(seed.op.id, seed.route.id, stops, failingAudit)).rejects.toThrow('audit insert failed');
+    // Lưu điểm đón/trả đi qua TripSchedulesService (áp luôn vào chuyến chưa khởi hành); hook chạy trong cùng transaction.
+    const schedules = new TripSchedulesService(s.db, s.clock, s.trips, new AuditService(s.db));
+    await expect(schedules.saveRouteStops(seed.op.id, seed.route.id, stops, failingAudit)).rejects.toThrow('audit insert failed');
     expect(await stopsOf()).toEqual(before);
     expect(before).not.toEqual(stops);
     await s.trips.saveStops(seed.op.id, seed.route.id, stops);

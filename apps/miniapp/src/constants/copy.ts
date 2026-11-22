@@ -77,6 +77,11 @@ export const copy = {
     refreshError:
       "Chưa cập nhật được sơ đồ. Tình trạng chỗ có thể đã thay đổi.",
   },
+  /** Giờ ở điểm đón/trả chỉ là dự kiến; nhà xe gọi khách trước khi tới điểm đón (quyết định 21/11). */
+  stops: {
+    estimated: "Giờ đón và trả là giờ dự kiến, có thể thay đổi do thời tiết, giao thông hoặc sự cố trên đường.",
+    callAhead: "Nhà xe sẽ gọi cho bạn trước vài giờ trước khi tới điểm đón để báo giờ đón chính xác.",
+  },
   checkout: {
     title: "Thông tin đặt vé",
     contactName: "Họ tên người đi",

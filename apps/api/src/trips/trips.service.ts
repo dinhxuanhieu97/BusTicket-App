@@ -2,7 +2,20 @@ import type { PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { adminTripRange } from './admin-trip-query';
+import { adminTripRange, type AdminTripSort } from './admin-trip-query';
+
+/** Biểu thức ORDER BY cho từng cột; chỉ lấy từ bảng này, không ghép chuỗi người dùng gửi lên. */
+const ADMIN_TRIP_SORT_SQL: Record<AdminTripSort, string> = {
+  depart: 'depart_at',
+  code: 'code',
+  name: 'name',
+  route: 'route_code',
+  vehicle: 'vehicle_code',
+  available: 'available',
+  capacity: 'capacity',
+  // Theo vòng đời chuyến, không theo chữ cái của mã trạng thái.
+  status: "CASE status WHEN 'DRAFT' THEN 0 WHEN 'OPEN' THEN 1 WHEN 'CLOSED' THEN 2 ELSE 3 END",
+};
 import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
@@ -330,16 +343,17 @@ export class TripsService {
     return { ...publicTrip(existing), replayed: true };
   }
 
-  async saveStops(operatorId: string, routeId: string, input: unknown, inTx?: TxHook<z.output<typeof stopsSchema>>) {
+  /**
+   * Lưu điểm đón/trả của tuyến. Chỉ đổi `routes.stops`; chuyến đã sinh từ lịch giữ bản chụp riêng —
+   * dùng `TripSchedulesService.saveRouteStops` để áp luôn vào chuyến chưa khởi hành.
+   */
+  async saveStops(operatorId: string, routeId: string, input: unknown, c: Queryable = this.db) {
     const stops = stopsSchema.parse(input);
     if (!isUuid(routeId)) throw notFound('tuyến');
-    return this.db.tx(async (c) => {
-      const result = await c.query('UPDATE routes SET stops=$3::jsonb WHERE operator_id=$1 AND id=$2 RETURNING id',
-        [operatorId, routeId, JSON.stringify(stops)]);
-      if (!result.rows.length) throw notFound('tuyến');
-      if (inTx) await inTx(c, stops);
-      return stops;
-    });
+    const result = await c.query('UPDATE routes SET stops=$3::jsonb WHERE operator_id=$1 AND id=$2 RETURNING id',
+      [operatorId, routeId, JSON.stringify(stops)]);
+    if (!result.rows.length) throw notFound('tuyến');
+    return stops;
   }
 
   async createRoutePair(operatorId:string,input:unknown,inTx?:TxHook<{routes:{id:string;code:string;origin:string;destination:string}[]}>) {
@@ -458,14 +472,20 @@ export class TripsService {
     return rows;
   }
 
-  /** Bounded, keyset-paginated admin range; aggregate seats only for this page. */
+  /**
+   * Bounded admin range. Mặc định (giờ khởi hành tăng dần): phân trang con trỏ, chỉ đếm chỗ cho trang này.
+   * `sort`/`order` khác (T2): sắp xếp cả khoảng theo cột trong danh sách cho phép rồi cắt trang theo vị trí;
+   * cùng giá trị thì theo giờ khởi hành rồi id để thứ tự ổn định giữa các trang.
+   */
   async listAdminRange(operatorId: string, input: unknown) {
     const q = adminTripRange(input);
     if (!isUuid(operatorId)) return { trips: [], nextCursor: null };
+    if (!q.keyset) return this.listAdminRangeSorted(operatorId, q);
     const { rows } = await this.db.query<{ id: string; depart_at: Date; cursor_at: string; [key: string]: unknown }>(
       `WITH page AS MATERIALIZED (
          SELECT * FROM trips WHERE operator_id = $1 AND depart_at >= $3 AND depart_at < $4
            AND ($5::timestamptz IS NULL OR (depart_at, id) > ($5::timestamptz, $6::uuid))
+           AND ($8::text IS NULL OR route_id IN (SELECT id FROM routes WHERE operator_id = $1 AND code = $8))
          ORDER BY depart_at, id LIMIT $7
        )
        SELECT t.id, t.code, t.name, t.status, t.depart_at,
@@ -476,11 +496,36 @@ export class TripsService {
          (SELECT COUNT(*)::int FROM trip_seats ts WHERE ts.trip_id = t.id) AS capacity
        FROM page t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
        ORDER BY t.depart_at, t.id`,
-      [operatorId, this.clock.now(), q.start, q.end, q.after?.at ?? null, q.after?.id ?? null, q.limit + 1],
+      [operatorId, this.clock.now(), q.start, q.end, q.after?.at ?? null, q.after?.id ?? null, q.limit + 1, q.route ?? null],
     );
     const last = rows[q.limit - 1];
     const trips = rows.slice(0,q.limit).map(({cursor_at: _cursor, ...trip}) => trip);
     return { trips, nextCursor: rows.length > q.limit && last ? `${last.cursor_at}|${last.id}` : null };
+  }
+
+  private async listAdminRangeSorted(operatorId: string, q: ReturnType<typeof adminTripRange>) {
+    const dir = q.order === 'desc' ? 'DESC' : 'ASC';
+    const { rows } = await this.db.query<{ id: string; [key: string]: unknown }>(
+      `WITH page AS MATERIALIZED (
+         SELECT t.id, t.code, t.name, t.status, t.depart_at, t.sales_open_at, t.sales_close_at, t.contact_phone,
+           r.code AS route_code, v.code AS vehicle_code, v.name AS vehicle_name,
+           (SELECT COUNT(*)::int FROM trip_seats ts LEFT JOIN bookings b ON b.id = ts.booking_id
+            WHERE ts.trip_id = t.id AND (${SEAT_STATUS_SQL}) = 'AVAILABLE') AS available,
+           (SELECT COUNT(*)::int FROM trip_seats ts WHERE ts.trip_id = t.id) AS capacity
+         FROM trips t JOIN routes r ON r.id = t.route_id JOIN vehicles v ON v.id = t.vehicle_id
+         WHERE t.operator_id = $1 AND t.depart_at >= $3 AND t.depart_at < $4
+           AND ($5::text IS NULL OR r.code = $5)
+       )
+       SELECT * FROM page
+       ORDER BY ${ADMIN_TRIP_SORT_SQL[q.sort]} ${dir} NULLS LAST, depart_at, id
+       LIMIT $6 OFFSET $7`,
+      [operatorId, this.clock.now(), q.start, q.end, q.route ?? null, q.limit + 1, q.offset],
+    );
+    const trips = rows.slice(0, q.limit);
+    return {
+      trips,
+      nextCursor: rows.length > q.limit ? `o:${q.sort}:${q.order}:${q.offset + q.limit}` : null,
+    };
   }
 
   /**
