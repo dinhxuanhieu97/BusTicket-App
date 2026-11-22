@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
-import { Db, isPgError, PG_UNIQUE_VIOLATION } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, TxHook } from '../db/db';
 import { VEHICLE_TYPE_KIND } from '../seat-layouts/library';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
 
@@ -70,7 +70,7 @@ export class VehiclesService {
     return rows[0];
   }
 
-  async create(operatorId: string, input: CreateVehicleInput): Promise<VehicleRow> {
+  async create(operatorId: string, input: CreateVehicleInput, inTx?: TxHook<VehicleRow>): Promise<VehicleRow> {
     const data = createVehicleSchema.parse(input);
     if (!isUuid(operatorId)) throw notFound('nhà xe');
     const { rows: ops } = await this.db.query<{ code: string }>('SELECT code FROM operators WHERE id = $1', [operatorId]);
@@ -84,12 +84,15 @@ export class VehiclesService {
     const layout = await this.layouts.getUsable(operatorId, data.seatLayoutId);
     this.layouts.assertKind(layout, VEHICLE_TYPE_KIND[data.type]);
     try {
-      const { rows } = await this.db.query<VehicleRow>(
-        `INSERT INTO vehicles (operator_id, code, name, type, plate_number, seat_layout_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [operatorId, data.code, data.name, data.type, normalizePlate(data.plateNumber), layout.id],
-      );
-      return rows[0]!;
+      return await this.db.tx(async (c) => {
+        const { rows } = await c.query<VehicleRow>(
+          `INSERT INTO vehicles (operator_id, code, name, type, plate_number, seat_layout_id)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          [operatorId, data.code, data.name, data.type, normalizePlate(data.plateNumber), layout.id],
+        );
+        if (inTx) await inTx(c, rows[0]!);
+        return rows[0]!;
+      });
     } catch (e) {
       if (isPgError(e, PG_UNIQUE_VIOLATION)) throw new DomainError('CONFLICT', 'Mã xe hoặc tên xe đã tồn tại.');
       throw e;
@@ -100,7 +103,9 @@ export class VehiclesService {
    * Sửa xe. Đổi mẫu sơ đồ chỉ ảnh hưởng chuyến tạo sau đó (chuyến cũ đã chụp sơ đồ).
    * Khóa hàng xe để không chạy đua với tạo chuyến (tạo chuyến khóa FOR SHARE).
    */
-  async update(operatorId: string, vehicleId: string, input: z.input<typeof updateVehicleSchema>): Promise<VehicleRow> {
+  async update(
+    operatorId: string, vehicleId: string, input: z.input<typeof updateVehicleSchema>, inTx?: TxHook<VehicleRow>,
+  ): Promise<VehicleRow> {
     const data = updateVehicleSchema.parse(input);
     if (!isUuid(operatorId) || !isUuid(vehicleId)) throw notFound('xe');
     try {
@@ -122,6 +127,7 @@ export class VehiclesService {
            WHERE id = $1 AND operator_id = $2 RETURNING *`,
           [vehicleId, operatorId, data.name ?? v.name, plate, data.status ?? v.status, layoutId],
         );
+        if (inTx) await inTx(c, updated[0]!);
         return updated[0]!;
       });
     } catch (e) {
@@ -135,7 +141,7 @@ export class VehiclesService {
    * xe đã chạy thì chuyển sang "Ngừng chạy" (RETIRED) để giữ lịch sử chuyến/đơn.
    * Khóa hàng xe FOR UPDATE: tạo chuyến (FOR UPDATE) và tạo lịch chạy (FOR KEY SHARE) đều khóa xe trước khi ghi, nên không thể chen vào giữa lúc kiểm tra và xóa.
    */
-  async remove(operatorId: string, vehicleId: string): Promise<VehicleRow> {
+  async remove(operatorId: string, vehicleId: string, inTx?: TxHook<VehicleRow>): Promise<VehicleRow> {
     if (!isUuid(operatorId) || !isUuid(vehicleId)) throw notFound('xe');
     return this.db.tx(async (c) => {
       const { rows } = await c.query<VehicleRow>('SELECT * FROM vehicles WHERE id = $1 AND operator_id = $2 FOR UPDATE', [
@@ -160,6 +166,7 @@ export class VehiclesService {
         );
       }
       await c.query('DELETE FROM vehicles WHERE id = $1 AND operator_id = $2', [vehicleId, operatorId]);
+      await inTx?.(c, v);
       return v;
     });
   }

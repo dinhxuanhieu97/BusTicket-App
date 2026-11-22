@@ -21,7 +21,7 @@ import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
 import { normalizeVnPhone } from '../common/phone';
 import { vnDayRange } from '../common/vn-time';
-import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable, TxHook } from '../db/db';
 import { MAX_UNIT_PRICE } from '../bookings/pricing';
 import { OperatorsService } from '../operators/operators.service';
 import { pickTripCode, tripCodeBase } from './trip-code';
@@ -159,16 +159,22 @@ export class TripsService {
     private readonly clock: Clock,
   ) {}
 
-  async createRoute(operatorId: string, input: z.input<typeof createRouteSchema>) {
+  async createRoute(
+    operatorId: string, input: z.input<typeof createRouteSchema>,
+    inTx?: TxHook<{ id: string; code: string; origin: string; destination: string }>,
+  ) {
     const data = createRouteSchema.parse(input);
     await this.operators.getById(operatorId);
     try {
-      const { rows } = await this.db.query<{ id: string; code: string; origin: string; destination: string }>(
-        `INSERT INTO routes (operator_id, code, origin, destination) VALUES ($1, $2, $3, $4)
-         RETURNING id, code, origin, destination`,
-        [operatorId, data.code, data.origin, data.destination],
-      );
-      return rows[0]!;
+      return await this.db.tx(async (c) => {
+        const { rows } = await c.query<{ id: string; code: string; origin: string; destination: string }>(
+          `INSERT INTO routes (operator_id, code, origin, destination) VALUES ($1, $2, $3, $4)
+           RETURNING id, code, origin, destination`,
+          [operatorId, data.code, data.origin, data.destination],
+        );
+        if (inTx) await inTx(c, rows[0]!);
+        return rows[0]!;
+      });
     } catch (e) {
       if (isPgError(e, PG_UNIQUE_VIOLATION)) throw new DomainError('CONFLICT', `Mã tuyến ${data.code} đã tồn tại.`);
       throw e;
@@ -179,7 +185,8 @@ export class TripsService {
    * Tạo chuyến: chụp phiên bản sơ đồ hiện tại của xe vào `trip_seats`, bắt buộc có đủ giá
    * cho mọi (tầng × số người) bán được.
    */
-  async createTrip(operatorId: string, input: CreateTripInput, idempotencyKey?: string, transaction?: PoolClient, allocation?: { until?: Date; checkAllTrips?: boolean }): Promise<CreateTripResult> {
+  /** `inTx` chạy trong transaction (cả khi trả lại chuyến đã tạo, xem `replayed`); không dùng cùng `transaction`. */
+  async createTrip(operatorId: string, input: CreateTripInput, idempotencyKey?: string, transaction?: PoolClient, allocation?: { until?: Date; checkAllTrips?: boolean }, inTx?: TxHook<CreateTripResult>): Promise<CreateTripResult> {
     const data = createTripSchema.parse(input);
     const key = idempotencyKey?.trim();
     if (key !== undefined && !/^[\w-]{8,100}$/.test(key) && !(transaction && /^batch:[a-f0-9]{64}:[01]$/.test(key))) {
@@ -282,7 +289,12 @@ export class TripsService {
         }
         return { ...publicTrip(trip), replayed: false };
       };
-      return await (transaction ? execute(transaction) : this.db.tx(execute));
+      const withHook = async (c: PoolClient) => {
+        const result = await execute(c);
+        if (inTx) await inTx(c, result);
+        return result;
+      };
+      return await (transaction ? withHook(transaction) : this.db.tx(withHook));
     } catch (e) {
       // Hai yêu cầu cùng khóa chạy song song: ràng buộc duy nhất chặn bản thứ hai → trả chuyến đã tạo.
       if (!transaction && key && isPgError(e, PG_UNIQUE_VIOLATION) && e.constraint === 'trips_operator_idempotency_key') {
@@ -293,7 +305,7 @@ export class TripsService {
     }
   }
 
-  async createBatch(operatorId:string,input:unknown,key:string) {
+  async createBatch(operatorId:string,input:unknown,key:string,inTx?:TxHook<{trips:CreateTripResult[]}>) {
     if(!/^[\w-]{8,80}$/.test(key)) throw new DomainError('VALIDATION_FAILED','Thiếu khóa tạo chuyến hợp lệ.');
     const data=z.object({trips:z.array(createTripSchema).length(2)}).strict().parse(input);
     if(data.trips[0]!.vehicleId.toLowerCase()===data.trips[1]!.vehicleId.toLowerCase() || data.trips[0]!.routeId===data.trips[1]!.routeId)
@@ -314,6 +326,7 @@ export class TripsService {
           throw new DomainError('CONFLICT','Giờ khởi hành phải ở tương lai.');
         result.push(await this.createTrip(operatorId,item,itemKey,c,{checkAllTrips:true}));
       }
+      if(inTx) await inTx(c,{trips:result});
       return {trips:result};
     });
   }
@@ -343,7 +356,7 @@ export class TripsService {
     return stops;
   }
 
-  async createRoutePair(operatorId:string,input:unknown) {
+  async createRoutePair(operatorId:string,input:unknown,inTx?:TxHook<{routes:{id:string;code:string;origin:string;destination:string}[]}>) {
     const data=z.object({origin:z.string().trim().min(1).max(80),destination:z.string().trim().min(1).max(80),code:z.string().regex(/^[A-Z0-9-]{2,32}$/),reverseCode:z.string().regex(/^[A-Z0-9-]{2,32}$/)}).strict().parse(input);
     if(data.origin===data.destination||data.code===data.reverseCode) throw new DomainError('VALIDATION_FAILED','Hai chiều cần địa điểm và mã khác nhau.');
     return this.db.tx(async c=>{
@@ -355,6 +368,7 @@ export class TripsService {
         if(row.origin!==origin||row.destination!==destination) throw new DomainError('CONFLICT','Mã tuyến đã được dùng cho địa điểm khác.');
         routes.push(row);
       }
+      if(inTx) await inTx(c,{routes});
       return {routes};
     });
   }
@@ -364,7 +378,7 @@ export class TripsService {
    * Đổi sang tên điểm đã có là gộp hai điểm. Tên tuyến hiển thị ở chuyến/đơn cũ đổi theo; tên chuyến sinh từ lịch
    * ("Chuyến A → B") và điểm đón/trả đã chụp trong chuyến giữ tên cũ.
    */
-  async renamePlace(operatorId: string, input: unknown) {
+  async renamePlace(operatorId: string, input: unknown, inTx?: TxHook<{ updated: number; from: string; to: string }>) {
     const name = z.string().transform((v) => v.normalize('NFC').trim().replace(/\s+/g, ' ')).pipe(z.string().min(1).max(80));
     const data = z.object({ from: z.string().trim().min(1).max(200), to: name }).strict().parse(input);
     if (!isUuid(operatorId)) throw notFound('nhà xe');
@@ -387,7 +401,9 @@ export class TripsService {
           WHERE operator_id = $1 AND (origin = $2 OR destination = $2)`,
         [operatorId, data.from, data.to],
       );
-      return { updated: res.rowCount ?? 0, from: data.from, to: data.to };
+      const result = { updated: res.rowCount ?? 0, from: data.from, to: data.to };
+      if (result.updated > 0) await inTx?.(c, result);
+      return result;
     });
   }
 
@@ -395,7 +411,11 @@ export class TripsService {
    * Xóa tuyến tạo nhầm. Chỉ khi chưa có chuyến nào (FK trips.route_id) và không lịch chạy nào dùng tuyến;
    * khóa hàng tuyến FOR UPDATE: tạo chuyến (FK, KEY SHARE) và tạo lịch (FOR KEY SHARE) không chen vào được.
    */
-  async deleteRoute(operatorId: string, routeId: string) {
+  async deleteRoute(
+    operatorId: string,
+    routeId: string,
+    inTx?: TxHook<{ id: string; code: string; origin: string; destination: string }>,
+  ) {
     if (!isUuid(operatorId) || !isUuid(routeId)) throw notFound('tuyến');
     return this.db.tx(async (c) => {
       const { rows } = await c.query<{ id: string; code: string; origin: string; destination: string }>(
@@ -419,6 +439,7 @@ export class TripsService {
           { trips, schedules },
         );
       await c.query('DELETE FROM routes WHERE id = $1 AND operator_id = $2', [r.id, operatorId]);
+      await inTx?.(c, r);
       return r;
     });
   }
@@ -603,7 +624,8 @@ export class TripsService {
    * Đổi trạng thái bán: DRAFT → OPEN, OPEN ↔ CLOSED. Hủy chuyến (CANCELLED) cần xử lý khách
    * và tiền nên làm ở task sau.
    */
-  async setStatus(operatorId: string, tripId: string, status: 'OPEN' | 'CLOSED'): Promise<TripRow> {
+  /** `inTx` chỉ chạy khi trạng thái thật sự đổi (F09: đặt lại trạng thái cũ không ghi nhật ký). */
+  async setStatus(operatorId: string, tripId: string, status: 'OPEN' | 'CLOSED', inTx?: TxHook<TripRow>): Promise<TripRow> {
     if (!isUuid(operatorId) || !isUuid(tripId)) throw notFound('chuyến');
     const allowed: Record<string, string[]> = { DRAFT: ['OPEN'], OPEN: ['CLOSED'], CLOSED: ['OPEN'], CANCELLED: [] };
     return this.db.tx(async (c) => {
@@ -618,7 +640,9 @@ export class TripsService {
         throw new DomainError('CONFLICT', `Không thể chuyển chuyến từ ${t.status} sang ${status}.`);
       }
       const { rows: updated } = await c.query<TripRow>('UPDATE trips SET status = $2 WHERE id = $1 RETURNING *', [tripId, status]);
-      return publicTrip(updated[0]!);
+      const t2 = publicTrip(updated[0]!);
+      await inTx?.(c, t2);
+      return t2;
     });
   }
 

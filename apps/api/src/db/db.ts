@@ -13,6 +13,9 @@ export interface Queryable {
   query<R extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<{ rows: R[]; rowCount: number | null }>;
 }
 
+/** Việc chạy trong cùng transaction với thao tác ghi (vd. ghi nhật ký): lỗi thì cả thao tác rollback. */
+export type TxHook<T> = (q: Queryable, result: T) => Promise<void>;
+
 export class DbConfig {
   constructor(readonly connectionString: string, readonly maxConnections = 20) {}
 }

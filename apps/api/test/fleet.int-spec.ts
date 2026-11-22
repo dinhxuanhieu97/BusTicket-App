@@ -337,3 +337,54 @@ describe('managing places and routes', () => {
     expect(await errorCode(s.trips.deleteRoute(pn.id, used.id))).toBe('CONFLICT');
   });
 });
+
+describe('audit hooks run inside the write transaction (F60, F09)', () => {
+  const failingAudit = async () => {
+    throw new Error('audit insert failed');
+  };
+
+  it('a failing audit rolls back a vehicle delete', async () => {
+    const op = await s.operators.getByCode('AB');
+    const seat = await s.layouts.latest(null, 'SEAT29');
+    const v = await s.vehicles.create(op.id, { code: 'AB07', name: 'Xe giữ lại', type: 'SEATER', seatLayoutId: seat!.id });
+    await expect(s.vehicles.remove(op.id, v.id, failingAudit)).rejects.toThrow('audit insert failed');
+    expect((await s.vehicles.get(op.id, v.id)).id).toBe(v.id);
+    const seen: string[] = [];
+    await s.vehicles.remove(op.id, v.id, async (q, row) => {
+      // Hook thấy cùng transaction: xe đã bị xóa trong đó.
+      const { rowCount } = await q.query('SELECT 1 FROM vehicles WHERE id = $1', [row.id]);
+      seen.push(`${row.code}:${rowCount}`);
+    });
+    expect(seen).toEqual(['AB07:0']);
+  });
+
+  it('a failing audit rolls back a route delete and a place rename', async () => {
+    const op = await s.operators.getByCode('AB');
+    const r = await s.trips.createRoute(op.id, { code: 'AU-DT', origin: 'Điểm A', destination: 'Điểm B' });
+    await expect(s.trips.deleteRoute(op.id, r.id, failingAudit)).rejects.toThrow('audit insert failed');
+    expect((await s.trips.listRoutes(op.id)).some((x) => x.id === r.id)).toBe(true);
+    await expect(s.trips.renamePlace(op.id, { from: 'Điểm A', to: 'Điểm C' }, failingAudit)).rejects.toThrow();
+    expect((await s.trips.listRoutes(op.id)).find((x) => x.id === r.id)!.origin).toBe('Điểm A');
+    // Đổi tên không trúng hàng nào thì không ghi nhật ký.
+    const hook = jest.fn(async () => undefined);
+    expect((await s.trips.renamePlace(op.id, { from: 'Điểm A', to: 'Điểm A' }, hook)).updated).toBe(0);
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  it('trip status: logs only a real change, and a failing audit keeps the old status', async () => {
+    const pn = await s.operators.getByCode('PN');
+    const { rows: [trip] } = await s.db.query<{ id: string; status: string }>(
+      `SELECT id, status FROM trips WHERE operator_id = $1 AND status = 'OPEN' LIMIT 1`, [pn.id],
+    );
+    const hook = jest.fn(async () => undefined);
+    await s.trips.setStatus(pn.id, trip!.id, 'OPEN', hook);
+    expect(hook).not.toHaveBeenCalled();
+    await expect(s.trips.setStatus(pn.id, trip!.id, 'CLOSED', failingAudit)).rejects.toThrow('audit insert failed');
+    const status = async () => (await s.db.query<{ status: string }>('SELECT status FROM trips WHERE id = $1', [trip!.id])).rows[0]!.status;
+    expect(await status()).toBe('OPEN');
+    await s.trips.setStatus(pn.id, trip!.id, 'CLOSED', hook);
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(await status()).toBe('CLOSED');
+    await s.trips.setStatus(pn.id, trip!.id, 'OPEN');
+  });
+});

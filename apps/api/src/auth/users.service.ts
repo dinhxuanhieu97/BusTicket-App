@@ -5,7 +5,7 @@ import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
 import { normalizeVnPhone } from '../common/phone';
-import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable } from '../db/db';
+import { Db, isPgError, PG_UNIQUE_VIOLATION, Queryable, TxHook } from '../db/db';
 import { AuthUser, passwordSchema, PublicUser, toPublicUser, UserRow } from './auth.service';
 import { hashPassword } from './password';
 import { can, OPERATOR_ASSIGNABLE_ROLES, ROLES } from './permissions';
@@ -60,7 +60,9 @@ export class UsersService {
   }
 
   /** Tạo nhân viên cho một nhà xe (người gọi đã được kiểm tra quyền `user.manage` với nhà xe này). */
-  async createStaff(operatorId: string, input: z.input<typeof createUserSchema>, actor?: AuthUser): Promise<StaffUser> {
+  async createStaff(
+    operatorId: string, input: z.input<typeof createUserSchema>, actor?: AuthUser, inTx?: TxHook<StaffUser>,
+  ): Promise<StaffUser> {
     const data = createUserSchema.parse(input);
     if (!OPERATOR_ASSIGNABLE_ROLES.has(data.role)) {
       throw new DomainError('FORBIDDEN', 'Không thể gán vai trò này cho nhân viên nhà xe.');
@@ -69,9 +71,12 @@ export class UsersService {
     if (actor) {
       return this.db.tx(async (c) => {
         await this.lockOperatorForStaffWrite(c, operatorId, actor);
-        return toStaffUser(await this.insert(operatorId, data, c));
+        const user = toStaffUser(await this.insert(operatorId, data, c));
+        await inTx?.(c, user);
+        return user;
       });
     }
+    if (inTx) throw new Error('createStaff: inTx needs an actor');
     const { rows } = await this.db.query('SELECT 1 FROM operators WHERE id = $1', [operatorId]);
     if (!rows[0]) throw notFound('nhà xe');
     return toStaffUser(await this.insert(operatorId, data));
@@ -140,7 +145,9 @@ export class UsersService {
    * Sửa nhân viên. Đổi số đăng nhập, vai trò, trạng thái hoặc mật khẩu thì thu hồi mọi phiên.
    * Không tự khóa/hạ quyền chính mình; nhà xe luôn phải còn ít nhất một chủ xe đang hoạt động.
    */
-  async update(actor: AuthUser, operatorId: string, userId: string, input: z.input<typeof updateUserSchema>): Promise<StaffUser> {
+  async update(
+    actor: AuthUser, operatorId: string, userId: string, input: z.input<typeof updateUserSchema>, inTx?: TxHook<StaffUser>,
+  ): Promise<StaffUser> {
     const data = updateUserSchema.parse(input);
     if (!isUuid(operatorId) || !isUuid(userId)) throw notFound('tài khoản');
     if (data.role && !OPERATOR_ASSIGNABLE_ROLES.has(data.role)) {
@@ -177,7 +184,9 @@ export class UsersService {
         [target.id, operatorId, data.fullName ?? target.full_name, phone, nextRole, nextStatus, passwordHash, revoke ? 1 : 0, now],
       );
       if (revoke) await this.revokeStaffSessions(c, target.id, now);
-      return toStaffUser(updated[0]!);
+      const user = toStaffUser(updated[0]!);
+      await inTx?.(c, user);
+      return user;
     }).catch((error: unknown) => {
       throw userWriteError(error);
     });

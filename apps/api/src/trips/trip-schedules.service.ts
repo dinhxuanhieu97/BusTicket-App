@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { Db } from '../db/db';
+import { Db, TxHook } from '../db/db';
 import { Clock } from '../common/clock';
 import { DomainError, notFound } from '../common/errors';
 import { isUuid } from '../common/ids';
@@ -125,7 +125,12 @@ export class TripSchedulesService {
    * không chép lại thì điểm mới chỉ xuất hiện trên chuyến sinh sau đó (tới 30 ngày). Giờ được dời theo giờ chạy
    * thực của từng chuyến đúng như lúc sinh chuyến. Đơn đã đặt không đổi: điểm khách chọn lưu riêng trong `bookings`.
    */
-  async saveRouteStops(operatorId: string, routeId: string, input: unknown) {
+  async saveRouteStops(
+    operatorId: string,
+    routeId: string,
+    input: unknown,
+    inTx?: TxHook<{ stops: Awaited<ReturnType<TripsService['saveStops']>>; updatedTrips: number }>,
+  ) {
     return this.db.tx(async (c) => {
       const stops = await this.trips.saveStops(operatorId, routeId, input, c);
       const trips = (
@@ -145,7 +150,9 @@ export class TripSchedulesService {
           JSON.stringify(shiftStops(stops, delta)),
         ]);
       }
-      return { stops, updatedTrips: trips.length };
+      const result = { stops, updatedTrips: trips.length };
+      if (inTx) await inTx(c, result);
+      return result;
     });
   }
 

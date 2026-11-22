@@ -48,7 +48,13 @@ async function user(operatorId: string | null, role: 'OWNER' | 'ACCOUNTANT' | 'S
   const u = operatorId ? await users.createStaff(operatorId, { ...input, role }) : await users.createPlatformAdmin(input);
   // Token đầy đủ cho test HTTP (bỏ qua bước 2FA, đã được test riêng ở auth-admin.int-spec.ts).
   const now = Math.floor(s.clock.now().getTime() / 1000);
-  const token = signJwt({ sub: u.id, ver: 1, scope: 'full', iat: now, exp: now + 3600 }, AUTH_SECRET);
+  // Token `full` phải gắn một phiên còn hiệu lực (F33).
+  const { rows: [sess] } = await s.db.query<{ id: string }>(
+    `INSERT INTO auth_sessions (user_id, token_version, remember, refresh_hash, created_at, last_used_at, expires_at)
+     VALUES ($1, 1, false, $2, $3, $3, $3::timestamptz + interval '1 day') RETURNING id`,
+    [u.id, `test-${u.id}`, s.clock.now()],
+  );
+  const token = signJwt({ sub: u.id, ver: 1, scope: 'full', iat: now, exp: now + 3600, sid: sess!.id }, AUTH_SECRET);
   const actor: AuthUser = { id: u.id, operatorId, role, fullName: role, phone: u.phone, mfaEnabled: true, scope: 'full' };
   return { actor, token };
 }
