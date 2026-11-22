@@ -380,8 +380,9 @@ export class AdminController {
   @Perm('route.write')
   async saveStops(@Req() req: AuthedRequest, @Param('operatorId') operatorId: string,
     @Param('routeId') routeId: string, @Body() body: unknown) {
-    const stops = await this.trips.saveStops(operatorId, routeId, body);
-    await this.log(req, operatorId, 'route.stops.update', 'route', routeId);
+    // Áp luôn vào chuyến chưa khởi hành đã sinh từ lịch; giữ nguyên dạng trả về (Mini App lưu lại đúng object này).
+    const { stops, updatedTrips } = await this.schedules.saveRouteStops(operatorId, routeId, body);
+    await this.log(req, operatorId, 'route.stops.update', 'route', routeId, { updatedTrips });
     return stops;
   }
 

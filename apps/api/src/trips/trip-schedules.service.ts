@@ -119,6 +119,36 @@ export class TripSchedulesService {
     private readonly audit: AuditService,
   ) {}
 
+  /**
+   * Lưu điểm đón/trả của tuyến và áp luôn vào mọi chuyến chưa khởi hành của tuyến đã sinh từ lịch (RT5a).
+   * Chuyến từ lịch giữ bản chụp `stops_snapshot` (form tìm của Mini App và thanh toán đọc bản này), nên nếu
+   * không chép lại thì điểm mới chỉ xuất hiện trên chuyến sinh sau đó (tới 30 ngày). Giờ được dời theo giờ chạy
+   * thực của từng chuyến đúng như lúc sinh chuyến. Đơn đã đặt không đổi: điểm khách chọn lưu riêng trong `bookings`.
+   */
+  async saveRouteStops(operatorId: string, routeId: string, input: unknown) {
+    return this.db.tx(async (c) => {
+      const stops = await this.trips.saveStops(operatorId, routeId, input, c);
+      const trips = (
+        await c.query<{ id: string; depart_at: Date; service_date: string; config: Config }>(
+          `SELECT t.id, t.depart_at, t.service_date::text AS service_date, s.config
+             FROM trips t JOIN trip_schedules s ON s.id = t.schedule_id
+            WHERE t.operator_id = $1 AND t.route_id = $2 AND t.depart_at > $3
+            ORDER BY t.depart_at, t.id
+              FOR NO KEY UPDATE OF t`,
+          [operatorId, routeId, this.clock.now()],
+        )
+      ).rows;
+      for (const trip of trips) {
+        const delta = new Date(trip.depart_at).getTime() - instant(trip.service_date, trip.config.departTime).getTime();
+        await c.query('UPDATE trips SET stops_snapshot=$2 WHERE id=$1', [
+          trip.id,
+          JSON.stringify(shiftStops(stops, delta)),
+        ]);
+      }
+      return { stops, updatedTrips: trips.length };
+    });
+  }
+
   async list(operatorId: string) {
     return (
       await this.db.query<Schedule>(

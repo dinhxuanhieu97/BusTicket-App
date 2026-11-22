@@ -485,6 +485,8 @@ export default function CheckoutPage() {
               </label>
             );
           })}
+          {(map.stops?.pickup.length ?? 0) + (map.stops?.dropoff.length ?? 0) >
+            0 && <p className="pn-meta">{copy.stops.callAhead}</p>}
           <label className="pn-field">
             <span>Ghi chú cho nhà xe (không bắt buộc)</span>
             <textarea

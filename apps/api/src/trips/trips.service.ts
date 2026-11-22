@@ -330,10 +330,14 @@ export class TripsService {
     return { ...publicTrip(existing), replayed: true };
   }
 
-  async saveStops(operatorId: string, routeId: string, input: unknown) {
+  /**
+   * Lưu điểm đón/trả của tuyến. Chỉ đổi `routes.stops`; chuyến đã sinh từ lịch giữ bản chụp riêng —
+   * dùng `TripSchedulesService.saveRouteStops` để áp luôn vào chuyến chưa khởi hành.
+   */
+  async saveStops(operatorId: string, routeId: string, input: unknown, c: Queryable = this.db) {
     const stops = stopsSchema.parse(input);
     if (!isUuid(routeId)) throw notFound('tuyến');
-    const result = await this.db.query('UPDATE routes SET stops=$3::jsonb WHERE operator_id=$1 AND id=$2 RETURNING id',
+    const result = await c.query('UPDATE routes SET stops=$3::jsonb WHERE operator_id=$1 AND id=$2 RETURNING id',
       [operatorId, routeId, JSON.stringify(stops)]);
     if (!result.rows.length) throw notFound('tuyến');
     return stops;

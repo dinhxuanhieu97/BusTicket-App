@@ -226,7 +226,9 @@ export default function BookingDetailPage() {
               </p>
             );
           })}
-          <p className="pn-meta">Giờ đón/trả là dự kiến, nhà xe có thể gọi xác nhận lại.</p>
+          <p className="pn-meta">
+            {copy.stops.estimated} {copy.stops.callAhead}
+          </p>
         </section>
       )}
       {booking.note && (
