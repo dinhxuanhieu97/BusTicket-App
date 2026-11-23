@@ -29,13 +29,27 @@ export abstract class MailSender {
 export function isPrivateAddress(ip: string): boolean {
   if (isIP(ip) === 4) {
     const [a, b] = ip.split('.').map(Number) as [number, number];
+    const c = Number(ip.split('.')[2]);
     return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
-      || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+      || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19))
+      || (a === 192 && b === 0 && (c === 0 || c === 2)) || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113);
   }
   const v = ip.toLowerCase();
   if (v.startsWith('::ffff:')) return isPrivateAddress(v.slice(7));
+  if (v.startsWith('64:ff9b:')) return true; // NAT64 có thể trỏ về IPv4 nội bộ
   return v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe8') || v.startsWith('fe9')
     || v.startsWith('fea') || v.startsWith('feb') || v.startsWith('ff');
+}
+
+/** Tổng thời gian tối đa cho một lần gửi (kể cả DNS); máy chủ nhỏ giọt từng byte cũng không giữ worker mãi. */
+export const SEND_DEADLINE_MS = 45_000;
+
+export function withDeadline<T>(work: Promise<T>, ms: number, onTimeout: () => void, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { onTimeout(); reject(new Error(message)); }, ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** Gửi thật bằng nodemailer. 465 = TLS ngay từ đầu, 587 = STARTTLS bắt buộc. */
@@ -44,7 +58,7 @@ export class SmtpMailSender extends MailSender {
     // Phân giải trước và nối thẳng vào IP đã kiểm (servername giữ tên miền cho TLS), tránh đổi DNS giữa lúc kiểm và lúc nối.
     let address: string;
     try {
-      const all = await lookup(config.host, { all: true });
+      const all = await withDeadline(lookup(config.host, { all: true }), 10_000, () => undefined, 'dns');
       if (!all.length || all.some((a) => isPrivateAddress(a.address))) throw new Error('private');
       address = all[0]!.address;
     } catch {
@@ -62,13 +76,14 @@ export class SmtpMailSender extends MailSender {
       socketTimeout: 20_000,
     });
     try {
-      await transport.sendMail({
+      await withDeadline(transport.sendMail({
         from: config.fromName ? { name: config.fromName, address: config.user } : config.user,
         to: message.to,
         subject: message.subject,
         text: message.text,
-      });
+      }), SEND_DEADLINE_MS, () => transport.close(), 'Máy chủ gửi mail phản hồi quá lâu.');
     } catch (e) {
+      if (e instanceof Error && e.message === 'Máy chủ gửi mail phản hồi quá lâu.') throw e;
       throw new Error(smtpErrorMessage(e));
     } finally {
       transport.close();

@@ -16,7 +16,8 @@ export const ALERT_MAX_ATTEMPTS = 5;
 export const ALERT_STALE_MS = 6 * 3600_000;
 /** Thời gian "giữ" một sự kiện đang gửi; instance khác không lấy trùng trong lúc đó. */
 const ALERT_LEASE_MS = 5 * 60_000;
-const ALERT_BATCH = 20;
+// Mỗi lần gửi tối đa SEND_DEADLINE_MS (45 giây) → 5 thư × 45 giây vẫn dưới hạn giữ 5 phút, instance khác không nhận trùng.
+const ALERT_BATCH = 5;
 /** Danh sách đơn có ảnh chờ kiểm trên chuông. */
 export const PENDING_PROOFS_LIMIT = 50;
 
@@ -277,28 +278,44 @@ export class StaffAlertsService {
     );
     let sent = 0;
     for (const e of due) {
-      const settings = await this.row(this.db, e.operator_id);
-      const wanted = settings?.enabled && (e.type === 'staff.payment_proof' ? settings.on_payment_proof : settings.on_booking_held);
-      if (!wanted) { await this.finish(e.id, 'Đã tắt báo email.'); continue; }
-      if (now.getTime() - e.created_at.getTime() > ALERT_STALE_MS) { await this.finish(e.id, 'Bỏ qua: sự kiện quá cũ.'); continue; }
-      const booking = await this.alertBooking(e.aggregate_id);
-      if (!booking) { await this.finish(e.id, 'Bỏ qua: không còn đơn.'); continue; }
       try {
-        await this.mailer.send(this.smtp(settings), { to: settings.recipients, ...alertMessage(e.type, booking, this.config.dashboardUrl) });
-        await this.finish(e.id, null);
-        await this.markResult(e.operator_id, null);
-        sent++;
-      } catch (err) {
-        const message = (err instanceof Error ? err.message : 'Gửi email thất bại.').slice(0, 300);
-        if (e.attempts >= ALERT_MAX_ATTEMPTS) await this.finish(e.id, message);
-        else {
-          await this.db.query('UPDATE outbox_events SET next_attempt_at = $2, last_error = $3 WHERE id = $1',
-            [e.id, new Date(now.getTime() + 2 ** (e.attempts - 1) * 60_000), message]);
-        }
-        await this.markResult(e.operator_id, message);
+        if (await this.dispatchOne(e, now)) sent++;
+      } catch {
+        // Lỗi DB giữa chừng: sự kiện này chờ hết hạn giữ rồi được nhận lại; các sự kiện còn lại vẫn chạy.
       }
     }
     return sent;
+  }
+
+  private async dispatchOne(
+    e: { id: string; operator_id: string; type: StaffAlertType; aggregate_id: string; attempts: number; created_at: Date },
+    now: Date,
+  ): Promise<boolean> {
+    const settings = await this.row(this.db, e.operator_id);
+    const wanted = settings?.enabled && (e.type === 'staff.payment_proof' ? settings.on_payment_proof : settings.on_booking_held);
+    if (!settings || !wanted) { await this.finish(e.id, 'Đã tắt báo email.'); return false; }
+    if (now.getTime() - e.created_at.getTime() > ALERT_STALE_MS) { await this.finish(e.id, 'Bỏ qua: sự kiện quá cũ.'); return false; }
+    const booking = await this.alertBooking(e.aggregate_id);
+    if (!booking) { await this.finish(e.id, 'Bỏ qua: không còn đơn.'); return false; }
+    let error: string | null = null;
+    try {
+      await this.mailer.send(this.smtp(settings), { to: settings.recipients, ...alertMessage(e.type, booking, this.config.dashboardUrl) });
+    } catch (err) {
+      error = (err instanceof Error ? err.message : 'Gửi email thất bại.').slice(0, 300);
+    }
+    if (error === null) {
+      // Đã gửi: ghi xong trước, lỗi ghi trạng thái nhà xe không được làm gửi lại.
+      await this.finish(e.id, null);
+      await this.markResult(e.operator_id, null).catch(() => undefined);
+      return true;
+    }
+    if (e.attempts >= ALERT_MAX_ATTEMPTS) await this.finish(e.id, error);
+    else {
+      await this.db.query('UPDATE outbox_events SET next_attempt_at = $2, last_error = $3 WHERE id = $1',
+        [e.id, new Date(now.getTime() + 2 ** (e.attempts - 1) * 60_000), error]);
+    }
+    await this.markResult(e.operator_id, error).catch(() => undefined);
+    return false;
   }
 
   private async alertBooking(bookingId: string): Promise<AlertBooking | null> {

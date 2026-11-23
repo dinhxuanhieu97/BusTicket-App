@@ -1,4 +1,4 @@
-import { isPrivateAddress, smtpErrorMessage } from './mail-sender';
+import { isPrivateAddress, smtpErrorMessage, withDeadline } from './mail-sender';
 import { alertMessage, alertSettingsSchema, AlertBooking, maskPhone, StaffAlertConfig, vnDateTime } from './staff-alerts.service';
 
 const valid = {
@@ -39,7 +39,8 @@ describe('QS03 — alert settings validation', () => {
 
 describe('QS03 — private address guard', () => {
   it.each(['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0',
-    '224.0.0.1', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1'])('blocks %s', (ip) => {
+    '224.0.0.1', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1',
+    '198.18.0.1', '198.19.255.1', '192.0.0.8', '192.0.2.1', '198.51.100.7', '203.0.113.9', '64:ff9b::a00:1'])('blocks %s', (ip) => {
     expect(isPrivateAddress(ip)).toBe(true);
   });
   it.each(['142.250.4.108', '172.32.0.1', '100.128.0.1', '2607:f8b0:4023::6c'])('allows public %s', (ip) => {
@@ -104,3 +105,19 @@ describe('QS03 — StaffAlertConfig', () => {
     expect(new StaffAlertConfig(30_000, 'javascript:alert(1)').dashboardUrl).toBeNull();
   });
 });
+
+describe('QS03 — send deadline', () => {
+  it('rejects and runs the cleanup when the work hangs past the deadline', async () => {
+    jest.useFakeTimers();
+    let closed = false;
+    const hung = withDeadline(new Promise<never>(() => undefined), 45_000, () => { closed = true; }, 'quá lâu');
+    jest.advanceTimersByTime(45_000);
+    await expect(hung).rejects.toThrow('quá lâu');
+    expect(closed).toBe(true);
+    jest.useRealTimers();
+  });
+  it('passes through a result that arrives in time', async () => {
+    await expect(withDeadline(Promise.resolve(7), 1000, () => undefined, 'x')).resolves.toBe(7);
+  });
+});
+
