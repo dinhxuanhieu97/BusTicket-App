@@ -58,7 +58,7 @@ it('recognises PNG, JPEG and WebP by their signature only', () => {
 });
 
 it('public brand has no logo until one is uploaded; unknown codes are 404', async () => {
-  expect((await http().get('/api/v1/operators/LG/brand').expect(200)).body).toEqual({ code: 'LG', name: 'Nhà xe Logo', logoVersion: null });
+  expect((await http().get('/api/v1/operators/LG/brand').expect(200)).body).toEqual({ code: 'LG', name: 'Nhà xe Logo', logoVersion: null, brandColors: null });
   await http().get('/api/v1/operators/LG/logo').expect(404);
   await http().get('/api/v1/operators/ZZ/brand').expect(404);
   await http().get('/api/v1/operators/lg/brand').expect(404);

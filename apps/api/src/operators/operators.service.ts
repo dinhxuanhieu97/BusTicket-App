@@ -30,6 +30,17 @@ const DEFAULT_VEHICLES = [
 
 export const LOGO_MAX_BYTES = 200 * 1024;
 
+/** Màu giao diện Dashboard (dải chuyển hai màu); `null` = màu mặc định của Dashboard. */
+export type BrandColors = { from: string; to: string } | null;
+const HEX = /^#[0-9a-fA-F]{6}$/;
+export const brandColorsSchema = z
+  .object({ from: z.string().regex(HEX, 'Màu dạng #rrggbb'), to: z.string().regex(HEX, 'Màu dạng #rrggbb') })
+  .strict()
+  .transform((c) => ({ from: c.from.toLowerCase(), to: c.to.toLowerCase() }))
+  .nullable();
+const colorsOf = (r: { brand_color_from: string | null; brand_color_to: string | null }): BrandColors =>
+  r.brand_color_from && r.brand_color_to ? { from: r.brand_color_from, to: r.brand_color_to } : null;
+
 /** Nhận diện ảnh theo chữ ký đầu tệp. */
 export function sniffImage(b: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | null {
   if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
@@ -97,12 +108,31 @@ export class OperatorsService {
 
   async profile(operatorId: string) {
     if (!isUuid(operatorId)) throw notFound('nhà xe');
-    const row = (await this.db.query<{id:string;code:string;name:string;defaultDepartureTime:string;logo_updated_at:Date|null}>(
-      'SELECT id,code,name,default_departure_time AS "defaultDepartureTime",logo_updated_at FROM operators WHERE id=$1', [operatorId],
+    const row = (await this.db.query<{id:string;code:string;name:string;defaultDepartureTime:string;logo_updated_at:Date|null;brand_color_from:string|null;brand_color_to:string|null}>(
+      'SELECT id,code,name,default_departure_time AS "defaultDepartureTime",logo_updated_at,brand_color_from,brand_color_to FROM operators WHERE id=$1', [operatorId],
     )).rows[0];
     if (!row) throw notFound('nhà xe');
-    const { logo_updated_at, ...rest } = row;
-    return { ...rest, logoVersion: logo_updated_at ? String(logo_updated_at.getTime()) : null };
+    const { logo_updated_at, brand_color_from, brand_color_to, ...rest } = row;
+    return {
+      ...rest,
+      logoVersion: logo_updated_at ? String(logo_updated_at.getTime()) : null,
+      brandColors: colorsOf({ brand_color_from, brand_color_to }),
+    };
+  }
+
+  /** Đặt màu giao diện Dashboard; `null` = trở về màu mặc định. */
+  async setBrandColors(operatorId: string, input: unknown, inTx?: TxHook<BrandColors>) {
+    if (!isUuid(operatorId)) throw notFound('nhà xe');
+    const parsed = z.object({ colors: brandColorsSchema }).strict().parse(input).colors;
+    await this.db.tx(async (c) => {
+      const { rowCount } = await c.query(
+        'UPDATE operators SET brand_color_from = $2, brand_color_to = $3 WHERE id = $1',
+        [operatorId, parsed?.from ?? null, parsed?.to ?? null],
+      );
+      if (!rowCount) throw notFound('nhà xe');
+      if (inTx) await inTx(c, parsed);
+    });
+    return this.profile(operatorId);
   }
 
   /** Đặt logo (PNG/JPEG/WebP ≤ 200 KB). Kiểm tra chữ ký tệp thật, không tin Content-Type; không nhận SVG. */
@@ -138,15 +168,22 @@ export class OperatorsService {
     });
   }
 
-  /** Thông tin thương hiệu công khai (tên, phiên bản logo) theo mã nhà xe. */
-  async brand(code: string): Promise<{ code: string; name: string; logoVersion: string | null }> {
-    const { rows } = await this.db.query<{ code: string; name: string; logo_updated_at: Date | null }>(
-      'SELECT code, name, logo_updated_at FROM operators WHERE code = $1',
+  /** Thông tin thương hiệu công khai (tên, phiên bản logo, màu giao diện) theo mã nhà xe. */
+  async brand(code: string): Promise<{ code: string; name: string; logoVersion: string | null; brandColors: BrandColors }> {
+    const { rows } = await this.db.query<{
+      code: string; name: string; logo_updated_at: Date | null; brand_color_from: string | null; brand_color_to: string | null;
+    }>(
+      'SELECT code, name, logo_updated_at, brand_color_from, brand_color_to FROM operators WHERE code = $1',
       [code],
     );
     if (!rows[0]) throw notFound('nhà xe');
     const r = rows[0];
-    return { code: r.code, name: r.name, logoVersion: r.logo_updated_at ? String(r.logo_updated_at.getTime()) : null };
+    return {
+      code: r.code,
+      name: r.name,
+      logoVersion: r.logo_updated_at ? String(r.logo_updated_at.getTime()) : null,
+      brandColors: colorsOf(r),
+    };
   }
 
   async logo(code: string): Promise<{ data: Buffer; mime: string }> {
