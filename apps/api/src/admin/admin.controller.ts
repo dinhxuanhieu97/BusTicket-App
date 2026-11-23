@@ -210,6 +210,15 @@ export class AdminController {
     );
   }
 
+  /** Màu giao diện Dashboard của nhà xe (`{ colors: { from, to } }`, hoặc `{ colors: null }` để về mặc định). */
+  @Put('operators/:operatorId/brand-colors')
+  @Perm('policy.write')
+  async updateBrandColors(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Body() body: unknown) {
+    return this.operators.setBrandColors(op, body, (q, colors) =>
+      this.log(req, op, 'operator.brand_colors', 'operator', op, { colors }, q),
+    );
+  }
+
   /**
    * Tải logo: thân request là chính tệp ảnh (Content-Type image/png|jpeg|webp), không qua JSON để không vướng
    * giới hạn 100 KB của body parser. Đọc tối đa LOGO_MAX_BYTES rồi dừng.
