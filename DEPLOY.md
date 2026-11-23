@@ -54,6 +54,10 @@ PORT="3000"
   `ZALO_APP_SECRET_KEYS="PN=<Secret Key của Mini App>"` (mỗi nhà xe một Mini App: `PN=...,ABC=...`).
   Secret Key lấy ở https://developers.zalo.me → **Quản lý ứng dụng** → chọn Zalo App gắn với Mini App → **Khóa bí mật của ứng dụng**. Không đặt biến này thì
   nút vẫn hiện nhưng báo khách nhập tay.
+- Email báo nhà xe (khách đặt vé / gửi ảnh chuyển khoản): không cần biến bí mật nào — chủ xe nhập tài khoản gửi mail
+  (vd. Gmail + **mật khẩu ứng dụng**) trong Dashboard › Cài đặt › Thông báo email; mật khẩu lưu mã hóa bằng `AUTH_TOKEN_SECRET`
+  (đổi biến này thì phải nhập lại mật khẩu mail). Tùy chọn: `DASHBOARD_URL="https://dashboard.dienmaykimbien.com.vn"` để thư
+  có link mở thẳng đơn; `STAFF_ALERT_INTERVAL_MS` (mặc định 30000, `0` = tắt gửi).
 
 ### Bước 4 — Gắn domain api.dienmaykimbien.com.vn
 

@@ -1,3 +1,4 @@
+import { enqueueStaffAlert } from '../alerts/staff-alerts.service';
 import { Injectable } from '@nestjs/common';
 import { RateLimiter } from '../abuse/rate-limiter';
 import { createHash } from 'node:crypto';
@@ -125,6 +126,9 @@ export class PaymentProofsService {
           [b.id, now, deadline],
         );
       }
+      await enqueueStaffAlert(c, b.operator_id, 'staff.payment_proof', b.id, `staff.payment_proof:${inserted[0]!.id}`, now, {
+        proofId: inserted[0]!.id,
+      });
       return { proof: meta(inserted[0]!), duplicate: false };
     });
   }

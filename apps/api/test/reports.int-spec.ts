@@ -189,9 +189,10 @@ describe('counters', () => {
       tripsClosingSoon: 1,
       payments: { total: 3, NONE: 2, NEEDS_REVIEW: 1, RESOLVED: 0 },
       refundsOpen: 0,
+      proofsPending: 0,
     });
     const ops = await http().get(`${opBase()}/counters`).set(bearer('dispatcher')).expect(200);
-    expect(ops.body).toEqual({ tripsClosingSoon: 1, payments: null, refundsOpen: null });
+    expect(ops.body).toEqual({ tripsClosingSoon: 1, payments: null, refundsOpen: null, proofsPending: null });
     await http().get(`${opBase()}/counters`).set(bearer('assistant')).expect(403);
     await http().get(`${opBase()}/counters`).set(bearer('otherOwner')).expect(404);
   });

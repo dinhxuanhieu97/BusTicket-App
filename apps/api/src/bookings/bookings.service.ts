@@ -1,3 +1,4 @@
+import { enqueueStaffAlert } from '../alerts/staff-alerts.service';
 import { Injectable } from '@nestjs/common';
 import { AbuseConfig } from '../abuse/abuse-config';
 import { PhoneVerificationService } from '../abuse/phone-verification.service';
@@ -370,6 +371,8 @@ export class BookingsService {
       if (upd.rowCount !== codes.length) throw new Error('Seat inventory changed while the trip row was locked');
 
     }
+    // Báo nhà xe qua email (nếu đã bật) — cùng transaction: đơn rollback thì không có thư.
+    await enqueueStaffAlert(c, trip.operator_id, 'staff.booking_held', booking.id, `staff.booking_held:${booking.id}`, now);
     return { booking: await this.view(c, booking), accessToken: this.token(booking), replayed: false };
   }
 

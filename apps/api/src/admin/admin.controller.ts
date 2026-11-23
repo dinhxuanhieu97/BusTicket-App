@@ -22,6 +22,7 @@ import { TripsService } from '../trips/trips.service';
 import { TripSchedulesService } from '../trips/trip-schedules.service';
 import { TripAssistantsService } from '../trips/trip-assistants.service';
 import { VehiclesService } from '../vehicles/vehicles.service';
+import { StaffAlertsService } from '../alerts/staff-alerts.service';
 
 const tripStatusBody = z.object({ status: z.enum(['OPEN', 'CLOSED']) }).strict();
 const passengerListQuery = z.object({ status: z.enum(['active', 'all']).default('active') }).strict();
@@ -34,6 +35,11 @@ const ownerPasswordBody = z
     otp: z.string().regex(/^\d{6}$/).optional(),
   })
   .strict();
+/** Lưu cấu hình email: kèm mật khẩu đăng nhập (+ mã Authenticator nếu đã bật) của chủ xe, kiểm ở `verifyStepUp`. */
+const alertSettingsBody = z.object({ password: z.string().min(1).max(128), otp: z.string().regex(/^\d{6}$/).optional() }).passthrough();
+/** Gửi thư thử: tối đa 5 lần / 10 phút mỗi nhà xe (mỗi lần mở kết nối SMTP ra ngoài). */
+const ALERT_TESTS_PER_10_MIN = 5;
+
 const paymentAccountBody = configureAccountSchema.extend({
   password: z.string().min(1).max(128),
   otp: z.string().regex(/^\d{6}$/).optional(),
@@ -64,6 +70,7 @@ export class AdminController {
     private readonly reports: ReportsService,
     private readonly limiter: RateLimiter,
     private readonly abuse: AbuseConfig,
+    private readonly alerts: StaffAlertsService,
   ) {}
 
   /** `q` = transaction của thao tác ghi: nhật ký lỗi thì thao tác rollback (F60). Không có `q` thì ghi sau khi commit. */
@@ -119,6 +126,51 @@ export class AdminController {
       await this.log(req, op, 'booking.search', 'operator', op, { bookings: r.bookings.length });
     }
     return r;
+  }
+
+  // ---- Báo nhà xe qua email (QS01/QS03) -----------------------------------------------------------
+
+  /** Đơn khách đã gửi ảnh chuyển khoản, còn giữ chỗ, chờ nhà xe kiểm (chuông thông báo). */
+  @Get('operators/:operatorId/pending-payment-proofs')
+  @Perm('payment.read')
+  pendingProofs(@Param('operatorId') op: string) {
+    return this.alerts.pendingProofs(op);
+  }
+
+  /** Cấu hình email báo nhà xe; mật khẩu SMTP không bao giờ trả về. */
+  @Get('operators/:operatorId/alert-settings')
+  @Perm('alert.configure')
+  alertSettings(@Param('operatorId') op: string) {
+    return this.alerts.settings(op);
+  }
+
+  @Put('operators/:operatorId/alert-settings')
+  @Perm('alert.configure')
+  async saveAlertSettings(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Body() body: unknown) {
+    const { password, otp, ...settings } = alertSettingsBody.parse(body);
+    await this.auth.verifyStepUp(req.auth, password, otp, 'Nhập mã Authenticator mới để lưu cấu hình email.');
+    const passwordChanged = typeof settings.smtpPassword === 'string' && settings.smtpPassword.length > 0;
+    return this.alerts.saveSettings(op, settings, (q, v) =>
+      this.log(req, op, 'alert_settings.update', 'operator', op, {
+        enabled: v.enabled, smtpHost: v.smtpHost, smtpUser: v.smtpUser, recipients: v.recipients.length,
+        // Tên khóa tránh từ "pass": nhật ký tự bỏ mọi khóa giống bí mật.
+        onBookingHeld: v.onBookingHeld, onPaymentProof: v.onPaymentProof, smtpLoginChanged: passwordChanged,
+      }, q),
+    );
+  }
+
+  @Post('operators/:operatorId/alert-settings/test')
+  @Perm('alert.configure')
+  async testAlertEmail(@Req() req: AuthedRequest, @Param('operatorId') op: string) {
+    await this.limiter.consume(`alert-test:${op}`, ALERT_TESTS_PER_10_MIN, 600, 'Gửi thử quá nhiều lần. Vui lòng thử lại sau ít phút.');
+    try {
+      const r = await this.alerts.sendTest(op);
+      await this.log(req, op, 'alert_settings.test', 'operator', op, { ok: true, recipients: r.sentTo.length });
+      return r;
+    } catch (e) {
+      await this.log(req, op, 'alert_settings.test', 'operator', op, { ok: false });
+      throw e;
+    }
   }
 
   @Get('operators/:operatorId/trip-schedules')
