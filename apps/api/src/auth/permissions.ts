@@ -29,6 +29,7 @@ export const PERMISSIONS = [
   'payment.read', //          xem sổ thu, khoản cần kiểm tra
   'payment.record', //        ghi nhận tiền mặt / chuyển khoản thấy trong app ngân hàng
   'payment.manage', //        phân bổ tay, đánh dấu đã xử lý, chạy đối soát
+  'alert.configure', //       tài khoản gửi email báo nhà xe (máy chủ SMTP, mật khẩu ứng dụng): chỉ chủ xe
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 

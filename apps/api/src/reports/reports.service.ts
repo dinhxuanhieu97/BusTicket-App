@@ -203,14 +203,14 @@ export class ReportsService {
    */
   async counters(operatorId: string, role: Role) {
     const now = this.clock.now();
-    if (!isUuid(operatorId)) return { tripsClosingSoon: 0, payments: null, refundsOpen: null };
+    if (!isUuid(operatorId)) return { tripsClosingSoon: 0, payments: null, refundsOpen: null, proofsPending: null };
     const { rows: trips } = await this.db.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM trips
        WHERE operator_id = $1 AND status = 'OPEN' AND sales_close_at > $2 AND sales_close_at <= $3`,
       [operatorId, now, new Date(now.getTime() + CLOSING_SOON_MS)],
     );
-    if (!can(role, 'payment.read')) return { tripsClosingSoon: trips[0]!.n, payments: null, refundsOpen: null };
-    const [pay, ref] = await Promise.all([
+    if (!can(role, 'payment.read')) return { tripsClosingSoon: trips[0]!.n, payments: null, refundsOpen: null, proofsPending: null };
+    const [pay, ref, proofs] = await Promise.all([
       this.db.query<{ none: number; needs_review: number; resolved: number }>(
         `SELECT COUNT(*) FILTER (WHERE review_status = 'NONE')::int AS none,
            COUNT(*) FILTER (WHERE review_status = 'NEEDS_REVIEW')::int AS needs_review,
@@ -219,12 +219,19 @@ export class ReportsService {
         [operatorId],
       ),
       this.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM refund_obligations WHERE operator_id = $1 AND status = 'OPEN'`, [operatorId]),
+      // Khách đã báo chuyển khoản (gửi ảnh), đơn còn giữ chỗ: nhà xe cần kiểm tiền về rồi ghi nhận.
+      this.db.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM bookings
+         WHERE operator_id = $1 AND status = 'HOLDING' AND transfer_claimed_at IS NOT NULL AND release_at > $2`,
+        [operatorId, now],
+      ),
     ]);
     const p = pay.rows[0]!;
     return {
       tripsClosingSoon: trips[0]!.n,
       payments: { total: p.none + p.needs_review + p.resolved, NONE: p.none, NEEDS_REVIEW: p.needs_review, RESOLVED: p.resolved },
       refundsOpen: ref.rows[0]!.n,
+      proofsPending: proofs.rows[0]!.n,
     };
   }
 

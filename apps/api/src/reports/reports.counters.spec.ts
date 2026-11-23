@@ -3,13 +3,14 @@ import type { Db } from '../db/db';
 import { CLOSING_SOON_MS, ReportsService } from './reports.service';
 
 /** DB giả: trả hàng theo bảng trong câu SQL và ghi lại tham số. */
-function fakeDb(data: { closing?: number; payments?: { none: number; needs_review: number; resolved: number }; refunds?: number }) {
+function fakeDb(data: { closing?: number; payments?: { none: number; needs_review: number; resolved: number }; refunds?: number; proofs?: number }) {
   const calls: { sql: string; params: unknown[] }[] = [];
   const db = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
       if (/FROM trips/.test(sql)) return { rows: [{ n: data.closing ?? 0 }], rowCount: 1 };
       if (/FROM payments/.test(sql)) return { rows: [data.payments ?? { none: 0, needs_review: 0, resolved: 0 }], rowCount: 1 };
+      if (/FROM bookings/.test(sql)) return { rows: [{ n: data.proofs ?? 0 }], rowCount: 1 };
       return { rows: [{ n: data.refunds ?? 0 }], rowCount: 1 };
     }),
   };
@@ -21,18 +22,19 @@ const NOW = new Date('2027-02-01T09:00:00Z');
 
 describe('GF2 — ReportsService.counters', () => {
   it('sums payments by review status and counts open refunds for money roles', async () => {
-    const { db } = fakeDb({ closing: 1, payments: { none: 405, needs_review: 5, resolved: 2 }, refunds: 1 });
+    const { db } = fakeDb({ closing: 1, payments: { none: 405, needs_review: 5, resolved: 2 }, refunds: 1, proofs: 4 });
     expect(await new ReportsService(db, new FixedClock(NOW)).counters(OP, 'ACCOUNTANT')).toEqual({
       tripsClosingSoon: 1,
       payments: { total: 412, NONE: 405, NEEDS_REVIEW: 5, RESOLVED: 2 },
       refundsOpen: 1,
+      proofsPending: 4,
     });
   });
 
   it.each(['DISPATCHER', 'PLATFORM_ADMIN'] as const)('gives %s trip counts only and never reads money tables', async (role) => {
     const { db, calls } = fakeDb({ closing: 3, payments: { none: 9, needs_review: 9, resolved: 9 }, refunds: 9 });
     expect(await new ReportsService(db, new FixedClock(NOW)).counters(OP, role)).toEqual({
-      tripsClosingSoon: 3, payments: null, refundsOpen: null,
+      tripsClosingSoon: 3, payments: null, refundsOpen: null, proofsPending: null,
     });
     expect(calls.map((c) => /FROM (\w+)/.exec(c.sql)![1])).toEqual(['trips']);
   });
@@ -50,7 +52,7 @@ describe('GF2 — ReportsService.counters', () => {
   it('scopes every query to the operator', async () => {
     const { db, calls } = fakeDb({});
     await new ReportsService(db, new FixedClock(NOW)).counters(OP, 'OWNER');
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     for (const c of calls) {
       expect(c.params[0]).toBe(OP);
       expect(c.sql).toMatch(/operator_id = \$1/);
@@ -60,9 +62,22 @@ describe('GF2 — ReportsService.counters', () => {
   it('returns zeros without querying for a malformed operator id', async () => {
     const { db, calls } = fakeDb({ closing: 5 });
     expect(await new ReportsService(db, new FixedClock(NOW)).counters('x', 'OWNER')).toEqual({
-      tripsClosingSoon: 0, payments: null, refundsOpen: null,
+      tripsClosingSoon: 0, payments: null, refundsOpen: null, proofsPending: null,
     });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('QS01 — transfer proofs awaiting a check', () => {
+  it('counts only bookings still on hold whose customer reported a transfer', async () => {
+    const { db, calls } = fakeDb({ proofs: 2 });
+    const r = await new ReportsService(db, new FixedClock(NOW)).counters(OP, 'SELLER');
+    expect(r.proofsPending).toBe(2);
+    const q = calls.find((c) => /FROM bookings/.test(c.sql))!;
+    expect(q.sql).toMatch(/status = 'HOLDING'/);
+    expect(q.sql).toMatch(/transfer_claimed_at IS NOT NULL/);
+    expect(q.sql).toMatch(/release_at > \$2/);
+    expect(q.params).toEqual([OP, NOW]);
   });
 });
 

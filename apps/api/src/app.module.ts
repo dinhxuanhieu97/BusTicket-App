@@ -30,6 +30,9 @@ import { TripSchedulesService } from './trips/trip-schedules.service';
 import { TripAssistantsService } from './trips/trip-assistants.service';
 import { ScheduleRunner, ScheduleRunnerConfig } from './trips/schedule-runner';
 import { VehiclesService } from './vehicles/vehicles.service';
+import { MailSender, SmtpMailSender } from './alerts/mail-sender';
+import { StaffAlertConfig, StaffAlertsService } from './alerts/staff-alerts.service';
+import { StaffAlertDispatcher } from './alerts/staff-alert-dispatcher';
 
 export interface AppOptions {
   databaseUrl: string;
@@ -49,6 +52,11 @@ export interface AppOptions {
   /** Bắt buộc 2FA cho OWNER/ACCOUNTANT/PLATFORM_ADMIN. Bỏ trống = tùy chọn; production đặt qua env `AUTH_REQUIRE_MFA`. */
   authRequireMfa?: boolean;
   scheduleIntervalMs?: number;
+  /** Chu kỳ gửi email báo nhà xe từ outbox (ms). Bỏ trống/0 = tắt; production đặt qua env `STAFF_ALERT_INTERVAL_MS`. */
+  staffAlertIntervalMs?: number;
+  /** Địa chỉ Dashboard (env `DASHBOARD_URL`) để gắn link vào thư báo. */
+  dashboardUrl?: string;
+  mailSender?: MailSender;
 }
 
 @Module({})
@@ -90,12 +98,16 @@ export class AppModule {
         ReportsService,
         { provide: HoldSweepConfig, useValue: new HoldSweepConfig(opts.holdSweepIntervalMs ?? 0) },
         HoldSweeper,
+        { provide: MailSender, useValue: opts.mailSender ?? new SmtpMailSender() },
+        { provide: StaffAlertConfig, useValue: new StaffAlertConfig(opts.staffAlertIntervalMs ?? 0, opts.dashboardUrl) },
+        StaffAlertsService,
+        StaffAlertDispatcher,
         AuditService,
         AuthService,
         UsersService,
         AuthGuard,
       ],
-      exports: [Db, SeatLayoutsService, OperatorsService, VehiclesService, TripsService, BookingsService, HoldSweeper, AuthService, UsersService],
+      exports: [StaffAlertsService, StaffAlertDispatcher, Db, SeatLayoutsService, OperatorsService, VehiclesService, TripsService, BookingsService, HoldSweeper, AuthService, UsersService],
     };
   }
 }
