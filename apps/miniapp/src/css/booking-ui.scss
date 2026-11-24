@@ -1343,3 +1343,45 @@ button.pn-date-display {
   color: var(--pn-muted);
   opacity: 0.4;
 }
+
+/* Trang Thông tin nhà xe & chính sách (/about) */
+.pn-about + .pn-about {
+  margin-top: 12px;
+}
+.pn-about-list {
+  margin-top: 8px;
+}
+.pn-about-list > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px 0;
+}
+.pn-about-list > div + div {
+  border-top: 1px solid var(--pn-line);
+}
+.pn-about-list dt {
+  color: var(--pn-muted);
+  font-size: 13px;
+}
+.pn-about-list dd {
+  color: var(--pn-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.pn-about-list .pn-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.pn-about-block + .pn-about-block {
+  margin-top: 12px;
+}
+.pn-about-block h3 {
+  font-weight: 600;
+  color: var(--pn-text);
+}
+.pn-about-block p {
+  margin-top: 4px;
+  color: var(--pn-text);
+  line-height: 1.5;
+}

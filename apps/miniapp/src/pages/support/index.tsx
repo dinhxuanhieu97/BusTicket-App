@@ -21,6 +21,9 @@ export default function SupportPage() {
         ) : (
           <p className="pn-meta">{copy.support.unavailable}</p>
         )}
+        <Link className="pn-link mt-4" to="/about">
+          {copy.about.title} →
+        </Link>
         <Link className="pn-link mt-4" to="/my-bookings">
           {copy.myBookings.title} →
         </Link>

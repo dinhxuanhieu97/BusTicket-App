@@ -83,6 +83,10 @@ export default function ProfilePage() {
           {copy.support.title}
           <span aria-hidden="true">→</span>
         </Link>
+        <Link className="pn-menu-link" to="/about">
+          {copy.about.title}
+          <span aria-hidden="true">→</span>
+        </Link>
       </div>
       <div className="pn-profile-intro">
         <h2>{copy.profile.heading}</h2>

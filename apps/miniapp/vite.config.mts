@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import zaloMiniApp from "zmp-vite-plugin";
@@ -9,7 +10,11 @@ export default ({ mode }: { mode: string }) => {
   // Khi chạy dev, Mini App gọi `/api/...` cùng origin và Vite chuyển tiếp sang apps/api
   // (API chưa bật CORS). Mặc định API chạy ở cổng 3001 vì `zmp start` dùng cổng 3000.
   const apiTarget = env.VITE_API_PROXY_TARGET || "http://localhost:3001";
+  const pkg = JSON.parse(
+    readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+  ) as { version: string };
   return defineConfig({
+    define: { __APP_VERSION__: JSON.stringify(pkg.version) },
     root: "./src",
     base: "",
     // Đọc .env ở thư mục apps/miniapp dù root là src (dev) hay . (build).

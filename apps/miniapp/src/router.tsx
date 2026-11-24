@@ -12,6 +12,7 @@ import MyBookingsPage from "./pages/my-bookings";
 
 import OffersPage from "./pages/offers";
 import SupportPage from "./pages/support";
+import AboutPage from "./pages/about";
 import PassengersPage from "./pages/passengers";
 import ProfilePage from "./pages/profile";
 
@@ -53,6 +54,11 @@ const router = createBrowserRouter(
           path: "/support",
           element: <SupportPage />,
           handle: handle({ title: copy.support.title, back: true }),
+        },
+        {
+          path: "/about",
+          element: <AboutPage />,
+          handle: handle({ title: copy.about.title, back: true }),
         },
         {
           path: "/profile",
