@@ -219,6 +219,42 @@ export const copy = {
     call: "Gọi",
     unavailable: "Nhà xe chưa cập nhật số điện thoại hỗ trợ trên ứng dụng.",
   },
+  about: {
+    title: "Thông tin nhà xe & chính sách",
+    operator: "Thông tin nhà xe",
+    complaint: "Hỗ trợ và khiếu nại",
+    complaintHint:
+      "Liên hệ nhà xe qua các kênh ở mục Thông tin nhà xe, kèm mã đơn nếu có. Nhà xe tiếp nhận và phản hồi trực tiếp với bạn.",
+    complaintUnavailable:
+      "Nhà xe chưa cập nhật kênh hỗ trợ trên ứng dụng. Vui lòng liên hệ tại quầy vé.",
+    privacy: "Chính sách quyền riêng tư",
+    privacySections: [
+      {
+        heading: "Thông tin chúng tôi thu thập",
+        body: "Họ tên và số điện thoại người liên hệ, họ tên hành khách (nếu bạn nhập), chuyến và chỗ đã chọn, thông tin chuyển khoản tiền cọc.",
+      },
+      {
+        heading: "Thông tin từ Zalo",
+        body: "Chỉ khi bạn bấm “Dùng tên và số điện thoại Zalo” và đồng ý trên hộp thoại của Zalo, ứng dụng mới nhận tên và số điện thoại Zalo để điền sẵn. Bạn luôn có thể tự nhập thay vì chia sẻ.",
+      },
+      {
+        heading: "Mục đích sử dụng",
+        body: "Giữ chỗ, xác nhận tiền cọc, liên hệ với bạn về chuyến đi (đổi giờ, điểm đón, hủy chuyến) và hỗ trợ khi bạn cần. Không dùng để quảng cáo và không bán cho bên khác.",
+      },
+      {
+        heading: "Ai được xem",
+        body: "Nhà xe và nhân viên phục vụ chuyến của bạn (tài xế, phụ xe). Tên và số điện thoại không hiện trên trang đối chiếu vé công khai.",
+      },
+      {
+        heading: "Lưu trữ",
+        body: "Thông tin đã lưu (họ tên, số điện thoại, sổ hành khách, danh sách vé) nằm trên điện thoại của bạn. Thông tin trong đơn đặt vé được lưu trên máy chủ của nhà xe để phục vụ chuyến đi và đối soát tiền.",
+      },
+      {
+        heading: "Xóa thông tin",
+        body: "Vào Cá nhân → Xóa thông tin đã lưu để xóa trên máy này; bạn có thể chọn xóa cả họ tên và số điện thoại trong vé đã hoàn tất. Vé chưa khởi hành hoặc còn tiền cọc cần đối soát, vui lòng liên hệ nhà xe.",
+      },
+    ],
+  },
   passengers: {
     title: "Sổ hành khách",
     add: "Thêm hành khách",
