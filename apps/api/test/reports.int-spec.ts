@@ -306,6 +306,25 @@ describe('quick search', () => {
 });
 
 describe('review findings', () => {
+  it('sums every refunded obligation of a booking into its route share (ADJUST + CANCEL)', async () => {
+    const reports = new ReportsService(s.db, s.clock);
+    const day = new Date(T0.getTime() + 6 * DAY); // 26/01, chưa có số liệu khác
+    s.clock.set(day);
+    await login('seller');
+    const b = await sell(seed.bedTrip.id, { paid: 300_000 });
+    const { rows: [u] } = await s.db.query<{ id: string }>(`SELECT id FROM users WHERE operator_id = $1 LIMIT 1`, [seed.op.id]);
+    for (const [kind, amount] of [['ADJUST', 100_000], ['CANCEL', 50_000]] as const) {
+      await s.db.query(
+        `INSERT INTO refund_obligations (operator_id, booking_id, amount, reason, status, created_by, resolved_at, resolved_by, kind)
+         SELECT $1, id, $3, 'test', 'REFUNDED', $4, $5, $4, $6 FROM bookings WHERE code = $2`,
+        [seed.op.id, b.code, amount, u!.id, day, kind],
+      );
+    }
+    const r = await reports.revenue(seed.op.id, { from: '2027-01-26', to: '2027-01-27' });
+    expect(r.totals.refunded).toBe(150_000);
+    expect(r.byRoute.map((x) => [x.code, x.refunded])).toEqual([['HCM-HA', 150_000]]);
+  });
+
   it('counts holds past their release time as abandoned before the sweeper runs', async () => {
     const reports = new ReportsService(s.db, s.clock);
     s.clock.set(new Date(T0.getTime() + DAY));

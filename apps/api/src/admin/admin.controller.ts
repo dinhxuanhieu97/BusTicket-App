@@ -15,6 +15,7 @@ import { DomainError } from '../common/errors';
 import { configureAccountSchema, PaymentsService } from '../payments/payments.service';
 import { StaffBookingsService } from '../bookings/staff-bookings.service';
 import { PassengerOpsService } from '../bookings/passenger-ops.service';
+import { BookingChangesService } from '../bookings/booking-changes.service';
 import { ReportsService } from '../reports/reports.service';
 import { LOGO_MAX_BYTES, OperatorsService } from '../operators/operators.service';
 import { SeatLayoutsService } from '../seat-layouts/seat-layouts.service';
@@ -65,6 +66,7 @@ export class AdminController {
     private readonly assistants: TripAssistantsService,
     private readonly staffBookings: StaffBookingsService,
     private readonly passengerOps: PassengerOpsService,
+    private readonly bookingChanges: BookingChangesService,
     private readonly clock: Clock,
     private readonly proofs: PaymentProofsService,
     private readonly reports: ReportsService,
@@ -579,6 +581,25 @@ export class AdminController {
   @Perm('booking.update')
   editBooking(@Req() req: AuthedRequest, @Param('operatorId') op: string, @Param('code') code: string, @Body() body: unknown) {
     return this.passengerOps.edit(req.auth, op, code, body);
+  }
+
+  /**
+   * Đổi chỗ / chuyến / tiền của đơn (kể cả đơn đã cọc). `dryRun=true`: xem trước giá mới, tiền còn thu, khoản cần hoàn.
+   * Ghi thật bắt buộc Idempotency-Key. Chỉnh tay tổng tiền/cọc hoặc giảm "đã thu" cần thêm `payment.manage` (kiểm ở service).
+   */
+  @Post('operators/:operatorId/bookings/:code/change')
+  @HttpCode(200)
+  @Perm('booking.update')
+  changeBooking(
+    @Req() req: AuthedRequest,
+    @Param('operatorId') op: string,
+    @Param('code') code: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    const { dryRun } = dryRunQuery.parse(query);
+    return this.bookingChanges.change(req.auth, op, code, body, { dryRun: dryRun === 'true', idempotencyKey });
   }
 
   /** Khoản cần hoàn (đơn đã hủy sau khi thu tiền). Kế toán hoàn ngoài hệ thống rồi đánh dấu đã hoàn/miễn. */

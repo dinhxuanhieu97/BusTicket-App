@@ -19,6 +19,7 @@ import { BookingsService, TokenSecret } from './bookings/bookings.service';
 import { StaffBookingsService } from './bookings/staff-bookings.service';
 import { PaymentProofsService } from './bookings/payment-proofs.service';
 import { PassengerOpsService } from './bookings/passenger-ops.service';
+import { BookingChangesService } from './bookings/booking-changes.service';
 import { HoldSweepConfig, HoldSweeper } from './bookings/hold-sweeper';
 import { Clock, SystemClock } from './common/clock';
 import { Db, DbConfig } from './db/db';
@@ -94,6 +95,7 @@ export class AppModule {
         BookingsService,
         StaffBookingsService,
         PassengerOpsService,
+        BookingChangesService,
         PaymentProofsService,
         ReportsService,
         { provide: HoldSweepConfig, useValue: new HoldSweepConfig(opts.holdSweepIntervalMs ?? 0) },
