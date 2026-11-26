@@ -268,4 +268,42 @@ describe('pending proofs (bell)', () => {
     expect((await http().get(`/api/v1/admin/operators/${seed.op.id}/pending-payment-proofs`).set(bearer(accountant))).body.total).toBe(0);
     await http().get(`/api/v1/admin/operators/${seed.op.id}/pending-payment-proofs`).set(bearer(otherOwner)).expect(404);
   });
+
+  it('keeps proof notices after the booking is confirmed or expires, with the current state (F80)', async () => {
+    await s.db.query(`UPDATE bookings SET status = 'CANCELLED' WHERE status = 'HOLDING'`);
+    await s.db.query(`DELETE FROM booking_payment_proofs`);
+    const free = (await s.db.query<{ seat_code: string }>(
+      `SELECT seat_code FROM trip_seats WHERE trip_id = $1 AND sellable AND booking_id IS NULL ORDER BY seat_code LIMIT 2`,
+      [seed.limoTrip.id],
+    )).rows.map((r) => r.seat_code);
+    const a = await hold(seed.limoTrip.id, free[0]);
+    const b = await hold(seed.limoTrip.id, free[1]);
+    await submit(a.code, a.token, 11).expect(201);
+    s.clock.advanceMinutes(1);
+    await submit(b.code, b.token, 12).expect(201);
+    const o = await hold(other.limoTrip.id, 'B1');
+    await submit(o.code, o.token, 13).expect(201);
+    const url = `/api/v1/admin/operators/${seed.op.id}/payment-proof-notices`;
+
+    let r = await http().get(url).set(bearer(accountant)).expect(200);
+    expect(r.body.items.map((x: { code: string }) => x.code)).toEqual([b.code, a.code]);
+    expect(r.body.items[0]).toMatchObject({ id: `proof:${b.code}:1`, proofCount: 1, state: 'PENDING', trip: { id: seed.limoTrip.id } });
+
+    await s.db.query(`UPDATE bookings SET status = 'CONFIRMED' WHERE code = $1`, [b.code]); // đã ghi nhận tiền
+    s.clock.advanceMinutes(1);
+    await submit(a.code, a.token, 14).expect(201); // gửi thêm ảnh → thông báo mới
+    r = await http().get(url).set(bearer(accountant)).expect(200);
+    expect(r.body.items.map((x: { code: string; state: string; id: string }) => [x.code, x.state, x.id])).toEqual([
+      [a.code, 'PENDING', `proof:${a.code}:2`],
+      [b.code, 'CONFIRMED', `proof:${b.code}:1`],
+    ]);
+
+    s.clock.advanceMinutes(3 * 60); // quá hạn giữ chỗ
+    r = await http().get(url).set(bearer(accountant)).expect(200);
+    expect(r.body.items.find((x: { code: string }) => x.code === a.code).state).toBe('EXPIRED');
+
+    await s.db.query(`UPDATE booking_payment_proofs SET created_at = created_at - interval '8 days'`); // ảnh cũ hơn 7 ngày → rời lịch sử
+    expect((await http().get(url).set(bearer(accountant)).expect(200)).body.items).toEqual([]);
+    await http().get(url).set(bearer(otherOwner)).expect(404);
+  });
 });
