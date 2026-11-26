@@ -49,7 +49,12 @@ export const bookingChangeSchema = z
     depositAmount: money.optional(),
     /** Giảm "đã thu" một khoản và ghi khoản cần hoàn tương ứng. */
     refundAmount: z.number().int().min(1).max(MAX_BOOKING_TOTAL).optional(),
-    /** Bắt buộc khi chỉnh tiền tay hoặc có khoản cần hoàn. */
+    /**
+     * Xác nhận đơn đang giữ chỗ dù chưa thu đủ cọc (trường hợp đặc biệt nhà xe cho đặt không cọc trước).
+     * Cần `payment.manage` và lý do. Mặc định đơn chỉ tự xác nhận khi đã thu ít nhất một khoản và đủ cọc.
+     */
+    confirmWithoutDeposit: z.boolean().optional(),
+    /** Bắt buộc khi chỉnh tiền tay, xác nhận không cọc hoặc có khoản cần hoàn. */
     reason: z.string().trim().max(300).optional(),
     /** false: không báo khách (ghi vào sự kiện cho worker thông báo). */
     notifyCustomer: z.boolean().default(true),
@@ -172,9 +177,8 @@ export class BookingChangesService {
     const data = bookingChangeSchema.parse(input);
     const upper = code.trim().toUpperCase();
     if (!isUuid(operatorId) || !BOOKING_CODE.test(upper)) throw notFound('đơn');
-    const moneyOverride = data.totalAmount !== undefined || data.depositAmount !== undefined || data.refundAmount !== undefined;
-    if (moneyOverride && !can(actor.role, 'payment.manage')) {
-      throw new DomainError('FORBIDDEN', 'Chỉnh tay tổng tiền, tiền cọc hoặc giảm số đã thu cần quyền quản lý thu tiền.');
+    if (moneyOverride(data) && !can(actor.role, 'payment.manage')) {
+      throw new DomainError('FORBIDDEN', 'Chỉnh tay tổng tiền, tiền cọc, giảm số đã thu hoặc xác nhận không cọc cần quyền quản lý thu tiền.');
     }
     if (data.items) {
       const codes = data.items.map((i) => i.seatCode);
@@ -359,7 +363,13 @@ export class BookingChangesService {
     const paid = paidAfterManual - excess;
     const refundAmount = manualRefund + excess;
 
-    const confirm = b.status === 'HOLDING' && paid >= deposit;
+    // Tự xác nhận chỉ khi đã thu ít nhất một khoản và đủ cọc (đơn 0 đồng thì không cần thu). Hạ cọc về 0 khi chưa thu
+    // không tự xác nhận; muốn giữ chỗ không cọc thì quản lý bật `confirmWithoutDeposit` kèm lý do.
+    if (data.confirmWithoutDeposit && b.status !== 'HOLDING') {
+      throw new DomainError('VALIDATION_FAILED', 'Đơn đã được xác nhận.', { field: 'confirmWithoutDeposit' });
+    }
+    const confirm =
+      b.status === 'HOLDING' && (data.confirmWithoutDeposit === true || (paid >= deposit && (paid > 0 || total === 0)));
     const status = confirm ? 'CONFIRMED' : b.status;
 
     // Đổi chuyến chính: chụp lại điểm đón/trả theo danh sách điểm của chuyến mới (khớp theo tên).
@@ -413,7 +423,7 @@ export class BookingChangesService {
     if (!changed.length) throw new DomainError('VALIDATION_FAILED', 'Chưa có thay đổi nào.');
     // Xem trước không bắt lý do: nhân viên cần thấy khoản cần hoàn trước rồi mới ghi lý do.
     if (lock && (moneyOverride(data) || refundAmount > 0) && (data.reason?.length ?? 0) < 3) {
-      throw new DomainError('VALIDATION_FAILED', 'Vui lòng ghi lý do (ít nhất 3 ký tự) khi chỉnh tiền hoặc có khoản cần hoàn.', { field: 'reason' });
+      throw new DomainError('VALIDATION_FAILED', 'Vui lòng ghi lý do (ít nhất 3 ký tự) khi chỉnh tiền, xác nhận không cọc hoặc có khoản cần hoàn.', { field: 'reason' });
     }
     return { b, before, after, fromTripId, toTripId, seatChange, newLeg, confirm, refundAmount, changed, warnings };
   }
@@ -528,5 +538,7 @@ export class BookingChangesService {
 }
 
 function moneyOverride(d: z.output<typeof bookingChangeSchema>) {
-  return d.totalAmount !== undefined || d.depositAmount !== undefined || d.refundAmount !== undefined;
+  return (
+    d.totalAmount !== undefined || d.depositAmount !== undefined || d.refundAmount !== undefined || d.confirmWithoutDeposit === true
+  );
 }

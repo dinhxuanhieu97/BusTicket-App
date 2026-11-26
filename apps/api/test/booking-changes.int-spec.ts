@@ -411,8 +411,39 @@ describe('money adjustments', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('does not confirm an unpaid holding booking just because the deposit is lowered to 0', async () => {
+    const [seat] = await freeSeats(seed.bedTrip.id, 1);
+    const b = await sell(seed.bedTrip.id, [seat!], { confirm: false });
+    expect(b).toMatchObject({ status: 'HOLDING', paidAmount: 0 });
+    const r = await change(b.code, { depositAmount: 0, reason: 'Khách quen' }, 'owner').expect(200);
+    expect(r.body.booking).toMatchObject({ status: 'HOLDING', depositAmount: 0, paidAmount: 0, paymentStatus: 'UNPAID' });
+    expect(r.body.changed).toEqual(['depositAmount']);
+    const rr = await row(b.code);
+    expect(rr.status).toBe('HOLDING');
+    expect(rr.release_at).not.toBeNull();
+  });
+
+  it('lets a manager confirm without a deposit only on purpose, with payment.manage and a reason', async () => {
+    const [seat] = await freeSeats(seed.bedTrip.id, 1);
+    const b = await sell(seed.bedTrip.id, [seat!], { confirm: false });
+    expect((await change(b.code, { confirmWithoutDeposit: true, reason: 'Nhà xe cho giữ không cọc' }, 'dispatcher').expect(403)).body.error.code)
+      .toBe('FORBIDDEN');
+    expect((await change(b.code, { confirmWithoutDeposit: true }, 'owner').expect(400)).body.error.details).toMatchObject({ field: 'reason' });
+    const preview = await change(b.code, { confirmWithoutDeposit: true }, 'owner', { dryRun: true }).expect(200);
+    expect(preview.body.booking).toMatchObject({ status: 'CONFIRMED', paidAmount: 0 });
+    expect(await row(b.code)).toMatchObject({ status: 'HOLDING' });
+    const r = await change(b.code, { confirmWithoutDeposit: true, reason: 'Nhà xe cho giữ không cọc' }, 'owner').expect(200);
+    expect(r.body.booking).toMatchObject({ status: 'CONFIRMED', paidAmount: 0, paymentStatus: 'UNPAID' });
+    expect(r.body.changed).toEqual(['status']);
+    expect(await row(b.code)).toMatchObject({ status: 'CONFIRMED', hold_expires_at: null, release_at: null });
+    // Đã xác nhận rồi thì không bật lại được.
+    expect((await change(b.code, { confirmWithoutDeposit: true, reason: 'lặp lại' }, 'owner').expect(400)).body.error.details)
+      .toMatchObject({ field: 'confirmWithoutDeposit' });
+  });
+
   it('hides other operators\' bookings', async () => {
-    const b = await sell(seed.bedTrip.id, ['A1']);
+    const [seat] = await freeSeats(seed.bedTrip.id, 1);
+    const b = await sell(seed.bedTrip.id, [seat!]);
     await change(b.code, { items: [{ seatCode: 'A3' }] }, 'dispatcher', { op: other.op.id }).expect(404);
     const { rows } = await s.db.query<{ code: string }>(`SELECT code FROM bookings WHERE operator_id = $1 LIMIT 1`, [other.op.id]);
     if (rows[0]) await change(rows[0].code, { items: [{ seatCode: 'A3' }] }).expect(404);
