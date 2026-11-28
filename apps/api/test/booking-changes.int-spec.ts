@@ -246,12 +246,12 @@ describe('change to another trip / date', () => {
 
   it('moves to a cheaper trip: the overpaid part becomes an ADJUST refund, then a cancel refunds only what is left', async () => {
     const b = await sell(seed.limoTrip.id, ['A12'], { paid: 450_000 });
-    const noReason = await change(b.code, { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D1' }] }).expect(400);
+    const noReason = await change(b.code, { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D1' }] }, 'owner').expect(400);
     expect(noReason.body.error.details).toMatchObject({ field: 'reason' });
-    const preview = await change(b.code, { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D1' }] }, 'dispatcher', { dryRun: true }).expect(200);
+    const preview = await change(b.code, { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D1' }] }, 'owner', { dryRun: true }).expect(200);
     expect(preview.body).toMatchObject({ refundAmount: 70_000, booking: { paidAmount: 380_000 } });
 
-    const r = await change(b.code, { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D1' }], reason: 'Khách đổi sang giường nằm' }).expect(200);
+    const r = await change(b.code, { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D1' }], reason: 'Khách đổi sang giường nằm' }, 'owner').expect(200);
     expect(r.body).toMatchObject({
       refundAmount: 70_000,
       booking: { tripId: seed.bedTrip.id, totalAmount: 380_000, paidAmount: 380_000, dueAmount: 0, paymentStatus: 'PAID' },
@@ -268,6 +268,31 @@ describe('change to another trip / date', () => {
     const { rows } = await s.db.query<{ id: string }>(`SELECT r.id FROM refund_obligations r JOIN bookings b ON b.id = r.booking_id WHERE b.code = $1 AND kind = 'ADJUST'`, [b.code]);
     const resolved = await http().post(`${opBase()}/refunds/${rows[0]!.id}/resolve`).set(bearer('owner')).send({ status: 'REFUNDED' }).expect(200);
     expect(resolved.body.refund).toMatchObject({ kind: 'ADJUST', amount: 70_000, status: 'REFUNDED' });
+  });
+
+  it('lets a seller or dispatcher change a booking only when it creates no refund', async () => {
+    const b = await sell(seed.limoTrip.id, ['A12'], { paid: 450_000 });
+    const body = { toTripId: seed.bedTrip.id, items: [{ seatCode: 'D4' }], reason: 'Khách đổi sang giường nằm' };
+    for (const who of ['seller', 'dispatcher']) {
+      const denied = await change(b.code, body, who).expect(403);
+      expect(denied.body.error.code).toBe('FORBIDDEN');
+      await change(b.code, body, who, { dryRun: true }).expect(403);
+    }
+    expect(await refunds(b.code)).toEqual([]);
+    expect((await row(b.code)).trip_id).toBe(seed.limoTrip.id);
+
+    // Đổi chỗ cùng chuyến, số tiền không đổi: không tạo khoản cần hoàn nên nhân viên bán vé vẫn làm được.
+    const same = await sell(seed.limoTrip.id, ['B7'], { paid: 0 });
+    const r = await change(same.code, { items: [{ seatCode: 'B8' }] }, 'seller').expect(200);
+    expect(r.body).toMatchObject({ refundAmount: 0, changed: ['seats'], booking: { seats: [{ seatCode: 'B8' }] } });
+  });
+
+  it('keeps a deposit set by hand when the seats change, and warns when the policy would set another one', async () => {
+    const b = await sell(seed.limoTrip.id, ['B9'], { paid: 0 });
+    await change(b.code, { depositAmount: 300_000, reason: 'Khách thỏa thuận cọc 300k' }, 'owner').expect(200);
+    const r = await change(b.code, { items: [{ seatCode: 'B4' }] }).expect(200);
+    expect(r.body.booking).toMatchObject({ depositAmount: 300_000 });
+    expect(r.body.warnings).toEqual([expect.stringMatching(/^Giữ cọc 300\.000đ; theo chính sách mới cọc sẽ là /)]);
   });
 
   it('refuses draft, cancelled, departed and foreign target trips', async () => {

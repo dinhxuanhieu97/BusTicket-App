@@ -186,7 +186,7 @@ export class BookingChangesService {
     }
 
     if (opts.dryRun) {
-      const plan = await this.plan(this.db, operatorId, upper, data, false);
+      const plan = await this.plan(this.db, operatorId, upper, data, false, actor.role);
       return this.view(plan, false);
     }
 
@@ -199,7 +199,7 @@ export class BookingChangesService {
         await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`booking-change:${operatorId}:${key}`]);
         const early = await this.replay(c, operatorId, key, requestHash);
         if (early) return early;
-        const plan = await this.plan(c, operatorId, upper, data, true);
+        const plan = await this.plan(c, operatorId, upper, data, true, actor.role);
         const result = this.view(plan, false);
         await this.commit(c, actor, plan, data, key, requestHash, result);
         return result;
@@ -215,7 +215,14 @@ export class BookingChangesService {
 
   // ---- Lập kế hoạch (dùng chung cho xem trước và ghi thật) ---------------------------------------
 
-  private async plan(q: Queryable, operatorId: string, code: string, data: z.output<typeof bookingChangeSchema>, lock: boolean): Promise<Plan> {
+  private async plan(
+    q: Queryable,
+    operatorId: string,
+    code: string,
+    data: z.output<typeof bookingChangeSchema>,
+    lock: boolean,
+    role: AuthUser['role'],
+  ): Promise<Plan> {
     const now = this.clock.now();
     const { rows: found } = await q.query<{ id: string; trip_id: string }>(
       'SELECT id, trip_id FROM bookings WHERE operator_id = $1 AND code = $2',
@@ -339,19 +346,31 @@ export class BookingChangesService {
     const computedTotal = seatChange ? allLines.reduce((n, l) => n + l.lineTotal, 0) : b.total_amount;
     if (computedTotal > MAX_BOOKING_TOTAL) throw new DomainError('LIMIT_EXCEEDED', 'Tổng tiền đơn vượt giới hạn cho phép.');
     const total = data.totalAmount ?? computedTotal;
+    // Cọc theo chính sách của đơn. Đơn đang ở đúng mức cọc theo chính sách thì đổi chỗ tính lại theo chính sách;
+    // đơn đã được chỉnh cọc tay thì giữ mức đó (không vượt tổng mới) và cảnh báo nếu chính sách sẽ cho mức khác.
+    const policyDeposit = (ls: SeatLine[], t: number) => {
+      const fixed = policy.fixedDeposit;
+      return fixed
+        ? Math.min(t, ls.reduce((n, l) => n + fixedUnitDeposit(l.lineTotal, l.occupancy, fixed), 0))
+        : depositAmount(t, policy.depositPercent ?? 100);
+    };
+    const wasPolicyDeposit = seatChange && b.deposit_amount === policyDeposit(lines(items), b.total_amount);
     let deposit: number;
     if (data.depositAmount !== undefined) {
       if (data.depositAmount > total) {
         throw new DomainError('VALIDATION_FAILED', `Tiền cọc ${vnd(data.depositAmount)} lớn hơn tổng tiền ${vnd(total)}.`, { field: 'depositAmount' });
       }
       deposit = data.depositAmount;
-    } else if (seatChange || data.totalAmount !== undefined) {
-      const fixed = policy.fixedDeposit;
-      deposit = fixed
-        ? Math.min(total, allLines.reduce((n, l) => n + fixedUnitDeposit(l.lineTotal, l.occupancy, fixed), 0))
-        : depositAmount(total, policy.depositPercent ?? 100);
+    } else if (data.totalAmount !== undefined) {
+      deposit = policyDeposit(allLines, total);
+    } else if (wasPolicyDeposit) {
+      deposit = policyDeposit(allLines, total);
     } else {
       deposit = Math.min(b.deposit_amount, total);
+      if (seatChange) {
+        const suggested = policyDeposit(allLines, total);
+        if (suggested !== deposit) warnings.push(`Giữ cọc ${vnd(deposit)}; theo chính sách mới cọc sẽ là ${vnd(suggested)}. Chỉnh tay nếu cần.`);
+      }
     }
 
     const manualRefund = data.refundAmount ?? 0;
@@ -360,6 +379,10 @@ export class BookingChangesService {
     }
     const paidAfterManual = b.paid_amount - manualRefund;
     const excess = Math.max(0, paidAfterManual - total);
+    // Đổi sang giá thấp hơn số đã thu tạo khoản cần hoàn: việc này thuộc quản lý thu tiền, không chỉ quyền sửa đơn.
+    if (excess > 0 && !can(role, 'payment.manage')) {
+      throw new DomainError('FORBIDDEN', 'Thay đổi này làm đơn có khoản cần hoàn; cần quyền quản lý thu tiền.');
+    }
     const paid = paidAfterManual - excess;
     const refundAmount = manualRefund + excess;
 
