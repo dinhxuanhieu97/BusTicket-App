@@ -20,6 +20,20 @@ const ALERT_LEASE_MS = 5 * 60_000;
 const ALERT_BATCH = 5;
 /** Danh sách đơn có ảnh chờ kiểm trên chuông. */
 export const PENDING_PROOFS_LIMIT = 50;
+/** Lịch sử thông báo ảnh chuyển khoản: số ngày nhìn lại và số dòng tối đa. */
+export const PROOF_HISTORY_DAYS = 7;
+export const PROOF_HISTORY_LIMIT = 50;
+
+/** Trạng thái hiện tại của đơn trong lịch sử thông báo. */
+export type ProofNoticeState = 'PENDING' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
+
+/** HOLDING còn hạn = chờ kiểm; HOLDING quá hạn coi như hết hạn (sweeper chưa kịp chạy). */
+export function proofNoticeState(status: string, releaseAt: Date | null, now: Date): ProofNoticeState {
+  if (status === 'HOLDING') return releaseAt && releaseAt > now ? 'PENDING' : 'EXPIRED';
+  if (status === 'EXPIRED') return 'EXPIRED';
+  if (status === 'CANCELLED') return 'CANCELLED';
+  return 'CONFIRMED';
+}
 
 /** Tên máy chủ SMTP: tên miền công khai, không nhận IP hay tên nội bộ (SSRF). */
 const HOST = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -257,6 +271,40 @@ export class StaffAlertsService {
         trip: { id: r.trip_id, name: r.trip_name, departAt: r.depart_at.toISOString() },
         totalAmount: r.total_amount, paidAmount: r.paid_amount, releaseAt: r.release_at.toISOString(),
         proofCount: r.proof_count, lastProofAt: r.last_proof_at?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Lịch sử thông báo "khách gửi ảnh chuyển khoản" (F80): mọi đơn có ảnh trong 7 ngày, kể cả đã xác nhận / hết hạn,
+   * để chuông giữ lại thông báo đã xem. `id` đổi khi khách gửi thêm ảnh, nên ảnh mới lại thành thông báo mới.
+   */
+  async proofHistory(operatorId: string) {
+    if (!isUuid(operatorId)) return { items: [] };
+    const now = this.clock.now();
+    const since = new Date(now.getTime() - PROOF_HISTORY_DAYS * 86_400_000);
+    const { rows } = await this.db.query<{
+      code: string; status: string; release_at: Date | null; contact_name: string | null; trip_id: string; trip_name: string;
+      depart_at: Date; proof_count: number; last_proof_at: Date;
+    }>(
+      `SELECT b.code, b.status, b.release_at, CASE WHEN b.contact_erased_at IS NULL THEN b.contact_name END AS contact_name,
+         t.id AS trip_id, t.name AS trip_name, t.depart_at, p.n AS proof_count, p.last_at AS last_proof_at
+       FROM (SELECT booking_id, COUNT(*)::int AS n, max(created_at) AS last_at FROM booking_payment_proofs
+             WHERE operator_id = $1 GROUP BY booking_id HAVING max(created_at) > $2) p
+       JOIN bookings b ON b.id = p.booking_id AND b.operator_id = $1
+       JOIN trips t ON t.id = b.trip_id
+       ORDER BY p.last_at DESC, b.id LIMIT ${PROOF_HISTORY_LIMIT}`,
+      [operatorId, since],
+    );
+    return {
+      items: rows.map((r) => ({
+        id: `proof:${r.code}:${r.proof_count}`,
+        code: r.code,
+        contactName: r.contact_name,
+        trip: { id: r.trip_id, name: r.trip_name, departAt: r.depart_at.toISOString() },
+        proofCount: r.proof_count,
+        at: r.last_proof_at.toISOString(),
+        state: proofNoticeState(r.status, r.release_at, now),
       })),
     };
   }

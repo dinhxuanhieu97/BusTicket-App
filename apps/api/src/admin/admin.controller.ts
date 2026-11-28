@@ -137,6 +137,13 @@ export class AdminController {
     return this.alerts.pendingProofs(op);
   }
 
+  /** Lịch sử thông báo ảnh chuyển khoản 7 ngày, kèm trạng thái hiện tại của đơn (chuông giữ thông báo đã xem). */
+  @Get('operators/:operatorId/payment-proof-notices')
+  @Perm('payment.read')
+  proofNotices(@Param('operatorId') op: string) {
+    return this.alerts.proofHistory(op);
+  }
+
   /** Cấu hình email báo nhà xe; mật khẩu SMTP không bao giờ trả về. */
   @Get('operators/:operatorId/alert-settings')
   @Perm('alert.configure')
