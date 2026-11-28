@@ -13,7 +13,7 @@ import { SEAT_CODE } from '../seat-layouts/layout-parser';
 import { TokenSecret } from './token-secret';
 import { MAX_IMPORT_ROWS, wholeNumber, type PlanIssue } from './staff-bookings.service';
 import { normalizeVnPhone } from '../common/phone';
-import { resolveStop, type StopPoint, type TripStops } from './stops';
+import { resolveStopOrCustom, type StopPoint, type TripStops } from './stops';
 
 const BOOKING_CODE = /^[A-Z0-9]{4,12}$/;
 const PROOF = /^[A-Za-z0-9_-]{43}$/;
@@ -62,7 +62,8 @@ export const boardingImportSchema = z
 
 /**
  * Sửa thông tin liên hệ/đón trả/ghi chú của đơn (nhân viên). Chỉ gửi trường cần đổi; chuỗi rỗng hoặc null ở
- * điểm đón/trả/ghi chú = xóa. Không đổi chỗ, giá hay tiền (tiền ghi qua sổ thu, lên xe qua `boarding`).
+ * điểm đón/trả/ghi chú = xóa. Tuyến chưa có danh sách điểm đón/trả thì nhận tên gõ tự do (không có giờ đón).
+ * Không đổi chỗ, chuyến hay tiền (đổi qua `BookingChangesService`, tiền thu qua sổ thu, lên xe qua `boarding`).
  */
 export const bookingEditSchema = z
   .object({
@@ -244,8 +245,8 @@ export class PassengerOpsService {
         contact_name: data.contactName ?? b.contact_name,
         contact_phone: phone ?? b.contact_phone,
         passenger_note: data.note === undefined ? b.passenger_note : data.note || null,
-        pickup_stop: data.pickupStop === undefined ? b.pickup_stop : resolveStop(b.stops, 'pickup', data.pickupStop),
-        dropoff_stop: data.dropoffStop === undefined ? b.dropoff_stop : resolveStop(b.stops, 'dropoff', data.dropoffStop),
+        pickup_stop: data.pickupStop === undefined ? b.pickup_stop : resolveStopOrCustom(b.stops, 'pickup', data.pickupStop),
+        dropoff_stop: data.dropoffStop === undefined ? b.dropoff_stop : resolveStopOrCustom(b.stops, 'dropoff', data.dropoffStop),
       };
       // jsonb trả khóa theo thứ tự riêng của PostgreSQL: so điểm đón/trả theo từng trường, không so chuỗi JSON.
       const same = (a: string | StopPoint | null, z: string | StopPoint | null) =>
@@ -311,7 +312,7 @@ export class PassengerOpsService {
       const r = rows[0];
       if (!r) throw notFound('khoản cần hoàn');
       if (r.status !== 'OPEN') {
-        if (r.status === data.status) return { refund: await this.refundOf(c, r.booking_id), replayed: true };
+        if (r.status === data.status) return { refund: await this.refundById(c, r.id), replayed: true };
         throw new DomainError('CONFLICT', 'Khoản này đã được xử lý.');
       }
       const now = this.clock.now();
@@ -326,13 +327,19 @@ export class PassengerOpsService {
         },
         c,
       );
-      return { refund: await this.refundOf(c, r.booking_id), replayed: false };
+      return { refund: await this.refundById(c, r.id), replayed: false };
     });
   }
 
+  /** Khoản cần hoàn do hủy đơn (mỗi đơn tối đa một; khoản điều chỉnh khi đổi chỗ/tiền là loại ADJUST). */
   private async refundOf(q: Queryable, bookingId: string) {
-    const { rows } = await q.query<RefundRow>(`${REFUND_SELECT} WHERE r.booking_id = $1`, [bookingId]);
+    const { rows } = await q.query<RefundRow>(`${REFUND_SELECT} WHERE r.booking_id = $1 AND r.kind = 'CANCEL'`, [bookingId]);
     return rows[0] ? refundView(rows[0]) : null;
+  }
+
+  private async refundById(q: Queryable, refundId: string) {
+    const { rows } = await q.query<RefundRow>(`${REFUND_SELECT} WHERE r.id = $1`, [refundId]);
+    return refundView(rows[0]!);
   }
 
   // ---- Lên xe (C4) ------------------------------------------------------------------------------
@@ -672,12 +679,12 @@ interface BoardingUpdate {
 }
 
 interface RefundRow {
-  id: string; booking_code: string; amount: number; reason: string; status: string; created_at: Date;
+  id: string; kind: string; booking_code: string; amount: number; reason: string; status: string; created_at: Date;
   created_by_name: string | null; resolved_at: Date | null; resolved_by_name: string | null; resolve_note: string | null;
   contact_name: string; contact_phone: string; contact_erased_at: Date | null;
 }
 const REFUND_SELECT = `
-  SELECT r.id, b.code AS booking_code, r.amount, r.reason, r.status, r.created_at, cu.full_name AS created_by_name,
+  SELECT r.id, r.kind, b.code AS booking_code, r.amount, r.reason, r.status, r.created_at, cu.full_name AS created_by_name,
          r.resolved_at, ru.full_name AS resolved_by_name, r.resolve_note, b.contact_name, b.contact_phone, b.contact_erased_at
   FROM refund_obligations r
   JOIN bookings b ON b.id = r.booking_id
@@ -685,7 +692,7 @@ const REFUND_SELECT = `
   LEFT JOIN users ru ON ru.id = r.resolved_by`;
 function refundView(r: RefundRow) {
   return {
-    id: r.id, bookingCode: r.booking_code, amount: r.amount, reason: r.reason, status: r.status,
+    id: r.id, kind: r.kind, bookingCode: r.booking_code, amount: r.amount, reason: r.reason, status: r.status,
     createdAt: r.created_at.toISOString(), createdBy: r.created_by_name,
     resolvedAt: r.resolved_at?.toISOString() ?? null, resolvedBy: r.resolved_by_name, resolveNote: r.resolve_note,
     // Kế toán cần liên hệ khách để hoàn tiền; khách đã xóa thông tin thì không còn SĐT.

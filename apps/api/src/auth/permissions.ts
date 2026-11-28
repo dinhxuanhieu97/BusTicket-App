@@ -23,7 +23,7 @@ export const PERMISSIONS = [
   'booking.create', //        bán vé tại quầy, nhập danh sách khách mới từ file (đơn STAFF)
   'booking.board', //         đánh dấu khách lên xe, nhập lại file đã xuất (lên xe + thực thu trên xe)
   'booking.cancel', //        hủy đơn thay khách (bắt buộc lý do; đã thu tiền → tạo khoản cần hoàn)
-  'booking.update', //        sửa họ tên, SĐT, điểm đón/trả, ghi chú của đơn (không đổi chỗ/tiền)
+  'booking.update', //        sửa họ tên, SĐT, điểm đón/trả, ghi chú; đổi chỗ/chuyến (giá tính lại theo bảng giá; chỉnh tiền tay cần payment.manage)
   'audit.read',
   'payment.configure', //     tài khoản nhận tiền + khóa webhook SePay
   'payment.read', //          xem sổ thu, khoản cần kiểm tra

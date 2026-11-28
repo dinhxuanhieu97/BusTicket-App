@@ -103,8 +103,9 @@ export class ReportsService {
       ),
       this.db.query<{ id: string; code: string; origin: string; destination: string; amount: number; bookings: number }>(
         `WITH money AS (
-           SELECT booking_id, amount::numeric AS amount FROM refund_obligations
+           SELECT booking_id, SUM(amount)::numeric AS amount FROM refund_obligations
            WHERE operator_id = $1 AND status = 'REFUNDED' AND resolved_at >= $2 AND resolved_at < $3
+           GROUP BY booking_id
          )
          ${ROUTE_SHARE_SQL}`,
         args,

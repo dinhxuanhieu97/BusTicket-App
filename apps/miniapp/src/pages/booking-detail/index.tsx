@@ -221,8 +221,11 @@ export default function BookingDetailPage() {
             if (!stop) return null;
             return (
               <p key={key}>
-                {key === "pickupStop" ? "Đón" : "Trả"}: {stop.time}
-                {stop.day > 0 ? ` (+${stop.day} ngày)` : ""} · {stop.name}
+                {key === "pickupStop" ? "Đón" : "Trả"}:{" "}
+                {stop.time
+                  ? `${stop.time}${stop.day > 0 ? ` (+${stop.day} ngày)` : ""} · `
+                  : ""}
+                {stop.name}
               </p>
             );
           })}

@@ -32,3 +32,14 @@ export function resolveStop(stops: TripStops | null | undefined, kind: 'pickup' 
   }
   return { name: found.name, time: found.time, day: found.day };
 }
+
+/**
+ * Như `resolveStop`, nhưng tuyến chưa khai báo danh sách điểm (đón hoặc trả) thì nhận tên gõ tự do và lưu
+ * `{name, time: '', day: 0}` (không có giờ đón). Tuyến đã có danh sách thì vẫn bắt buộc chọn đúng điểm.
+ */
+export function resolveStopOrCustom(stops: TripStops | null | undefined, kind: 'pickup' | 'dropoff', name: string | null | undefined): StopPoint | null {
+  const list = stops?.[kind] ?? [];
+  if (list.length) return resolveStop(stops, kind, name);
+  const custom = name?.normalize('NFC').trim().replace(/\s+/g, ' ') ?? '';
+  return custom ? { name: custom, time: '', day: 0 } : null;
+}
