@@ -494,3 +494,37 @@ describe('pickup/dropoff', () => {
     expect(ok.body.booking.pickupStop).toEqual({ name: 'Bến xe An Sương', time: '17:30', day: 0 });
   });
 });
+
+describe('prices and amounts kept from the booking (review F82)', () => {
+  it('keeps the booked price of seats that stay when another seat on the same trip changes', async () => {
+    const [x, y, z] = await freeSeats(seed.bedTrip.id, 3);
+    const b = await sell(seed.bedTrip.id, [x!, y!]);
+    const before = new Map((await items(b.code)).map((i) => [i.seat_code, i.line_total]));
+    await s.db.query('UPDATE trip_fares SET price = price + 50000 WHERE trip_id = $1', [seed.bedTrip.id]);
+    try {
+      const r = await change(b.code, { items: [{ seatCode: x! }, { seatCode: z! }] }).expect(200);
+      const after = new Map((await items(b.code)).map((i) => [i.seat_code, i.line_total]));
+      expect(after.get(x!)).toBe(before.get(x!));
+      expect(r.body.booking.totalAmount).toBe([...after.values()].reduce((n, v) => n + v, 0));
+    } finally {
+      await s.db.query('UPDATE trip_fares SET price = price - 50000 WHERE trip_id = $1', [seed.bedTrip.id]);
+    }
+  });
+
+  it('warns when a seat change recomputes a total that was set by hand', async () => {
+    const [x, y] = await freeSeats(seed.bedTrip.id, 2);
+    const b = await sell(seed.bedTrip.id, [x!]);
+    await change(b.code, { totalAmount: b.totalAmount - 10_000, reason: 'Khách quen giảm giá' }, 'owner').expect(200);
+    const r = await change(b.code, { items: [{ seatCode: y! }] }).expect(200);
+    expect(r.body.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^Tổng tiền đã chỉnh tay /)]));
+  });
+
+  it('keeps a hand-set deposit when only the total changes, and warns', async () => {
+    const [x] = await freeSeats(seed.bedTrip.id, 1);
+    const b = await sell(seed.bedTrip.id, [x!]);
+    await change(b.code, { depositAmount: 100_000, reason: 'Khách thỏa thuận cọc' }, 'owner').expect(200);
+    const r = await change(b.code, { totalAmount: b.totalAmount - 10_000, reason: 'Giảm giá' }, 'owner').expect(200);
+    expect(r.body.booking.depositAmount).toBe(100_000);
+    expect(r.body.warnings).toEqual([expect.stringMatching(/^Giữ cọc 100\.000đ; theo chính sách mới cọc sẽ là /)]);
+  });
+});
