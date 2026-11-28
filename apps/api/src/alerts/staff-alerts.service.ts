@@ -257,7 +257,7 @@ export class StaffAlertsService {
            CASE WHEN b.contact_erased_at IS NULL THEN b.contact_phone END AS contact_phone,
            t.id AS trip_id, t.name AS trip_name, t.depart_at, b.total_amount, b.paid_amount, b.release_at,
            p.n AS proof_count, p.last_at AS last_proof_at
-         FROM bookings b JOIN trips t ON t.id = b.trip_id
+         FROM bookings b JOIN trips t ON t.id = b.trip_id AND t.operator_id = $1
          CROSS JOIN LATERAL (SELECT COUNT(*)::int AS n, max(created_at) AS last_at FROM booking_payment_proofs WHERE booking_id = b.id) p
          WHERE ${where}
          ORDER BY COALESCE(p.last_at, b.transfer_claimed_at) DESC, b.id LIMIT ${PENDING_PROOFS_LIMIT}`,
@@ -292,7 +292,7 @@ export class StaffAlertsService {
        FROM (SELECT booking_id, COUNT(*)::int AS n, max(created_at) AS last_at FROM booking_payment_proofs
              WHERE operator_id = $1 GROUP BY booking_id HAVING max(created_at) > $2) p
        JOIN bookings b ON b.id = p.booking_id AND b.operator_id = $1
-       JOIN trips t ON t.id = b.trip_id
+       JOIN trips t ON t.id = b.trip_id AND t.operator_id = $1
        ORDER BY p.last_at DESC, b.id LIMIT ${PROOF_HISTORY_LIMIT}`,
       [operatorId, since],
     );
